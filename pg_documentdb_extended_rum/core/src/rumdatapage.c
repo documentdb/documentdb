@@ -1613,6 +1613,12 @@ rumDataFillBtreeForIncompleteSplit(RumBtree btree, RumBtreeStack *stack, Buffer 
 }
 
 
+static void
+rumDataCleanupPage(Relation heapRel, RumBtree btree, RumBtreeStack *stack,
+				   const RumItem *pending, uint32 npending)
+{ }
+
+
 /*
  * Creates new posting tree with one page, containing the given TIDs.
  * Returns the page number (which will be the root of this posting tree).
@@ -1698,6 +1704,7 @@ rumPrepareDataScan(RumBtree btree, Relation index, OffsetNumber attnum,
 	btree->splitPage = dataSplitPage;
 	btree->fillRoot = rumDataFillRoot;
 	btree->fillBtreeForIncompleteSplit = rumDataFillBtreeForIncompleteSplit;
+	btree->cleanupPage = rumDataCleanupPage;
 
 	btree->isData = true;
 	btree->searchMode = false;

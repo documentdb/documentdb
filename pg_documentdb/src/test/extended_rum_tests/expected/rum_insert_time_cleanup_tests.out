@@ -1,0 +1,1422 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, public;
+SET documentdb.next_collection_id TO 7600;
+SET documentdb.next_collection_index_id TO 7600;
+CREATE SCHEMA rum_cleanup_test;
+-- Every workload has a disabled control and all three enabled combinations.
+CREATE TEMP TABLE rum_cleanup_modes(name text, reclaim boolean, deletion boolean);
+INSERT INTO rum_cleanup_modes VALUES
+    ('off', false, false), ('reclaim', true, false),
+    ('deletion', false, true), ('both', true, true);
+SELECT * FROM rum_cleanup_modes ORDER BY name;
+   name   | reclaim | deletion
+----------+---------+----------
+ both     | t       | t
+ deletion | f       | t
+ off      | f       | f
+ reclaim  | t       | f
+(4 rows)
+
+SELECT name, setting, reset_val, boot_val, context FROM pg_settings
+WHERE name IN ('documentdb_rum.enable_insert_time_deletion',
+               'documentdb_rum.enable_insert_time_posting_list_reclaim')
+ORDER BY name;
+                          name                          | setting | reset_val | boot_val | context
+--------------------------------------------------------+---------+-----------+----------+---------
+ documentdb_rum.enable_insert_time_deletion             | off     | off       | off      | user
+ documentdb_rum.enable_insert_time_posting_list_reclaim | off     | off       | off      | user
+(2 rows)
+
+SET documentdb_rum.enable_insert_time_deletion TO off;
+SET documentdb_rum.enable_insert_time_posting_list_reclaim TO off;
+CREATE FUNCTION rum_cleanup_test.index_name(coll text)
+RETURNS text LANGUAGE sql AS $$
+    SELECT 'documentdb_data.documents_rum_index_' || index_id
+    FROM documentdb_api_catalog.collection_indexes
+    WHERE collection_id = (
+        SELECT collection_id FROM documentdb_api_catalog.collections
+        WHERE database_name = 'insert_cleanup' AND collection_name = coll)
+    ORDER BY index_id DESC LIMIT 1;
+$$;
+CREATE FUNCTION rum_cleanup_test.entries(coll text)
+RETURNS TABLE(blockno int, value jsonb) LANGUAGE sql AS $$
+    SELECT b, e
+    FROM (SELECT rum_cleanup_test.index_name(coll) AS idx) names,
+         LATERAL generate_series(1,
+             (pg_relation_size(idx::regclass) / current_setting('block_size')::int - 1)::int) b,
+         LATERAL documentdb_api_internal.documentdb_rum_page_get_entries(
+             public.get_raw_page(idx, b), idx::regclass) e
+    WHERE documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page(idx, b))->>'flagsStr' = 'LEAF';
+$$;
+-- Use the physical extent: metapage page counts are not refreshed after inserts.
+CREATE FUNCTION rum_cleanup_test.count_leaf_pages(coll text, want_data boolean)
+RETURNS bigint LANGUAGE sql AS $$
+    SELECT count(*)
+    FROM (SELECT rum_cleanup_test.index_name(coll) AS idx) names,
+         LATERAL generate_series(1,
+             (pg_relation_size(idx::regclass) / current_setting('block_size')::int - 1)::int) b
+    WHERE documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page(idx, b))->>'flagsStr' LIKE '%LEAF%'
+      AND (documentdb_api_internal.documentdb_rum_page_get_stats(
+        public.get_raw_page(idx, b))->>'flagsStr' LIKE '%DATA%') = want_data;
+$$;
+CREATE FUNCTION rum_cleanup_test.count_rows(
+    coll text, predicate text DEFAULT '{ "a": { "$exists": true } }')
+RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE
+    result bigint;
+BEGIN
+    EXECUTE format(
+        'SELECT count(*) FROM (SELECT document FROM bson_aggregation_find(''insert_cleanup'', %L::bson)) q',
+        format('{ "find": "%s", "filter": %s }', coll, predicate))
+    INTO result;
+    RETURN result;
+END;
+$$;
+CREATE FUNCTION rum_cleanup_test.create_fixture(coll text, full_page boolean)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+    cid bigint;
+BEGIN
+    PERFORM documentdb_api.create_collection('insert_cleanup', coll);
+    SELECT collection_id INTO cid FROM documentdb_api_catalog.collections
+    WHERE database_name = 'insert_cleanup' AND collection_name = coll;
+    EXECUTE format('ALTER TABLE documentdb_data.documents_%s SET (autovacuum_enabled = off)', cid);
+    IF full_page THEN
+        PERFORM documentdb_api.insert_one('insert_cleanup', coll,
+            format('{ "_id": %s, "a": [1, %s] }', i, 2 * i + 10)::bson)
+        FROM generate_series(1, 900) i;
+        PERFORM set_config('documentdb_rum.rum_default_page_fill_factor', '100', true);
+    END IF;
+    PERFORM documentdb_api_internal.create_indexes_non_concurrently('insert_cleanup',
+        format('{ "createIndexes": "%s", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }', coll)::bson, true);
+END;
+$$;
+CREATE FUNCTION rum_cleanup_test.insert_with_flags(coll text, mode_name text, doc bson)
+RETURNS bson LANGUAGE plpgsql AS $$
+DECLARE
+    flags record;
+BEGIN
+    SELECT reclaim, deletion INTO STRICT flags FROM rum_cleanup_modes WHERE name = mode_name;
+    PERFORM set_config('documentdb_rum.enable_insert_time_posting_list_reclaim', flags.reclaim::text, true);
+    PERFORM set_config('documentdb_rum.enable_insert_time_deletion', flags.deletion::text, true);
+    RETURN documentdb_api.insert_one('insert_cleanup', coll, doc);
+END;
+$$;
+CREATE TEMP TABLE rum_cleanup_cases AS
+SELECT scenario, name AS mode, reclaim, deletion, scenario || '_' || name AS coll
+FROM (VALUES ('list'), ('partial'), ('unhinted'), ('small'),
+             ('page'), ('page_partial'), ('fresh'), ('fresh_unhinted')) s(scenario),
+     rum_cleanup_modes;
+-- Calibrate inline capacity rather than assuming a posting compression threshold.
+SELECT rum_cleanup_test.create_fixture('capacity', false);
+NOTICE:  creating collection
+ create_fixture
+----------------
+
+(1 row)
+
+CREATE TEMP TABLE rum_cleanup_limits(capacity int, page_inserts int);
+DO $$
+BEGIN
+    FOR i IN 1..3000 LOOP
+        PERFORM documentdb_api.insert_one('insert_cleanup', 'capacity',
+            format('{ "_id": %s, "a": [1, 2] }', i)::bson);
+        IF rum_cleanup_test.count_leaf_pages('capacity', true) > 0 THEN
+            INSERT INTO rum_cleanup_limits VALUES (i - 1, NULL);
+            RETURN;
+        END IF;
+    END LOOP;
+    RAISE EXCEPTION 'inline capacity was not reached';
+END;
+$$;
+SELECT capacity > 900 AS calibrated_capacity FROM rum_cleanup_limits;
+ calibrated_capacity
+---------------------
+ t
+(1 row)
+
+-- Multikey fixtures repeat heap TIDs across entries and the pending list.
+-- Partial targets retain 50 live postings; their dead sibling supplies LP_DEAD.
+SELECT rum_cleanup_test.create_fixture(coll, false)
+FROM rum_cleanup_cases WHERE scenario IN ('list', 'partial', 'unhinted', 'small')
+ORDER BY scenario, mode;
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+ create_fixture
+----------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(16 rows)
+
+SELECT scenario, mode, count(documentdb_api.insert_one('insert_cleanup', coll,
+    format('{ "_id": %s, "a": [1, %s] }', i,
+        CASE WHEN scenario = 'partial' AND i > capacity - 50 THEN 3 ELSE 2 END)::bson))
+    = CASE WHEN scenario = 'small' THEN 1 ELSE capacity END AS filled_inline_list
+FROM rum_cleanup_cases, rum_cleanup_limits,
+     LATERAL generate_series(1, CASE WHEN scenario = 'small' THEN 1 ELSE capacity END) i
+WHERE scenario IN ('list', 'partial', 'unhinted', 'small')
+GROUP BY scenario, mode, capacity ORDER BY scenario, mode;
+ scenario |   mode   | filled_inline_list
+----------+----------+--------------------
+ list     | both     | t
+ list     | deletion | t
+ list     | off      | t
+ list     | reclaim  | t
+ partial  | both     | t
+ partial  | deletion | t
+ partial  | off      | t
+ partial  | reclaim  | t
+ small    | both     | t
+ small    | deletion | t
+ small    | off      | t
+ small    | reclaim  | t
+ unhinted | both     | t
+ unhinted | deletion | t
+ unhinted | off      | t
+ unhinted | reclaim  | t
+(16 rows)
+
+SELECT scenario, mode, count(*) > 0
+    AND bool_and(value->>'entryType' = 'postingList') AS starts_inline
+FROM rum_cleanup_cases CROSS JOIN LATERAL rum_cleanup_test.entries(coll)
+WHERE scenario IN ('list', 'partial', 'unhinted', 'small')
+GROUP BY scenario, mode ORDER BY scenario, mode;
+ scenario |   mode   | starts_inline
+----------+----------+---------------
+ list     | both     | t
+ list     | deletion | t
+ list     | off      | t
+ list     | reclaim  | t
+ partial  | both     | t
+ partial  | deletion | t
+ partial  | off      | t
+ partial  | reclaim  | t
+ small    | both     | t
+ small    | deletion | t
+ small    | off      | t
+ small    | reclaim  | t
+ unhinted | both     | t
+ unhinted | deletion | t
+ unhinted | off      | t
+ unhinted | reclaim  | t
+(16 rows)
+
+SELECT documentdb_api.delete('insert_cleanup',
+    format('{ "delete": "%s", "deletes": [ { "q": %s, "limit": 0 } ] }', coll,
+        CASE WHEN scenario = 'partial' THEN format('{ "_id": { "$lte": %s } }', capacity - 50)
+             ELSE '{}' END)::bson) IS NOT NULL AS deleted_old_rows
+FROM rum_cleanup_cases, rum_cleanup_limits
+WHERE scenario IN ('list', 'partial', 'unhinted', 'small') ORDER BY scenario, mode;
+ deleted_old_rows
+------------------
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+(16 rows)
+
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SELECT format('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_%s', collection_id)
+FROM documentdb_api_catalog.collections JOIN rum_cleanup_cases ON collection_name = coll
+WHERE database_name = 'insert_cleanup' AND scenario IN ('list', 'partial', 'small')
+ORDER BY scenario, mode \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7602
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7603
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7604
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7605
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7606
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7607
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7608
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7609
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7610
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7611
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7612
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7613
+SET documentdb.forceDisableSeqScan TO on;
+SET documentdb_rum.enable_support_dead_index_items TO on;
+SELECT scenario, mode, rum_cleanup_test.count_rows(coll)
+    = CASE WHEN scenario = 'partial' THEN 50 ELSE 0 END AS expected_survivors
+FROM rum_cleanup_cases WHERE scenario IN ('list', 'partial', 'small') ORDER BY scenario, mode;
+ scenario |   mode   | expected_survivors
+----------+----------+--------------------
+ list     | both     | t
+ list     | deletion | t
+ list     | off      | t
+ list     | reclaim  | t
+ partial  | both     | t
+ partial  | deletion | t
+ partial  | off      | t
+ partial  | reclaim  | t
+ small    | both     | t
+ small    | deletion | t
+ small    | off      | t
+ small    | reclaim  | t
+(12 rows)
+
+SELECT scenario, mode, rum_cleanup_test.count_rows(coll)
+    = CASE WHEN scenario = 'partial' THEN 50 ELSE 0 END AS expected_survivors
+FROM rum_cleanup_cases WHERE scenario IN ('list', 'partial', 'small') ORDER BY scenario, mode;
+ scenario |   mode   | expected_survivors
+----------+----------+--------------------
+ list     | both     | t
+ list     | deletion | t
+ list     | off      | t
+ list     | reclaim  | t
+ partial  | both     | t
+ partial  | deletion | t
+ partial  | off      | t
+ partial  | reclaim  | t
+ small    | both     | t
+ small    | deletion | t
+ small    | off      | t
+ small    | reclaim  | t
+(12 rows)
+
+RESET documentdb_rum.enable_support_dead_index_items;
+SELECT scenario, mode, count(*) > 0 AND
+    CASE WHEN scenario = 'unhinted' THEN bool_and((value->>'entryFlags')::int = 1)
+         WHEN scenario = 'partial' THEN bool_or((value->>'entryFlags')::int = 3)
+                                   AND bool_or((value->>'entryFlags')::int = 1)
+         ELSE bool_and((value->>'entryFlags')::int = 3) END AS expected_dead_hints
+FROM rum_cleanup_cases CROSS JOIN LATERAL rum_cleanup_test.entries(coll)
+WHERE scenario IN ('list', 'partial', 'unhinted', 'small')
+GROUP BY scenario, mode ORDER BY scenario, mode;
+ scenario |   mode   | expected_dead_hints
+----------+----------+---------------------
+ list     | both     | t
+ list     | deletion | t
+ list     | off      | t
+ list     | reclaim  | t
+ partial  | both     | t
+ partial  | deletion | t
+ partial  | off      | t
+ partial  | reclaim  | t
+ small    | both     | t
+ small    | deletion | t
+ small    | off      | t
+ small    | reclaim  | t
+ unhinted | both     | t
+ unhinted | deletion | t
+ unhinted | off      | t
+ unhinted | reclaim  | t
+(16 rows)
+
+SELECT scenario, mode, rum_cleanup_test.insert_with_flags(coll, mode,
+    format('{ "_id": 10000, "a": [1, %s] }',
+        CASE WHEN scenario = 'partial' THEN 3 ELSE 2 END)::bson) IS NOT NULL AS inserted
+FROM rum_cleanup_cases WHERE scenario IN ('list', 'partial', 'unhinted', 'small')
+ORDER BY scenario, mode;
+ scenario |   mode   | inserted
+----------+----------+----------
+ list     | both     | t
+ list     | deletion | t
+ list     | off      | t
+ list     | reclaim  | t
+ partial  | both     | t
+ partial  | deletion | t
+ partial  | off      | t
+ partial  | reclaim  | t
+ small    | both     | t
+ small    | deletion | t
+ small    | off      | t
+ small    | reclaim  | t
+ unhinted | both     | t
+ unhinted | deletion | t
+ unhinted | off      | t
+ unhinted | reclaim  | t
+(16 rows)
+
+CREATE TEMP TABLE rum_cleanup_promoted AS
+SELECT scenario, value->>'firstEntry' AS key, value->>'attrNumber' AS attnum
+FROM rum_cleanup_cases CROSS JOIN LATERAL rum_cleanup_test.entries(coll)
+WHERE scenario IN ('list', 'partial') AND mode = 'off'
+    AND value->>'entryType' = 'postingTree';
+SELECT scenario, count(*) > 0 AS disabled_baseline_promotes
+FROM rum_cleanup_promoted GROUP BY scenario ORDER BY scenario;
+ scenario | disabled_baseline_promotes
+----------+----------------------------
+ list     | t
+ partial  | t
+(2 rows)
+
+SELECT scenario, mode, (rum_cleanup_test.count_leaf_pages(coll, true) > 0)
+    = (scenario = 'unhinted' OR (scenario IN ('list', 'partial') AND NOT reclaim))
+    AS expected_promotion
+FROM rum_cleanup_cases WHERE scenario IN ('list', 'partial', 'unhinted', 'small')
+ORDER BY scenario, mode;
+ scenario |   mode   | expected_promotion
+----------+----------+--------------------
+ list     | both     | t
+ list     | deletion | t
+ list     | off      | t
+ list     | reclaim  | t
+ partial  | both     | t
+ partial  | deletion | t
+ partial  | off      | t
+ partial  | reclaim  | t
+ small    | both     | t
+ small    | deletion | t
+ small    | off      | t
+ small    | reclaim  | t
+ unhinted | both     | t
+ unhinted | deletion | t
+ unhinted | off      | t
+ unhinted | reclaim  | t
+(16 rows)
+
+-- Each scenario needs its own control because fully dead sibling keys can disappear.
+SELECT c.scenario, mode, count(*) = (
+    SELECT count(*) FROM rum_cleanup_promoted t WHERE t.scenario = c.scenario)
+    AND count(*) > 0 AND bool_and(value->>'entryType' = 'postingList'
+    AND (value->>'numPostings')::int = CASE WHEN c.scenario = 'partial' THEN 51 ELSE 1 END
+    AND (value->>'entryFlags')::int = 1) AS pending_postings_cleaned
+FROM rum_cleanup_cases c CROSS JOIN LATERAL rum_cleanup_test.entries(coll) e
+JOIN rum_cleanup_promoted t
+    ON t.scenario = c.scenario
+    AND e.value->>'firstEntry' = t.key AND e.value->>'attrNumber' = t.attnum
+WHERE c.scenario IN ('list', 'partial') AND reclaim
+GROUP BY c.scenario, mode ORDER BY c.scenario, mode;
+ scenario |  mode   | pending_postings_cleaned
+----------+---------+--------------------------
+ list     | both    | t
+ list     | reclaim | t
+ partial  | both    | t
+ partial  | reclaim | t
+(4 rows)
+
+-- LP_DEAD alone does not trigger cleanup when both tuple and page have room.
+SELECT mode, count(*) > 0 AND bool_and((value->>'numPostings')::int = 2
+    AND (value->>'entryFlags')::int = 1) AS no_pressure_revives_without_reclaim
+FROM rum_cleanup_cases CROSS JOIN LATERAL rum_cleanup_test.entries(coll)
+WHERE scenario = 'small' GROUP BY mode ORDER BY mode;
+   mode   | no_pressure_revives_without_reclaim
+----------+-------------------------------------
+ both     | t
+ deletion | t
+ off      | t
+ reclaim  | t
+(4 rows)
+
+SELECT scenario, mode,
+    rum_cleanup_test.count_rows(coll) = CASE WHEN scenario = 'partial' THEN 51 ELSE 1 END AS live_rows,
+    rum_cleanup_test.count_rows(coll, '{ "a": 1, "_id": 10000 }') = 1 AS incoming_present,
+    rum_cleanup_test.count_rows(coll, '{ "a": 1, "_id": 1 }') = 0 AS deleted_absent,
+    rum_cleanup_test.count_rows(coll, format('{ "a": 1, "_id": %s }', capacity))
+        = CASE WHEN scenario = 'partial' THEN 1 ELSE 0 END AS survivor_preserved
+FROM rum_cleanup_cases, rum_cleanup_limits
+WHERE scenario IN ('list', 'partial', 'unhinted', 'small') ORDER BY scenario, mode;
+ scenario |   mode   | live_rows | incoming_present | deleted_absent | survivor_preserved
+----------+----------+-----------+------------------+----------------+--------------------
+ list     | both     | t         | t                | t              | t
+ list     | deletion | t         | t                | t              | t
+ list     | off      | t         | t                | t              | t
+ list     | reclaim  | t         | t                | t              | t
+ partial  | both     | t         | t                | t              | t
+ partial  | deletion | t         | t                | t              | t
+ partial  | off      | t         | t                | t              | t
+ partial  | reclaim  | t         | t                | t              | t
+ small    | both     | t         | t                | t              | t
+ small    | deletion | t         | t                | t              | t
+ small    | off      | t         | t                | t              | t
+ small    | reclaim  | t         | t                | t              | t
+ unhinted | both     | t         | t                | t              | t
+ unhinted | deletion | t         | t                | t              | t
+ unhinted | off      | t         | t                | t              | t
+ unhinted | reclaim  | t         | t                | t              | t
+(16 rows)
+
+RESET documentdb.forceDisableSeqScan;
+-- Calibrate page pressure with an inline replacement, then replay that prefix.
+-- The same full leaves also exercise fresh keys and the no-LP_DEAD negative case.
+SELECT rum_cleanup_test.create_fixture('page_capacity', true);
+NOTICE:  creating collection
+ create_fixture
+----------------
+
+(1 row)
+
+SELECT rum_cleanup_test.create_fixture(coll, true)
+FROM rum_cleanup_cases WHERE scenario IN ('page', 'page_partial', 'fresh', 'fresh_unhinted') ORDER BY scenario, mode;
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+ create_fixture
+----------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(16 rows)
+
+SELECT documentdb_api.delete('insert_cleanup',
+    format('{ "delete": "%s", "deletes": [ { "q": { "_id": { "$gte": 2 } }, "limit": 0 } ] }', collection_name)::bson) IS NOT NULL
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'insert_cleanup'
+  AND (collection_name = 'page_capacity' OR collection_name IN (
+      SELECT coll FROM rum_cleanup_cases WHERE scenario IN ('page', 'page_partial', 'fresh', 'fresh_unhinted')))
+ORDER BY collection_name;
+ ?column?
+----------
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+(17 rows)
+
+SELECT format('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_%s', collection_id)
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'insert_cleanup'
+  AND (collection_name = 'page_capacity' OR collection_name IN (
+      SELECT coll FROM rum_cleanup_cases WHERE scenario IN ('page', 'page_partial', 'fresh', 'fresh_unhinted')))
+ORDER BY collection_name \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7619
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7620
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7621
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7622
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7623
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7624
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7625
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7626
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7627
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7618
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7628
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7629
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7631
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7632
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7633
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7634
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7630
+DO $$
+DECLARE
+    initial_size bigint := pg_relation_size(rum_cleanup_test.index_name('page_capacity')::regclass);
+BEGIN
+    FOR i IN 1..300 LOOP
+        PERFORM documentdb_api.insert_one('insert_cleanup', 'page_capacity',
+            format('{ "_id": %s, "a": [1] }', 10000 + i)::bson);
+        IF pg_relation_size(rum_cleanup_test.index_name('page_capacity')::regclass) > initial_size THEN
+            UPDATE rum_cleanup_limits SET page_inserts = i;
+            RETURN;
+        END IF;
+    END LOOP;
+    RAISE EXCEPTION 'page-space pressure was not reached';
+END;
+$$;
+SELECT page_inserts BETWEEN 1 AND 300 AS calibrated_page_pressure FROM rum_cleanup_limits;
+ calibrated_page_pressure
+--------------------------
+ t
+(1 row)
+
+SELECT scenario, mode, count(documentdb_api.insert_one('insert_cleanup', coll,
+    format('{ "_id": %s, "a": [1] }', 10000 + i)::bson)) = page_inserts - 1 AS replayed_prefix
+FROM rum_cleanup_cases, rum_cleanup_limits, LATERAL generate_series(1, page_inserts - 1) i
+WHERE scenario IN ('page', 'page_partial', 'fresh', 'fresh_unhinted')
+GROUP BY scenario, mode, page_inserts ORDER BY scenario, mode;
+    scenario    |   mode   | replayed_prefix
+----------------+----------+-----------------
+ fresh          | both     | t
+ fresh          | deletion | t
+ fresh          | off      | t
+ fresh          | reclaim  | t
+ fresh_unhinted | both     | t
+ fresh_unhinted | deletion | t
+ fresh_unhinted | off      | t
+ fresh_unhinted | reclaim  | t
+ page           | both     | t
+ page           | deletion | t
+ page           | off      | t
+ page           | reclaim  | t
+ page_partial   | both     | t
+ page_partial   | deletion | t
+ page_partial   | off      | t
+ page_partial   | reclaim  | t
+(16 rows)
+
+SELECT documentdb_api.delete('insert_cleanup',
+    format('{ "delete": "%s", "deletes": [ { "q": %s, "limit": 0 } ] }', coll,
+        CASE WHEN scenario = 'page_partial' THEN '{ "_id": { "$gte": 2 } }' ELSE '{}' END)::bson) IS NOT NULL
+FROM rum_cleanup_cases WHERE scenario IN ('page', 'page_partial', 'fresh', 'fresh_unhinted') ORDER BY scenario, mode;
+ ?column?
+----------
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+(16 rows)
+
+SELECT format('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_%s', collection_id)
+FROM documentdb_api_catalog.collections JOIN rum_cleanup_cases ON collection_name = coll
+WHERE database_name = 'insert_cleanup' AND scenario IN ('page', 'page_partial', 'fresh', 'fresh_unhinted')
+ORDER BY scenario, mode \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7619
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7620
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7621
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7622
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7623
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7624
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7625
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7626
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7627
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7628
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7629
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7630
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7631
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7632
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7633
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7634
+SET documentdb.forceDisableSeqScan TO on;
+SET documentdb_rum.enable_support_dead_index_items TO on;
+SELECT scenario, mode, rum_cleanup_test.count_rows(coll)
+    = CASE WHEN scenario = 'page_partial' THEN 1 ELSE 0 END AS expected_survivors
+FROM rum_cleanup_cases WHERE scenario IN ('page', 'page_partial', 'fresh') ORDER BY scenario, mode;
+   scenario   |   mode   | expected_survivors
+--------------+----------+--------------------
+ fresh        | both     | t
+ fresh        | deletion | t
+ fresh        | off      | t
+ fresh        | reclaim  | t
+ page         | both     | t
+ page         | deletion | t
+ page         | off      | t
+ page         | reclaim  | t
+ page_partial | both     | t
+ page_partial | deletion | t
+ page_partial | off      | t
+ page_partial | reclaim  | t
+(12 rows)
+
+SELECT scenario, mode, rum_cleanup_test.count_rows(coll)
+    = CASE WHEN scenario = 'page_partial' THEN 1 ELSE 0 END AS expected_survivors
+FROM rum_cleanup_cases WHERE scenario IN ('page', 'page_partial', 'fresh') ORDER BY scenario, mode;
+   scenario   |   mode   | expected_survivors
+--------------+----------+--------------------
+ fresh        | both     | t
+ fresh        | deletion | t
+ fresh        | off      | t
+ fresh        | reclaim  | t
+ page         | both     | t
+ page         | deletion | t
+ page         | off      | t
+ page         | reclaim  | t
+ page_partial | both     | t
+ page_partial | deletion | t
+ page_partial | off      | t
+ page_partial | reclaim  | t
+(12 rows)
+
+RESET documentdb_rum.enable_support_dead_index_items;
+SELECT scenario, mode, count(*) > 0 AND
+    CASE WHEN scenario = 'fresh_unhinted' THEN bool_and((value->>'entryFlags')::int = 1)
+         ELSE bool_or((value->>'entryFlags')::int = 3) END AS expected_dead_hints
+FROM rum_cleanup_cases CROSS JOIN LATERAL rum_cleanup_test.entries(coll)
+WHERE scenario IN ('page', 'page_partial', 'fresh', 'fresh_unhinted')
+GROUP BY scenario, mode ORDER BY scenario, mode;
+    scenario    |   mode   | expected_dead_hints
+----------------+----------+---------------------
+ fresh          | both     | t
+ fresh          | deletion | t
+ fresh          | off      | t
+ fresh          | reclaim  | t
+ fresh_unhinted | both     | t
+ fresh_unhinted | deletion | t
+ fresh_unhinted | off      | t
+ fresh_unhinted | reclaim  | t
+ page           | both     | t
+ page           | deletion | t
+ page           | off      | t
+ page           | reclaim  | t
+ page_partial   | both     | t
+ page_partial   | deletion | t
+ page_partial   | off      | t
+ page_partial   | reclaim  | t
+(16 rows)
+
+CREATE TEMP TABLE rum_cleanup_targets AS
+SELECT coll, value->>'firstEntry' AS key, value->>'attrNumber' AS attnum,
+       (value->>'numPostings')::int AS old_count
+FROM rum_cleanup_cases CROSS JOIN LATERAL rum_cleanup_test.entries(coll)
+WHERE scenario IN ('page', 'page_partial') AND (value->>'numPostings')::int > 1;
+SELECT scenario, mode, count(*) > 0 AND bool_and((value->>'entryFlags')::int
+    = CASE WHEN scenario = 'page_partial' THEN 1 ELSE 3 END) AS expected_target_hints
+FROM rum_cleanup_cases CROSS JOIN LATERAL rum_cleanup_test.entries(coll)
+WHERE scenario IN ('page', 'page_partial') AND (value->>'numPostings')::int > 1
+GROUP BY scenario, mode ORDER BY scenario, mode;
+   scenario   |   mode   | expected_target_hints
+--------------+----------+-----------------------
+ page         | both     | t
+ page         | deletion | t
+ page         | off      | t
+ page         | reclaim  | t
+ page_partial | both     | t
+ page_partial | deletion | t
+ page_partial | off      | t
+ page_partial | reclaim  | t
+(8 rows)
+
+CREATE TEMP TABLE rum_cleanup_sizes AS
+SELECT coll, rum_cleanup_test.count_leaf_pages(coll, false) AS leaves,
+       pg_relation_size(rum_cleanup_test.index_name(coll)::regclass) AS bytes,
+       (SELECT count(*) FROM rum_cleanup_test.entries(coll)) AS entry_count
+FROM rum_cleanup_cases WHERE scenario IN ('page', 'page_partial', 'fresh', 'fresh_unhinted');
+SELECT scenario, mode, rum_cleanup_test.insert_with_flags(coll, mode,
+    format('{ "_id": %s, "a": [%s] }', 10000 + page_inserts,
+        CASE WHEN scenario IN ('page', 'page_partial') THEN 1 ELSE 2 END)::bson) IS NOT NULL AS inserted
+FROM rum_cleanup_cases, rum_cleanup_limits
+WHERE scenario IN ('page', 'page_partial', 'fresh', 'fresh_unhinted') ORDER BY scenario, mode;
+    scenario    |   mode   | inserted
+----------------+----------+----------
+ fresh          | both     | t
+ fresh          | deletion | t
+ fresh          | off      | t
+ fresh          | reclaim  | t
+ fresh_unhinted | both     | t
+ fresh_unhinted | deletion | t
+ fresh_unhinted | off      | t
+ fresh_unhinted | reclaim  | t
+ page           | both     | t
+ page           | deletion | t
+ page           | off      | t
+ page           | reclaim  | t
+ page_partial   | both     | t
+ page_partial   | deletion | t
+ page_partial   | off      | t
+ page_partial   | reclaim  | t
+(16 rows)
+
+SELECT scenario, mode,
+    (rum_cleanup_test.count_leaf_pages(coll, false) > leaves)
+        = (NOT deletion OR scenario = 'fresh_unhinted') AS expected_split,
+    (pg_relation_size(rum_cleanup_test.index_name(coll)::regclass) > bytes)
+        = (NOT deletion OR scenario = 'fresh_unhinted') AS expected_growth,
+    rum_cleanup_test.count_leaf_pages(coll, true) = 0 AS stays_inline
+FROM rum_cleanup_cases JOIN rum_cleanup_sizes USING (coll) ORDER BY scenario, mode;
+    scenario    |   mode   | expected_split | expected_growth | stays_inline
+----------------+----------+----------------+-----------------+--------------
+ fresh          | both     | t              | t               | t
+ fresh          | deletion | t              | t               | t
+ fresh          | off      | t              | t               | t
+ fresh          | reclaim  | t              | t               | t
+ fresh_unhinted | both     | t              | t               | t
+ fresh_unhinted | deletion | t              | t               | t
+ fresh_unhinted | off      | t              | t               | t
+ fresh_unhinted | reclaim  | t              | t               | t
+ page           | both     | t              | t               | t
+ page           | deletion | t              | t               | t
+ page           | off      | t              | t               | t
+ page           | reclaim  | t              | t               | t
+ page_partial   | both     | t              | t               | t
+ page_partial   | deletion | t              | t               | t
+ page_partial   | off      | t              | t               | t
+ page_partial   | reclaim  | t              | t               | t
+(16 rows)
+
+-- Partially live targets retain dead postings outside the selected heap blocks.
+SELECT scenario, mode, count(*) = (SELECT count(*) FROM rum_cleanup_targets t WHERE t.coll = c.coll)
+    AND count(*) > 0 AND bool_and(value->>'entryType' = 'postingList'
+    AND CASE WHEN NOT deletion THEN (value->>'numPostings')::int = old_count + 1
+             WHEN scenario = 'page_partial' THEN (value->>'numPostings')::int > 2
+                 AND (value->>'numPostings')::int < old_count + 1
+             ELSE (value->>'numPostings')::int = 1 END
+    AND (value->>'entryFlags')::int = 1) AS expected_pending_postings
+FROM rum_cleanup_cases c JOIN rum_cleanup_targets t USING (coll)
+CROSS JOIN LATERAL rum_cleanup_test.entries(coll) e
+WHERE e.value->>'firstEntry' = t.key AND e.value->>'attrNumber' = t.attnum
+GROUP BY scenario, mode, deletion, c.coll ORDER BY scenario, mode;
+   scenario   |   mode   | expected_pending_postings
+--------------+----------+---------------------------
+ page         | both     | t
+ page         | deletion | t
+ page         | off      | t
+ page         | reclaim  | t
+ page_partial | both     | t
+ page_partial | deletion | t
+ page_partial | off      | t
+ page_partial | reclaim  | t
+(8 rows)
+
+SELECT scenario, mode,
+    ((SELECT count(*) FROM rum_cleanup_test.entries(coll)) < entry_count)
+        = (deletion AND scenario <> 'fresh_unhinted') AS dead_neighbors_reclaimed
+FROM rum_cleanup_cases JOIN rum_cleanup_sizes USING (coll)
+ORDER BY scenario, mode;
+    scenario    |   mode   | dead_neighbors_reclaimed
+----------------+----------+--------------------------
+ fresh          | both     | t
+ fresh          | deletion | t
+ fresh          | off      | t
+ fresh          | reclaim  | t
+ fresh_unhinted | both     | t
+ fresh_unhinted | deletion | t
+ fresh_unhinted | off      | t
+ fresh_unhinted | reclaim  | t
+ page           | both     | t
+ page           | deletion | t
+ page           | off      | t
+ page           | reclaim  | t
+ page_partial   | both     | t
+ page_partial   | deletion | t
+ page_partial   | off      | t
+ page_partial   | reclaim  | t
+(16 rows)
+
+SELECT scenario, mode, rum_cleanup_test.count_rows(coll)
+        = CASE WHEN scenario = 'page_partial' THEN 2 ELSE 1 END AS live_rows,
+    rum_cleanup_test.count_rows(coll,
+        format('{ "a": %s, "_id": %s }', CASE WHEN scenario IN ('page', 'page_partial') THEN 1 ELSE 2 END,
+            10000 + page_inserts)) = 1 AS incoming_present,
+    rum_cleanup_test.count_rows(coll, '{ "a": 14 }') = 0 AS deleted_key_absent,
+    rum_cleanup_test.count_rows(coll, '{ "a": 12 }')
+        = CASE WHEN scenario = 'page_partial' THEN 1 ELSE 0 END AS survivor_preserved
+FROM rum_cleanup_cases, rum_cleanup_limits
+WHERE scenario IN ('page', 'page_partial', 'fresh', 'fresh_unhinted') ORDER BY scenario, mode;
+    scenario    |   mode   | live_rows | incoming_present | deleted_key_absent | survivor_preserved
+----------------+----------+-----------+------------------+--------------------+--------------------
+ fresh          | both     | t         | t                | t                  | t
+ fresh          | deletion | t         | t                | t                  | t
+ fresh          | off      | t         | t                | t                  | t
+ fresh          | reclaim  | t         | t                | t                  | t
+ fresh_unhinted | both     | t         | t                | t                  | t
+ fresh_unhinted | deletion | t         | t                | t                  | t
+ fresh_unhinted | off      | t         | t                | t                  | t
+ fresh_unhinted | reclaim  | t         | t                | t                  | t
+ page           | both     | t         | t                | t                  | t
+ page           | deletion | t         | t                | t                  | t
+ page           | off      | t         | t                | t                  | t
+ page           | reclaim  | t         | t                | t                  | t
+ page_partial   | both     | t         | t                | t                  | t
+ page_partial   | deletion | t         | t                | t                  | t
+ page_partial   | off      | t         | t                | t                  | t
+ page_partial   | reclaim  | t         | t                | t                  | t
+(16 rows)
+
+-- Only the replacement target is dead. Cleanup must prune it without changing a neighbor.
+INSERT INTO rum_cleanup_cases
+SELECT 'pending_only', name, reclaim, deletion, 'pending_only_' || name
+FROM rum_cleanup_modes;
+SELECT rum_cleanup_test.create_fixture('pending_only_capacity', false);
+NOTICE:  creating collection
+ create_fixture
+----------------
+
+(1 row)
+
+SELECT documentdb_api.insert_one('insert_cleanup', 'pending_only_capacity', '{ "_id": 0, "a": 2 }') IS NOT NULL;
+ ?column?
+----------
+ t
+(1 row)
+
+CREATE TEMP TABLE rum_pending_only_limits(capacity int);
+DO $$
+BEGIN
+    FOR i IN 1..3000 LOOP
+        PERFORM documentdb_api.insert_one('insert_cleanup', 'pending_only_capacity',
+            format('{ "_id": %s, "a": 1 }', i)::bson);
+        IF rum_cleanup_test.count_leaf_pages('pending_only_capacity', true) > 0 THEN
+            INSERT INTO rum_pending_only_limits VALUES (i - 1);
+            RETURN;
+        END IF;
+    END LOOP;
+    RAISE EXCEPTION 'pending-only inline capacity was not reached';
+END;
+$$;
+SELECT capacity > 900 AS calibrated_pending_only_capacity FROM rum_pending_only_limits;
+ calibrated_pending_only_capacity
+----------------------------------
+ t
+(1 row)
+
+SELECT rum_cleanup_test.create_fixture(coll, false)
+FROM rum_cleanup_cases WHERE scenario = 'pending_only' ORDER BY mode;
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+ create_fixture
+----------------
+
+
+
+
+(4 rows)
+
+SELECT documentdb_api.insert_one('insert_cleanup', coll, '{ "_id": 0, "a": 2 }') IS NOT NULL
+FROM rum_cleanup_cases WHERE scenario = 'pending_only' ORDER BY mode;
+ ?column?
+----------
+ t
+ t
+ t
+ t
+(4 rows)
+
+SELECT mode, count(documentdb_api.insert_one('insert_cleanup', coll,
+    format('{ "_id": %s, "a": 1 }', i)::bson)) = capacity AS filled_target
+FROM rum_cleanup_cases, rum_pending_only_limits, LATERAL generate_series(1, capacity) i
+WHERE scenario = 'pending_only' GROUP BY mode, capacity ORDER BY mode;
+   mode   | filled_target
+----------+---------------
+ both     | t
+ deletion | t
+ off      | t
+ reclaim  | t
+(4 rows)
+
+SELECT documentdb_api.delete('insert_cleanup',
+    format('{ "delete": "%s", "deletes": [ { "q": { "a": 1 }, "limit": 0 } ] }', coll)::bson) IS NOT NULL
+FROM rum_cleanup_cases WHERE scenario = 'pending_only' ORDER BY mode;
+ ?column?
+----------
+ t
+ t
+ t
+ t
+(4 rows)
+
+SELECT format('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_%s', collection_id)
+FROM documentdb_api_catalog.collections JOIN rum_cleanup_cases ON collection_name = coll
+WHERE database_name = 'insert_cleanup' AND scenario = 'pending_only' ORDER BY mode \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7636
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7637
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7638
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7639
+SET documentdb_rum.enable_support_dead_index_items TO on;
+SELECT mode, rum_cleanup_test.count_rows(coll, '{ "a": 1 }') = 0 AS target_rows_dead
+FROM rum_cleanup_cases WHERE scenario = 'pending_only' ORDER BY mode;
+   mode   | target_rows_dead
+----------+------------------
+ both     | t
+ deletion | t
+ off      | t
+ reclaim  | t
+(4 rows)
+
+SELECT mode, rum_cleanup_test.count_rows(coll, '{ "a": 1 }') = 0 AS target_rows_dead
+FROM rum_cleanup_cases WHERE scenario = 'pending_only' ORDER BY mode;
+   mode   | target_rows_dead
+----------+------------------
+ both     | t
+ deletion | t
+ off      | t
+ reclaim  | t
+(4 rows)
+
+RESET documentdb_rum.enable_support_dead_index_items;
+CREATE TEMP TABLE rum_pending_only_before AS
+SELECT coll, value FROM rum_cleanup_cases CROSS JOIN LATERAL rum_cleanup_test.entries(coll)
+WHERE scenario = 'pending_only';
+SELECT mode, rum_cleanup_test.count_leaf_pages(coll, false) = 1 AND count(*) = 2
+    AND bool_and(value->>'entryType' = 'postingList')
+    AND count(*) FILTER (WHERE (value->>'entryFlags')::int = 3
+        AND (value->>'numPostings')::int = capacity) = 1
+    AND count(*) FILTER (WHERE (value->>'entryFlags')::int = 1
+        AND (value->>'numPostings')::int = 1) = 1 AS only_target_dead_on_page
+FROM rum_cleanup_cases JOIN rum_pending_only_before USING (coll), rum_pending_only_limits
+GROUP BY mode, coll, capacity ORDER BY mode;
+   mode   | only_target_dead_on_page
+----------+--------------------------
+ both     | t
+ deletion | t
+ off      | t
+ reclaim  | t
+(4 rows)
+
+SELECT mode, rum_cleanup_test.insert_with_flags(coll, mode, '{ "_id": 10000, "a": 1 }') IS NOT NULL AS inserted
+FROM rum_cleanup_cases WHERE scenario = 'pending_only' ORDER BY mode;
+   mode   | inserted
+----------+----------
+ both     | t
+ deletion | t
+ off      | t
+ reclaim  | t
+(4 rows)
+
+SELECT mode, count(*) = 1 AND bool_and((e.value->>'entryFlags')::int = 1
+    AND e.value->>'entryType' = CASE WHEN reclaim THEN 'postingList' ELSE 'postingTree' END
+    AND (e.value->>'numPostings')::int = CASE WHEN reclaim THEN 1 ELSE -1 END) AS expected_pending_result
+FROM rum_cleanup_cases JOIN rum_pending_only_before b USING (coll)
+CROSS JOIN LATERAL rum_cleanup_test.entries(coll) e
+WHERE (b.value->>'entryFlags')::int = 3
+  AND e.value->>'firstEntry' = b.value->>'firstEntry'
+  AND e.value->>'attrNumber' = b.value->>'attrNumber'
+GROUP BY mode ORDER BY mode;
+   mode   | expected_pending_result
+----------+-------------------------
+ both     | t
+ deletion | t
+ off      | t
+ reclaim  | t
+(4 rows)
+
+SELECT mode, count(*) = 1 AND bool_and(e.value = b.value) AS neighbor_tuple_unchanged
+FROM rum_cleanup_cases JOIN rum_pending_only_before b USING (coll)
+CROSS JOIN LATERAL rum_cleanup_test.entries(coll) e
+WHERE (b.value->>'entryFlags')::int = 1
+  AND e.value->>'firstEntry' = b.value->>'firstEntry'
+  AND e.value->>'attrNumber' = b.value->>'attrNumber'
+GROUP BY mode ORDER BY mode;
+   mode   | neighbor_tuple_unchanged
+----------+--------------------------
+ both     | t
+ deletion | t
+ off      | t
+ reclaim  | t
+(4 rows)
+
+SELECT mode, (SELECT count(*) FROM rum_cleanup_test.entries(coll)) = 2 AS no_entry_deleted,
+    rum_cleanup_test.count_rows(coll) = 2 AS live_rows,
+    rum_cleanup_test.count_rows(coll, '{ "a": 1, "_id": 10000 }') = 1 AS incoming_present,
+    rum_cleanup_test.count_rows(coll, '{ "a": 1, "_id": 1 }') = 0 AS deleted_absent,
+    rum_cleanup_test.count_rows(coll, '{ "a": 2, "_id": 0 }') = 1 AS neighbor_row_preserved
+FROM rum_cleanup_cases WHERE scenario = 'pending_only' ORDER BY mode;
+   mode   | no_entry_deleted | live_rows | incoming_present | deleted_absent | neighbor_row_preserved
+----------+------------------+-----------+------------------+----------------+------------------------
+ both     | t                | t         | t                | t              | t
+ deletion | t                | t         | t                | t              | t
+ off      | t                | t         | t                | t              | t
+ reclaim  | t                | t         | t                | t              | t
+(4 rows)
+
+-- Exercise retained boundaries on non-rightmost leaves, not just a leaf root.
+RESET documentdb.forceDisableSeqScan;
+CREATE FUNCTION rum_cleanup_test.index_term_to_bson(bytea)
+RETURNS bson LANGUAGE c
+AS '$libdir/pg_documentdb', 'gin_bson_index_term_to_bson';
+CREATE FUNCTION rum_cleanup_test.create_boundary_fixture(coll text)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+    cid bigint;
+BEGIN
+    PERFORM documentdb_api.create_collection('insert_cleanup', coll);
+    SELECT collection_id INTO cid FROM documentdb_api_catalog.collections
+    WHERE database_name = 'insert_cleanup' AND collection_name = coll;
+    EXECUTE format('ALTER TABLE documentdb_data.documents_%s SET (autovacuum_enabled = off)', cid);
+    PERFORM documentdb_api.insert_one('insert_cleanup', coll,
+        bson_build_document('_id', 2 * i + j, 'a', lpad(i::text, 6, '0') ||
+            (SELECT left(string_agg(md5(i::text || ':' || salt::text), ''), 600)
+             FROM generate_series(1, 19) salt)))
+    FROM generate_series(1, 150) i, generate_series(-1, 0) j ORDER BY i, j;
+    PERFORM set_config('documentdb_rum.rum_default_page_fill_factor', '100', true);
+    PERFORM documentdb_api_internal.create_indexes_non_concurrently('insert_cleanup',
+        format('{ "createIndexes": "%s", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }', coll)::bson, true);
+END;
+$$;
+CREATE TEMP TABLE rum_boundary_cases AS
+SELECT mode, target_fence, partial, false AS calibration,
+       format('boundary_%s_%s_%s', target_fence, partial, mode) AS coll,
+       NULL::jsonb AS fence, NULL::jsonb AS target,
+       NULL::text AS fence_key, NULL::text AS target_key,
+       NULL::int AS page_inserts, NULL::bigint AS leaves
+FROM (SELECT name AS mode FROM rum_cleanup_modes WHERE name IN ('off', 'deletion')) m,
+     (VALUES (false), (true)) t(target_fence), (VALUES (false), (true)) p(partial);
+INSERT INTO rum_boundary_cases(mode, target_fence, partial, calibration, coll)
+VALUES ('off', false, false, true, 'boundary_capacity'),
+       ('off', true, false, true, 'boundary_target_capacity');
+SELECT count(rum_cleanup_test.create_boundary_fixture(coll)) = 10 AS boundary_fixtures_created
+FROM rum_boundary_cases;
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+NOTICE:  creating collection
+ boundary_fixtures_created
+---------------------------
+ t
+(1 row)
+
+DO $$
+DECLARE
+    c record;
+    boundary record;
+    target_entry jsonb;
+BEGIN
+    FOR c IN SELECT * FROM rum_boundary_cases ORDER BY coll LOOP
+        SELECT blockno, value INTO STRICT boundary
+        FROM rum_cleanup_test.entries(c.coll)
+        WHERE documentdb_api_internal.documentdb_rum_page_get_stats(
+            public.get_raw_page(rum_cleanup_test.index_name(c.coll), blockno))->>'rightLink' IS NOT NULL
+          AND (value->>'offset')::int > 2
+        ORDER BY blockno, (value->>'offset')::int DESC LIMIT 1;
+        SELECT value INTO STRICT target_entry FROM rum_cleanup_test.entries(c.coll)
+        WHERE blockno = boundary.blockno
+        ORDER BY (value->>'offset')::int DESC LIMIT 1 OFFSET CASE WHEN c.target_fence THEN 0 ELSE 1 END;
+        UPDATE rum_boundary_cases SET fence = boundary.value, target = target_entry,
+            fence_key = rum_cleanup_test.index_term_to_bson((boundary.value->>'firstEntry')::bytea)->>'$',
+            target_key = rum_cleanup_test.index_term_to_bson((target_entry->>'firstEntry')::bytea)->>'$'
+        WHERE coll = c.coll;
+    END LOOP;
+END;
+$$;
+SELECT bool_and(length(fence_key) = 606 AND length(target_key) = 606
+    AND (target_fence = (fence_key = target_key))
+    AND rum_cleanup_test.count_leaf_pages(coll, false) > 1) AS non_rightmost_boundaries_selected
+FROM rum_boundary_cases;
+ non_rightmost_boundaries_selected
+-----------------------------------
+ t
+(1 row)
+
+DO $$
+DECLARE
+    c record;
+    initial_size bigint;
+BEGIN
+    FOR c IN SELECT * FROM rum_boundary_cases WHERE calibration LOOP
+        initial_size := pg_relation_size(rum_cleanup_test.index_name(c.coll)::regclass);
+        FOR i IN 1..1000 LOOP
+            PERFORM documentdb_api.insert_one('insert_cleanup', c.coll,
+                bson_build_document('_id', 1000 + i, 'a', c.target_key));
+            IF pg_relation_size(rum_cleanup_test.index_name(c.coll)::regclass) > initial_size THEN
+                UPDATE rum_boundary_cases SET page_inserts = i WHERE target_fence = c.target_fence;
+                EXIT;
+            END IF;
+        END LOOP;
+    END LOOP;
+END;
+$$;
+SELECT bool_and(page_inserts BETWEEN 1 AND 1000) AS boundary_pressure_calibrated
+FROM rum_boundary_cases;
+ boundary_pressure_calibrated
+------------------------------
+ t
+(1 row)
+
+SELECT count(documentdb_api.insert_one('insert_cleanup', coll,
+    bson_build_document('_id', 1000 + i, 'a', target_key))) > 0 AS boundary_prefix_replayed
+FROM rum_boundary_cases, LATERAL generate_series(1, page_inserts - 1) i
+WHERE NOT calibration;
+ boundary_prefix_replayed
+--------------------------
+ t
+(1 row)
+
+SELECT count(documentdb_api.delete('insert_cleanup',
+    format('{ "delete": "%s", "deletes": [ { "q": %s, "limit": 0 } ] }', coll,
+        CASE WHEN partial THEN format('{ "_id": { "$ne": %s } }', 2 * left(fence_key, 6)::int)
+             ELSE '{}' END)::bson)) = 8 AS boundary_rows_deleted
+FROM rum_boundary_cases WHERE NOT calibration;
+ boundary_rows_deleted
+-----------------------
+ t
+(1 row)
+
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+SELECT format('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_%s', collection_id)
+FROM documentdb_api_catalog.collections JOIN rum_boundary_cases ON collection_name = coll
+WHERE database_name = 'insert_cleanup' AND NOT calibration ORDER BY coll \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7644
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7640
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7645
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7641
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7646
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7642
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7647
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) documentdb_data.documents_7643
+SET documentdb.forceDisableSeqScan TO on;
+SET documentdb_rum.enable_support_dead_index_items TO on;
+SELECT bool_and(rum_cleanup_test.count_rows(coll) = partial::int) AS boundary_survivors
+FROM rum_boundary_cases WHERE NOT calibration;
+ boundary_survivors
+--------------------
+ t
+(1 row)
+
+SELECT bool_and(rum_cleanup_test.count_rows(coll) = partial::int) AS boundary_survivors
+FROM rum_boundary_cases WHERE NOT calibration;
+ boundary_survivors
+--------------------
+ t
+(1 row)
+
+RESET documentdb_rum.enable_support_dead_index_items;
+UPDATE rum_boundary_cases c SET fence = e.value,
+    leaves = rum_cleanup_test.count_leaf_pages(c.coll, false)
+FROM rum_boundary_cases b CROSS JOIN LATERAL rum_cleanup_test.entries(b.coll) e
+WHERE c.coll = b.coll AND NOT c.calibration
+  AND e.value->>'firstEntry' = c.fence->>'firstEntry'
+  AND e.value->>'attrNumber' = c.fence->>'attrNumber';
+SELECT bool_and((fence->>'entryFlags')::int = CASE WHEN partial THEN 1 ELSE 3 END
+    AND (fence->>'numPostings')::int > partial::int) AS boundary_has_dead_postings
+FROM rum_boundary_cases WHERE NOT calibration;
+ boundary_has_dead_postings
+----------------------------
+ t
+(1 row)
+
+SELECT count(rum_cleanup_test.insert_with_flags(coll, mode,
+    bson_build_document('_id', 100000, 'a', target_key))) = 8 AS boundary_inserted
+FROM rum_boundary_cases WHERE NOT calibration;
+ boundary_inserted
+-------------------
+ t
+(1 row)
+
+-- A partially live replacement boundary is not itself a source of probe blocks.
+SELECT mode, target_fence, partial,
+    count(*) = 1 AND bool_and(e.value->>'entryType' = 'postingList'
+        AND CASE WHEN NOT m.deletion THEN (e.value->>'numPostings')::int =
+                     (c.fence->>'numPostings')::int + target_fence::int
+                 WHEN partial AND target_fence THEN (e.value->>'numPostings')::int > 2
+                     AND (e.value->>'numPostings')::int < (c.fence->>'numPostings')::int + 1
+                 ELSE (e.value->>'numPostings')::int = partial::int + target_fence::int END)
+        AS boundary_postings_pruned,
+    bool_and(NOT m.deletion OR (e.value->>'offset')::int = CASE WHEN target_fence THEN 1 ELSE 2 END)
+        AS shifted_boundary_found,
+    (rum_cleanup_test.count_leaf_pages(coll, false) > leaves) = NOT m.deletion AS expected_split
+FROM rum_boundary_cases c JOIN rum_cleanup_modes m ON m.name = c.mode
+CROSS JOIN LATERAL rum_cleanup_test.entries(coll) e
+WHERE NOT calibration AND e.value->>'firstEntry' = c.fence->>'firstEntry'
+  AND e.value->>'attrNumber' = c.fence->>'attrNumber'
+GROUP BY mode, target_fence, partial, m.deletion, coll, leaves
+ORDER BY mode, target_fence, partial;
+   mode   | target_fence | partial | boundary_postings_pruned | shifted_boundary_found | expected_split
+----------+--------------+---------+--------------------------+------------------------+----------------
+ deletion | f            | f       | t                        | t                      | t
+ deletion | f            | t       | t                        | t                      | t
+ deletion | t            | f       | t                        | t                      | t
+ deletion | t            | t       | t                        | t                      | t
+ off      | f            | f       | t                        | t                      | t
+ off      | f            | t       | t                        | t                      | t
+ off      | t            | f       | t                        | t                      | t
+ off      | t            | t       | t                        | t                      | t
+(8 rows)
+
+SELECT bool_and(rum_cleanup_test.count_rows(coll) = 1 + partial::int
+    AND rum_cleanup_test.count_rows(coll, '{ "_id": 100000, "a": { "$exists": true } }') = 1)
+    AS boundary_live_rows_preserved
+FROM rum_boundary_cases WHERE NOT calibration;
+ boundary_live_rows_preserved
+------------------------------
+ t
+(1 row)
+
+-- Revive an emptied boundary, then force more splits on both sides of the old separator.
+SELECT count(rum_cleanup_test.insert_with_flags(coll, mode,
+    bson_build_document('_id', 100001, 'a', fence_key))) = 8 AS boundary_reinserted
+FROM rum_boundary_cases WHERE NOT calibration;
+ boundary_reinserted
+---------------------
+ t
+(1 row)
+
+UPDATE rum_boundary_cases SET leaves = rum_cleanup_test.count_leaf_pages(coll, false)
+WHERE NOT calibration;
+SELECT count(rum_cleanup_test.insert_with_flags(coll, mode,
+    bson_build_document('_id', 100001 + i, 'a',
+        CASE WHEN i = 31 THEN fence_key || 'q'
+             ELSE left(fence_key, 6) || '!' || lpad(i::text, 3, '0') || substr(fence_key, 7) END))) = 248
+    AS boundary_neighbors_inserted
+FROM rum_boundary_cases, generate_series(1, 31) i WHERE NOT calibration;
+ boundary_neighbors_inserted
+-----------------------------
+ t
+(1 row)
+
+SELECT mode, target_fence, partial,
+    rum_cleanup_test.count_leaf_pages(coll, false) > leaves AS split_again,
+    rum_cleanup_test.count_rows(coll) = 33 + partial::int AS all_rows_found,
+    rum_cleanup_test.count_rows(coll, format('{ "a": { "$gt": "%s" } }', fence_key)) = 1
+        AS right_neighbor_found
+FROM rum_boundary_cases WHERE NOT calibration ORDER BY mode, target_fence, partial;
+   mode   | target_fence | partial | split_again | all_rows_found | right_neighbor_found
+----------+--------------+---------+-------------+----------------+----------------------
+ deletion | f            | f       | t           | t              | t
+ deletion | f            | t       | t           | t              | t
+ deletion | t            | f       | t           | t              | t
+ deletion | t            | t       | t           | t              | t
+ off      | f            | f       | t           | t              | t
+ off      | f            | t       | t           | t              | t
+ off      | t            | f       | t           | t              | t
+ off      | t            | t       | t           | t              | t
+(8 rows)
+
+RESET documentdb.forceDisableSeqScan;
+RESET documentdb_rum.enable_insert_time_deletion;
+RESET documentdb_rum.enable_insert_time_posting_list_reclaim;
+SELECT documentdb_api.drop_collection('insert_cleanup', coll)
+FROM rum_cleanup_cases ORDER BY scenario, mode;
+ drop_collection
+-----------------
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+(36 rows)
+
+SELECT documentdb_api.drop_collection('insert_cleanup', 'capacity');
+ drop_collection
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('insert_cleanup', 'page_capacity');
+ drop_collection
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('insert_cleanup', 'pending_only_capacity');
+ drop_collection
+-----------------
+ t
+(1 row)
+
+SELECT documentdb_api.drop_collection('insert_cleanup', coll) FROM rum_boundary_cases ORDER BY coll;
+ drop_collection
+-----------------
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+(10 rows)
+
+DROP TABLE rum_cleanup_modes, rum_cleanup_cases, rum_cleanup_limits,
+    rum_cleanup_promoted, rum_cleanup_targets, rum_cleanup_sizes,
+    rum_pending_only_limits, rum_pending_only_before, rum_boundary_cases;
+DROP SCHEMA rum_cleanup_test CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DETAIL:  drop cascades to function rum_cleanup_test.index_name(text)
+drop cascades to function rum_cleanup_test.entries(text)
+drop cascades to function rum_cleanup_test.count_leaf_pages(text,boolean)
+drop cascades to function rum_cleanup_test.count_rows(text,text)
+drop cascades to function rum_cleanup_test.create_fixture(text,boolean)
+drop cascades to function rum_cleanup_test.insert_with_flags(text,text,bson)
+drop cascades to function rum_cleanup_test.index_term_to_bson(bytea)
+drop cascades to function rum_cleanup_test.create_boundary_fixture(text)

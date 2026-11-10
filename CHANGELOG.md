@@ -1,4 +1,5 @@
 ### documentdb v1.4-0 (Unreleased) ###
+* Reclaim dead postings during index insertion to avoid posting-list promotion and entry-page splits, controlled by the default-off `documentdb_rum.enable_insert_time_posting_list_reclaim` and `documentdb_rum.enable_insert_time_deletion` settings. *[Perf]*
 
 ### documentdb v1.3-0 (Unreleased) ###
 * End a dynamic cursor's `getMore` with a query-plan-killed error when its collection was dropped and created again, or another collection was renamed onto its name, after the previous page. Such a `getMore` previously resumed in the new collection's table at the old position, returning its documents or crashing the server process. *[Bugfix]*

@@ -20,6 +20,7 @@
 #include "lib/rbtree.h"
 #include "storage/bufmgr.h"
 #include "utils/datum.h"
+#include "utils/hsearch.h"
 #include "utils/memutils.h"
 
 #include "pg_documentdb_rum_exports.h"
@@ -532,6 +533,11 @@ typedef struct RumState
 	Oid supportCollation[INDEX_MAX_KEYS];
 }   RumState;
 
+/*
+ * TM_IndexDeleteOp (TM_IndexDeleteOp is defined in tableam.h, forward-declared here to avoid including tableam.h in this header file)
+ */
+struct TM_IndexDeleteOp;
+
 /* Accessor for the i'th attribute of tupdesc. */
 #if PG_VERSION_NUM > 100000
 #define RumTupleDescAttr(tupdesc, i) (TupleDescAttr(tupdesc, i))
@@ -596,7 +602,8 @@ extern bool ruminsert(Relation index, Datum *values, bool *isnull,
 					  );
 extern void rumEntryInsert(RumState *rumstate,
 						   OffsetNumber attnum, Datum key, RumNullCategory category,
-						   RumItem *items, uint32 nitem, RumStatsData *buildStats);
+						   RumItem *items, uint32 nitem,
+						   RumStatsData *buildStats, Relation heapRel);
 
 /* rumbtree.c */
 
@@ -628,6 +635,8 @@ typedef struct RumBtreeData
 	Page (*splitPage)(RumBtree, Buffer, Buffer, Page, Page, OffsetNumber);
 	void (*fillRoot)(RumBtree, Buffer, Buffer, Buffer, Page, Page, Page);
 	void (*fillBtreeForIncompleteSplit)(RumBtree, RumBtreeStack *, Buffer);
+	void (*cleanupPage)(Relation, RumBtree, RumBtreeStack *,
+						const RumItem *, uint32);
 
 	bool isData;
 	bool searchMode;
@@ -678,6 +687,27 @@ extern void rumPrepareEntryScan(RumBtree btree, OffsetNumber attnum,
 extern void rumEntryFillRoot(RumBtree btree, Buffer root, Buffer lbuf, Buffer rbuf,
 							 Page page, Page lpage, Page rpage);
 extern IndexTuple rumPageGetLinkItup(RumBtree btree, Buffer buf, Page page);
+
+/*
+ * Initialize a heap-deletion request sized for up to `maxtids` candidate TIDs.
+ */
+extern void rumProbeBegin(Relation index,
+						  struct TM_IndexDeleteOp *delstate,
+						  BlockNumber iblknum, bool bottomup,
+						  Size bottomupfreespace, int maxtids);
+
+/*
+ * Append one candidate TID to a heap-deletion request.
+ */
+extern void rumProbeAddTid(struct TM_IndexDeleteOp *delstate,
+						   HTAB *addedTids,
+						   ItemPointerData tid, OffsetNumber idxoffnum,
+						   bool knownDeletable);
+
+/*
+ * Release the per-call heap-deletion state.
+ */
+extern void rumProbeCleanupFinish(struct TM_IndexDeleteOp *delstate);
 extern void rumReadTuple(RumState *rumstate, OffsetNumber attnum,
 						 IndexTuple itup, RumItem *items, bool copyAddInfo);
 extern void rumReadTuplePointers(RumState *rumstate, OffsetNumber attnum,
@@ -1109,6 +1139,13 @@ extern bool SupportsXLogInsertForEntry(Page page, Buffer childbuf);
 extern void WriteInsertWalRecord(Buffer buffer, Page page);
 extern void WriteInsertEntryWalRecord(bool isDelete, OffsetNumber off, IndexTuple entry);
 extern void DefineCustomRumRmgr(void);
+
+/*
+ * Emit XLOG_BTREE_REUSE_PAGE WAL record so hot standbys can resolve recovery
+ * conflicts for transactions older than 'horizon' before we reuse space freed by dead index entries on `buf`.
+ */
+extern void RumLogReusePageWithHorizon(Relation index, Buffer buf, TransactionId horizon);
+
 extern void RumLogReusePage(Relation index, Buffer buf);
 
 /* rumutil.c */
@@ -1202,6 +1239,8 @@ extern PGDLLIMPORT bool RumEnableEmitReusePageOnRecycle;
 extern PGDLLIMPORT bool RumSkipResetOnDeadEntryPage;
 extern PGDLLIMPORT int RumDefaultPageFillFactor;
 extern PGDLLIMPORT bool RumEnablePageFillFactor;
+extern PGDLLIMPORT bool RumEnableInsertTimeDeletion;
+extern PGDLLIMPORT bool RumEnableInsertTimePostingListReclaim;
 extern PGDLLIMPORT bool RumAllowReplaceOnInsertTuple;
 extern PGDLLIMPORT bool RumEnableXlogInsertEntry;
 extern PGDLLIMPORT bool RumEnableBtreeLockOrder;

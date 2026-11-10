@@ -188,6 +188,18 @@ PGDLLEXPORT bool RumEnableEmitReusePageOnRecycle =
 PGDLLEXPORT bool RumEnablePageFillFactor =
 	RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR;
 
+/* rumbtree.c */
+/* FeatureFlag: Added in v1.4, Pending stabilization, enable on v1.7 */
+#define RUM_DEFAULT_ENABLE_INSERT_TIME_DELETION false
+PGDLLEXPORT bool RumEnableInsertTimeDeletion =
+	RUM_DEFAULT_ENABLE_INSERT_TIME_DELETION;
+
+/* ruminsert.c */
+/* FeatureFlag: Added in v1.4, Pending stabilization, enable on v1.7 */
+#define RUM_DEFAULT_ENABLE_INSERT_TIME_POSTING_LIST_RECLAIM false
+PGDLLEXPORT bool RumEnableInsertTimePostingListReclaim =
+	RUM_DEFAULT_ENABLE_INSERT_TIME_POSTING_LIST_RECLAIM;
+
 /* FeatureFlag: Added in v0.113, Enabled in v0.113, remove after v1.7 */
 #define RUM_DEFAULT_ENABLE_BTREE_LOCK_ORDER true
 PGDLLEXPORT bool RumEnableBtreeLockOrder = RUM_DEFAULT_ENABLE_BTREE_LOCK_ORDER;
@@ -507,6 +519,25 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		NULL,
 		&RumEnablePageFillFactor,
 		RUM_DEFAULT_ENABLE_PAGE_FILL_FACTOR,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_insert_time_deletion", documentDBRumGucPrefix),
+		"Tries to perform simple pass LP_DEAD cleanup before splitting an entry-tree leaf page.",
+		NULL,
+		&RumEnableInsertTimeDeletion,
+		RUM_DEFAULT_ENABLE_INSERT_TIME_DELETION,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_insert_time_posting_list_reclaim",
+				 documentDBRumGucPrefix),
+		"Avoid posting list promotion by reclaiming dead entries first.",
+		NULL,
+		&RumEnableInsertTimePostingListReclaim,
+		RUM_DEFAULT_ENABLE_INSERT_TIME_POSTING_LIST_RECLAIM,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 
