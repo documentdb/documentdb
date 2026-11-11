@@ -775,7 +775,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 	DefineCustomBoolVariable(
 		psprintf("%s.enableSchemaValidation", prefix),
 		gettext_noop(
-			"Whether or not to support schema validation."),
+			"Determines whether schema validation is supported."),
 		NULL,
 		&EnableSchemaValidation,
 		DEFAULT_ENABLE_SCHEMA_VALIDATION,
@@ -852,7 +852,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 	DefineCustomBoolVariable(
 		psprintf("%s.enableBypassDocumentValidation", prefix),
 		gettext_noop(
-			"Whether or not to support 'bypassDocumentValidation'."),
+			"Determines whether the 'bypassDocumentValidation' request option is supported."),
 		NULL,
 		&EnableBypassDocumentValidation,
 		DEFAULT_ENABLE_BYPASSDOCUMENTVALIDATION,
