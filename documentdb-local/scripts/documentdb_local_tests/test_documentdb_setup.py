@@ -11598,3 +11598,86 @@ class PackageUpgradeRestartTests(unittest.TestCase):
         self.assertIn("load the upgraded DocumentDB libraries", r.stdout)
         self.assertIn("sudo systemctl restart postgresql@17-main.service", r.stdout)
         self.assertIn("documentdb-setup --target-postgres-instance 17/main --yes", r.stdout)
+
+
+class RerunKeepsAdminUsersTests(unittest.TestCase):
+    """Finishing a package upgrade is a re-run of setup; it must not need the
+    admin credentials or replace an admin's password."""
+
+    def _bash(self, script, env=None):
+        shell = shutil.which("bash")
+        if not shell:
+            self.skipTest("bash not available")
+        return subprocess.run([shell, "-c", script], capture_output=True, text=True,
+                              timeout=30, env=dict(os.environ, **(env or {})))
+
+    def test_only_a_named_major_with_setup_state_counts_as_an_existing_install(self):
+        func = _shell_function(self, SETUP_SCRIPT, "existing_install_named")
+        with tempfile.TemporaryDirectory() as tmp:
+            func = func.replace("/etc/documentdb/local", tmp)
+            (Path(tmp) / "17").mkdir()
+            (Path(tmp) / "17" / "setup.conf").write_text("PG_VERSION=17\n")
+            (Path(tmp) / "16").mkdir()
+            (Path(tmp) / "16" / "brownfield.conf").write_text("PG_VERSION=16\n")
+            cases = (
+                ("true", "17", "", "yes"),
+                ("false", "17", "", "no"),     # major not named: auto-detect may pick another
+                ("true", "18", "", "no"),
+                ("true", "16", "", "no"),      # a brownfield major is not a greenfield re-run
+                ("false", "", "16/main", "yes"),
+                ("false", "", "17/main", "no"),
+            )
+            for explicit, version, target, expected in cases:
+                with self.subTest(explicit=explicit, version=version, target=target):
+                    r = self._bash(
+                        f"set -euo pipefail\nPG_VERSION_EXPLICIT={explicit}; PG_VERSION={version}; "
+                        f"TARGET_CLUSTER={target}\n{func}\n"
+                        "if existing_install_named; then echo yes; else echo no; fi\n")
+                    self.assertEqual(r.stdout.strip(), expected, r.stderr)
+
+    def _keep(self, admins):
+        script = (
+            "set -euo pipefail\n"
+            'log_info() { echo "INFO: $*"; }\nlog_warn() { echo "WARN: $*"; }\n'
+            'die() { echo "DIE: $*"; exit 1; }\n'
+            'confirm_or_apply() { echo "APPLY: $1"; }\n'
+            'run_as_user() { local sql; sql="$(cat)";\n'
+            '  case "${sql}" in *string_agg*) echo "${ADMINS}" ;; *) echo "UNEXPECTED: ${sql}" ;; esac; }\n'
+            'KEEP_ADMIN_USERS=true USERNAME="" PG_OWNER=documentdb PSQL=psql PG_SOCKET_DIR=/tmp PG_PORT=9718 HAS_EXTENDED_RUM=false\n'
+            + _shell_function(self, SETUP_SCRIPT, "create_required_extensions_and_users")
+            + "\ncreate_required_extensions_and_users\n"
+        )
+        return self._bash(script, {"ADMINS": admins})
+
+    def test_rerun_without_admin_user_keeps_admins_and_passwords(self):
+        r = self._keep("admin ops")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("INFO: Keeping the existing admin users: admin ops.", r.stdout)
+        self.assertIn("APPLY: Run CREATE EXTENSION documentdb CASCADE", r.stdout)
+        self.assertNotIn("UNEXPECTED", r.stdout)
+        self.assertNotIn("Reset password", r.stdout)
+        self.assertNotIn("Bootstrap", r.stdout)
+
+    def test_rerun_without_admin_user_fails_when_no_admin_exists(self):
+        r = self._keep("")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("DIE: This install has no DocumentDB admin user.", r.stdout)
+
+    def test_rerun_without_admin_user_reads_no_password(self):
+        func = _shell_function(self, SETUP_SCRIPT, "validate_required_arguments")
+        base = (
+            "set -euo pipefail\n"
+            'die() { echo "DIE: $*"; exit 1; }\nresolve_password() { echo "PASSWORD READ"; }\n'
+            'KEEP_ADMIN_USERS=true USERNAME="" TLS_CERT_FILE="" TLS_KEY_FILE="" NO_ENABLE=false\n'
+        )
+        r = self._bash(base + f"LOAD_SAMPLE_DATA=false\n{func}\nvalidate_required_arguments\necho OK\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.strip(), "OK")
+        r = self._bash(base + f"LOAD_SAMPLE_DATA=true\n{func}\nvalidate_required_arguments\necho OK\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("--load-sample-data signs in as an admin user", r.stdout)
+
+    def test_the_decision_comes_before_the_admin_user_prompt(self):
+        main = _shell_function(self, SETUP_SCRIPT, "main")
+        self.assertLess(main.index("existing_install_named; then"),
+                        main.index("Admin username ["))

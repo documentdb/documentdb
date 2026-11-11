@@ -172,6 +172,8 @@ LIVE_PRELOAD_LIBRARIES=""
 PG_CONFIG_CHANGED=false
 PG_RELOAD_CHANGED=false
 GATEWAY_WAS_ACTIVE=false
+# A re-run of an existing install without --admin-user leaves its admins alone.
+KEEP_ADMIN_USERS=false
 
 error() {
     local line_number="$1"
@@ -195,6 +197,10 @@ Required:
   --admin-user <USER>    Admin username to create (also: --username).
                          When omitted on an interactive terminal the
                          wizard prompts (default: "admin").
+                         Optional when re-running an existing install
+                         named by --pg-version or --target-postgres-instance
+                         (e.g. after a package upgrade): its admin users and
+                         their passwords are kept.
 
 Authentication (one of the following; interactive prompt is the default):
   --admin-password-file <FILE>  Read the admin password from a file
@@ -1954,9 +1960,14 @@ refuse_home_tls_path() {
 }
 
 validate_required_arguments() {
-    [[ -n "${USERNAME}" ]] || die "--username is required."
-    # Before the TLS ownership repair below, so a refused password changes nothing.
-    resolve_password
+    if [[ "${KEEP_ADMIN_USERS:-}" == "true" ]]; then
+        [[ "${LOAD_SAMPLE_DATA}" != "true" ]] \
+            || die "--load-sample-data signs in as an admin user; pass --admin-user and its password source."
+    else
+        [[ -n "${USERNAME}" ]] || die "--username is required."
+        # Before the TLS ownership repair below, so a refused password changes nothing.
+        resolve_password
+    fi
 
     # TLS triple: --tls-cert / --tls-key must come together; combining
     # either with --tls-auto-generate true is a contradiction (the
@@ -2292,6 +2303,19 @@ persisted_listen_addr() {
         [[ "${_val}" =~ ^[[:space:]]*(.*[^[:space:]])?[[:space:]]*$ ]] && _val="${BASH_REMATCH[1]}"
     done < "${_env}"
     printf '%s' "${_val}"
+}
+
+# existing_install_named: --pg-version N or --target-postgres-instance N/C
+# names a major that a previous run already set up.
+existing_install_named() {
+    local major="" state="setup.conf"
+    if [[ -n "${TARGET_CLUSTER}" ]]; then
+        major="${TARGET_CLUSTER%%/*}"
+        state="brownfield.conf"
+    elif [[ "${PG_VERSION_EXPLICIT}" == "true" ]]; then
+        major="${PG_VERSION}"
+    fi
+    [[ "${major}" =~ ^[0-9]+$ && -f "/etc/documentdb/local/${major}/${state}" ]]
 }
 
 # persisted_gateway_port <major> — the GATEWAY_PORT a previous run recorded in
@@ -3228,6 +3252,22 @@ create_required_extensions_and_users() {
     confirm_or_apply "Install temporary getParameter rejection stub if the backend function is missing" \
         _install_getparameter_stub
 
+    if [[ "${KEEP_ADMIN_USERS:-}" == "true" ]]; then
+        local admins=""
+        admins="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v ON_ERROR_STOP=1 <<'SQL'
+SELECT string_agg(r.rolname, ' ' ORDER BY r.rolname) FROM pg_roles r
+JOIN pg_auth_members m ON m.member = r.oid
+JOIN pg_roles g ON g.oid = m.roleid
+WHERE g.rolname = 'documentdb_admin_role' AND r.rolcanlogin
+  AND r.rolname !~* '^(documentdb|citus|pg|internal_role)';
+SQL
+        )" || die "Could not list the DocumentDB admin users."
+        [[ -n "${admins}" ]] \
+            || die "This install has no DocumentDB admin user. Re-run with --admin-user NAME and a password source to create one."
+        log_info "Keeping the existing admin users: ${admins}. Pass --admin-user to add one or to reset its password."
+        return 0
+    fi
+
     if run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v ON_ERROR_STOP=1 -v role_name="${USERNAME}" <<'SQL' | grep -q '^1$'; then
 SELECT 1 FROM pg_roles WHERE rolname = :'role_name';
 SQL
@@ -3889,14 +3929,20 @@ print_completion_message() {
     # and pointing out how to switch DBs.
     # URI-encode, and encode ' too (jq 1.6's @uri keeps it) so nothing can
     # close the single quotes.
-    local encoded_user
-    encoded_user="$(jq -rn --arg u "${USERNAME}" '$u | @uri' | sed "s/'/%27/g")"
+    local encoded_user="<admin-user>"
+    if [[ -n "${USERNAME}" ]]; then
+        encoded_user="$(jq -rn --arg u "${USERNAME}" '$u | @uri' | sed "s/'/%27/g")"
+    fi
     connect_uri="mongosh 'mongodb://"
     connect_uri+="${encoded_user}:<your-password>@${connect_host}/mydb?${connect_opts}'"
     log_success "DocumentDB is ready."
     echo "Connect with:"
     echo "  ${connect_uri}"
-    echo "  Replace <your-password> with the password you provided."
+    if [[ -n "${USERNAME}" ]]; then
+        echo "  Replace <your-password> with the password you provided."
+    else
+        echo "  Replace <admin-user> and <your-password> with an existing admin user's credentials."
+    fi
     echo "  Replace mydb with any DB name; a fresh DB is created on the first insert."
     if ! command_exists mongosh; then
         echo "  Note: mongosh is not installed on this host; install it to run the command above."
@@ -4693,7 +4739,10 @@ main() {
     # run `sudo documentdb-setup` and answer two prompts (user, password)
     # rather than reading the help to discover the flag is required.
     # Non-TTY callers (CI, unattended) still hit the usage+exit branch.
-    if [[ -z "${USERNAME}" && "${RESTORE}" != "true" ]]; then
+    if [[ -z "${USERNAME}" && "${RESTORE}" != "true" ]] && existing_install_named; then
+        KEEP_ADMIN_USERS=true
+    fi
+    if [[ -z "${USERNAME}" && "${RESTORE}" != "true" && "${KEEP_ADMIN_USERS}" != "true" ]]; then
         # --dry-run needs no real username — it only appears in the preview
         # text — so default it instead of prompting or erroring. This used
         # to fall into the non-interactive error branch below, which told an
@@ -4723,7 +4772,7 @@ main() {
 
     # Before the dry-run preview and any mutation: a name PostgreSQL or the
     # gateway refuses used to install fully and leave an admin that can't log in.
-    if [[ "${RESTORE}" != "true" ]]; then
+    if [[ "${RESTORE}" != "true" && "${KEEP_ADMIN_USERS}" != "true" ]]; then
         documentdb_validate_username "${USERNAME}" \
             || die "Admin username '${USERNAME}' is not allowed (see above). Choose a different --admin-user."
     fi
@@ -5312,7 +5361,11 @@ main() {
             log_info "[dry-run]   data dir: ${DATA_DIR}"
             log_info "[dry-run]   PG port: ${PG_PORT}, gateway port: ${GATEWAY_PORT}"
         fi
-        log_info "[dry-run]   admin user: ${USERNAME}"
+        if [[ "${KEEP_ADMIN_USERS}" == "true" ]]; then
+            log_info "[dry-run]   admin user: none given; the install's existing admin users are kept"
+        else
+            log_info "[dry-run]   admin user: ${USERNAME}"
+        fi
         log_info "[dry-run]   side-effect steps that would run (each gated by [y/N/dry-run] when --yes is not set):"
         if [[ -z "${TARGET_CLUSTER}" ]]; then
             log_info "[dry-run]     - Create ${DATA_DIR} owned by documentdb-local:documentdb-local${_datadir_note}"
@@ -5328,7 +5381,9 @@ main() {
         fi
         log_info "[dry-run]     - psql: CREATE EXTENSION documentdb CASCADE${_ext_note}"
         log_info "[dry-run]     - psql: install temporary getParameter rejection stub if the backend function is missing"
-        log_info "[dry-run]     - psql: bootstrap admin user '${USERNAME}' via documentdb_api.create_user()${_admin_note}"
+        if [[ "${KEEP_ADMIN_USERS}" != "true" ]]; then
+            log_info "[dry-run]     - psql: bootstrap admin user '${USERNAME}' via documentdb_api.create_user()${_admin_note}"
+        fi
         log_info "[dry-run]     - systemctl enable documentdb-gateway-local@${preview_pg_version}.service"
         log_info "[dry-run]     - systemctl start  documentdb-gateway-local@${preview_pg_version}.service"
         # Enable per-major
