@@ -11511,3 +11511,90 @@ class ProcpsDependencyTests(unittest.TestCase):
         text = SETUP_SCRIPT.read_text(encoding="utf-8")
         check = text.index('if [[ -z "${restore_scope}" ]] && ! command_exists pgrep; then')
         self.assertLess(check, text.index('_restore_strip_block "${config_file}"'))
+
+
+class PackageUpgradeRestartTests(unittest.TestCase):
+    """After a package upgrade the running postmaster still has the old
+    DocumentDB libraries loaded, and ALTER EXTENSION documentdb UPDATE fails
+    until PostgreSQL restarts."""
+
+    def _detect(self, mapped_name, deleted):
+        shell = shutil.which("bash")
+        if not shell or not os.path.isdir("/proc/self/map_files"):
+            self.skipTest("needs bash and Linux /proc")
+        func = _shell_function(self, SETUP_SCRIPT, "postmaster_runs_replaced_documentdb_library")
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp) / mapped_name
+            lib.write_bytes(b"\0" * 4096)
+            ready = Path(tmp) / "ready"
+            holder = subprocess.Popen(
+                ["python3", "-c",
+                 "import mmap, os, sys, time\n"
+                 "f = open(sys.argv[1], 'rb'); m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ)\n"
+                 "open(sys.argv[2], 'w').close(); time.sleep(30)\n",
+                 str(lib), str(ready)])
+            self.addCleanup(holder.wait)
+            self.addCleanup(holder.kill)
+            for _ in range(100):
+                if ready.exists():
+                    break
+                time.sleep(0.05)
+            if deleted:
+                lib.unlink()
+            (Path(tmp) / "postmaster.pid").write_text(f"{holder.pid}\n{tmp}\n")
+            r = subprocess.run(
+                [shell, "-c", f"set -euo pipefail\nDATA_DIR={shlex.quote(tmp)}\n{func}\n"
+                 "if postmaster_runs_replaced_documentdb_library; then echo REPLACED; else echo CURRENT; fi\n"],
+                capture_output=True, text=True, timeout=10)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return r.stdout.strip()
+
+    def test_a_deleted_documentdb_library_mapping_means_replaced(self):
+        self.assertEqual(self._detect("pg_documentdb.so", deleted=True), "REPLACED")
+        self.assertEqual(self._detect("pg_documentdb_core.so", deleted=True), "REPLACED")
+
+    def test_a_current_or_unrelated_mapping_is_not_replaced(self):
+        self.assertEqual(self._detect("pg_documentdb.so", deleted=False), "CURRENT")
+        self.assertEqual(self._detect("vector.so", deleted=True), "CURRENT")
+
+    def _restart(self, target_cluster=""):
+        shell = shutil.which("bash")
+        if not shell:
+            self.skipTest("bash not available")
+        func = _shell_function(self, SETUP_SCRIPT, "start_or_restart_postgres")
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = Path(tmp) / "calls"
+            script = (
+                "set -euo pipefail\n"
+                'log_info() { echo "INFO: $*"; }; log_warn() { echo "WARN: $*"; }\n'
+                "ensure_socket_dir_writable() { :; }; wait_for_postgres() { :; }\n"
+                "has_systemd_unit_file() { return 0; }\n"
+                f'systemctl() {{ echo "systemctl $*" >> {shlex.quote(str(calls))}; }}\n'
+                'confirm_or_apply() { shift; "$@"; }\n'
+                "postmaster_runs_replaced_documentdb_library() { return 0; }\n"
+                "resolve_brownfield_pg_service_unit() { echo postgresql@17-main.service; }\n"
+                "build_rerun_suffix() { echo ' --yes'; }; build_rerun_env_prefix() { :; }\n"
+                f"TARGET_CLUSTER={shlex.quote(target_cluster)}; HAS_WORKING_SYSTEMD=true\n"
+                "PG_CONFIG_CHANGED=false; PG_RELOAD_CHANGED=false\n"
+                f"PASSWORD_FROM_STDIN=false; PG_VERSION=17; DATA_DIR={shlex.quote(tmp)}\n"
+                + func + "\nstart_or_restart_postgres\necho CONTINUED\n"
+            )
+            r = subprocess.run([shell, "-c", script], stdin=subprocess.DEVNULL,
+                               capture_output=True, text=True, timeout=10)
+            recorded = calls.read_text() if calls.exists() else ""
+            return r, recorded
+
+    def test_self_managed_postgres_restarts_to_load_the_upgraded_libraries(self):
+        r, calls = self._restart()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("systemctl restart documentdb-postgresql@17.service", calls)
+        self.assertIn("CONTINUED", r.stdout)
+
+    def test_adopted_postgres_is_not_restarted_and_the_operator_is_told_how(self):
+        r, calls = self._restart(target_cluster="17/main")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("restart", calls)
+        self.assertNotIn("CONTINUED", r.stdout)
+        self.assertIn("load the upgraded DocumentDB libraries", r.stdout)
+        self.assertIn("sudo systemctl restart postgresql@17-main.service", r.stdout)
+        self.assertIn("documentdb-setup --target-postgres-instance 17/main --yes", r.stdout)
