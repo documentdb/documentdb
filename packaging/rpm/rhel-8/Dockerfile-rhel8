@@ -44,6 +44,7 @@ RUN dnf -y install --allowerasing \
         which \
         libicu-devel \
         krb5-devel \
+        libzstd-devel \
         python3 \
         perl-IPC-Run \
         tar && \

@@ -1,0 +1,325 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+SET search_path TO documentdb_core;
+SELECT pg_typeof(bson_to_bson_external('{}'::bson)) AS result_type;
+  result_type  
+---------------
+ bson_external
+(1 row)
+
+SELECT typname, typlen, typbyval, typalign, typstorage
+FROM pg_catalog.pg_type
+WHERE oid = 'bson_external'::regtype;
+    typname    | typlen | typbyval | typalign | typstorage 
+---------------+--------+----------+----------+------------
+ bson_external |     -1 | f        | i        | e
+(1 row)
+
+SELECT bson_to_bson_external(NULL::bson) IS NULL AS compress_null,
+       bson_external_to_bson(NULL::bson_external) IS NULL AS decompress_null;
+ compress_null | decompress_null 
+---------------+-----------------
+ t             | t
+(1 row)
+
+-- Every document is compressed, even when frame overhead makes it larger.
+SELECT pg_column_size(bson_to_bson_external('{}'::bson)) >
+       pg_column_size('{}'::bson) AS small_document_uses_zstd;
+ small_document_uses_zstd 
+--------------------------
+ t
+(1 row)
+
+-- Reference dictionary-free frames verify the four-byte header and one-byte flag.
+WITH fixtures(name, document, zstd_frame) AS (
+    VALUES
+        ('empty', '{}'::bson, '\x28b52ffd20052900000500000000'::bytea),
+        ('int32', '{"value":42}'::bson, '\x28b52ffd2010810000100000001076616c7565002a00000000'::bytea)
+)
+SELECT name,
+       octet_length(bson_to_bytea(document)) AS bson_bytes,
+       octet_length(zstd_frame) AS zstd_frame_bytes,
+       pg_column_size(bson_to_bson_external(document)) AS compressed_size,
+       pg_column_size(bson_to_bson_external(document)) - octet_length(zstd_frame)
+           AS storage_overhead_bytes,
+       bson_external_send(bson_to_bson_external(document)) = '\x01'::bytea || zstd_frame
+           AS binary_format_matches
+FROM fixtures ORDER BY name;
+ name  | bson_bytes | zstd_frame_bytes | compressed_size | storage_overhead_bytes | binary_format_matches 
+-------+------------+------------------+-----------------+------------------------+-----------------------
+ empty |          5 |               14 |              19 |                      5 | t
+ int32 |         16 |               25 |              30 |                      5 | t
+(2 rows)
+
+CREATE TABLE bson_external_test (id integer, document bson, compressed bson_external);
+ALTER TABLE bson_external_test ALTER COLUMN document SET STORAGE EXTERNAL;
+INSERT INTO bson_external_test (id, document) VALUES
+    (1, '{}'),
+    (2, '{"i":42,"n":null,"b":true,"a":[1,"two",{"x":3}],"d":{"$date":{"$numberLong":"123"}}}'),
+    (3, '{"bin":{"$binary":{"base64":"AAECA/8=","subType":"00"}},"oid":{"$oid":"5d505646cf6d4fe581014ab2"}}'),
+    (4, '{"unicode":"caf\u00e9 \u4e2d\u6587","long":{"$numberLong":"9223372036854775807"}}');
+INSERT INTO bson_external_test (id, document)
+SELECT 5, format('{"value":"%s"}', repeat('abc', 30000))::bson;
+INSERT INTO bson_external_test (id, document)
+SELECT 6, format('{"value":"%s"}', string_agg(md5(i::text), '' ORDER BY i))::bson
+FROM generate_series(1, 8192) AS i;
+UPDATE bson_external_test SET compressed = bson_to_bson_external(document);
+SELECT id,
+       bson_to_bytea(bson_external_to_bson(compressed)) = bson_to_bytea(document) AS round_trip,
+       get_byte(bson_external_send(compressed), 0) = 1 AS binary_send_uses_zstd,
+       bson_to_bytea(compressed::bson) = bson_to_bytea(document) AS explicit_cast
+FROM bson_external_test ORDER BY id;
+ id | round_trip | binary_send_uses_zstd | explicit_cast 
+----+------------+-----------------------+---------------
+  1 | t          | t                     | t
+  2 | t          | t                     | t
+  3 | t          | t                     | t
+  4 | t          | t                     | t
+  5 | t          | t                     | t
+  6 | t          | t                     | t
+(6 rows)
+
+SELECT pg_column_size(bson_to_bson_external(document)) < octet_length(bson_to_bytea(document)) / 10
+       AS compression_reduces_size
+FROM bson_external_test WHERE id = 5;
+ compression_reduces_size 
+--------------------------
+ t
+(1 row)
+
+-- Exercise both packed inline values and externally stored, incompressible input.
+SELECT id, pg_column_size(compressed) > 0 AS compressed_size_available,
+       bson_to_bytea(bson_external_to_bson(bson_to_bson_external(document))) =
+           bson_to_bytea(document)
+       AS recompress_round_trip
+FROM bson_external_test ORDER BY id;
+ id | compressed_size_available | recompress_round_trip 
+----+---------------------------+-----------------------
+  1 | t                         | t
+  2 | t                         | t
+  3 | t                         | t
+  4 | t                         | t
+  5 | t                         | t
+  6 | t                         | t
+(6 rows)
+
+SET documentdb_core.bsonUseEJson TO true;
+SELECT '{"value":42}'::bson_external;
+             bson_external             
+---------------------------------------
+ { "value" : { "$numberInt" : "42" } }
+(1 row)
+
+SELECT 'BSONHEX100000001076616c7565002a00000000'::bson_external;
+             bson_external             
+---------------------------------------
+ { "value" : { "$numberInt" : "42" } }
+(1 row)
+
+SET documentdb_core.bsonUseEJson TO false;
+SELECT '{"value":42}'::bson_external;
+              bson_external              
+-----------------------------------------
+ BSONHEX100000001076616c7565002a00000000
+(1 row)
+
+CREATE TABLE bson_external_copy (LIKE bson_external_test);
+\copy bson_external_test TO 'bson_external_type.bin' WITH (FORMAT binary)
+\copy bson_external_copy FROM 'bson_external_type.bin' WITH (FORMAT binary)
+SELECT count(*) = 6 AND bool_and(
+           bson_external_send(c.compressed) = bson_external_send(t.compressed) AND
+           bson_to_bytea(bson_external_to_bson(c.compressed)) = bson_to_bytea(t.document))
+       AS binary_copy_round_trip
+FROM bson_external_copy c JOIN bson_external_test t USING (id);
+ binary_copy_round_trip 
+------------------------
+ t
+(1 row)
+
+TRUNCATE bson_external_copy;
+\copy bson_external_test TO 'bson_external_type.txt'
+\copy bson_external_copy FROM 'bson_external_type.txt'
+SELECT count(*) = 6 AND bool_and(
+           bson_to_bytea(bson_external_to_bson(c.compressed)) = bson_to_bytea(t.document))
+       AS hex_copy_round_trip
+FROM bson_external_copy c JOIN bson_external_test t USING (id);
+ hex_copy_round_trip 
+---------------------
+ t
+(1 row)
+
+SET documentdb_core.bsonUseEJson TO true;
+TRUNCATE bson_external_copy;
+\copy bson_external_test TO 'bson_external_type.txt'
+\copy bson_external_copy FROM 'bson_external_type.txt'
+SELECT count(*) = 6 AND bool_and(
+           bson_to_bytea(bson_external_to_bson(c.compressed)) = bson_to_bytea(t.document))
+       AS json_copy_round_trip
+FROM bson_external_copy c JOIN bson_external_test t USING (id);
+ json_copy_round_trip 
+----------------------
+ t
+(1 row)
+
+-- A test-only binary-compatible cast constructs stored flag-0 payloads.
+CREATE CAST (bytea AS bson_external) WITHOUT FUNCTION;
+CREATE TABLE bson_external_uncompressed AS
+SELECT id, document, ('\x00'::bytea || bson_to_bytea(document))::bson_external AS external
+FROM bson_external_test;
+SELECT id,
+       bson_to_bytea(bson_external_to_bson(external)) = bson_to_bytea(document)
+           AS uncompressed_round_trip,
+       bson_external_send(external) = '\x00'::bytea || bson_to_bytea(document)
+           AS uncompressed_binary_send,
+       bson_to_bytea(external::bson) = bson_to_bytea(document) AS uncompressed_cast,
+       bson_to_bytea(external::text::bson) = bson_to_bytea(document) AS uncompressed_text
+FROM bson_external_uncompressed ORDER BY id;
+ id | uncompressed_round_trip | uncompressed_binary_send | uncompressed_cast | uncompressed_text 
+----+-------------------------+--------------------------+-------------------+-------------------
+  1 | t                       | t                        | t                 | t
+  2 | t                       | t                        | t                 | t
+  3 | t                       | t                        | t                 | t
+  4 | t                       | t                        | t                 | t
+  5 | t                       | t                        | t                 | t
+  6 | t                       | t                        | t                 | t
+(6 rows)
+
+TRUNCATE bson_external_copy;
+\copy bson_external_uncompressed TO 'bson_external_type.bin' WITH (FORMAT binary)
+\copy bson_external_copy FROM 'bson_external_type.bin' WITH (FORMAT binary)
+SELECT count(*) = 6 AND bool_and(
+           bson_external_send(c.compressed) = bson_external_send(t.external) AND
+           bson_to_bytea(bson_external_to_bson(c.compressed)) = bson_to_bytea(t.document))
+       AS uncompressed_binary_copy_round_trip
+FROM bson_external_copy c JOIN bson_external_uncompressed t USING (id);
+ uncompressed_binary_copy_round_trip 
+-------------------------------------
+ t
+(1 row)
+
+-- Binary COPY from bytea supplies exact encoded bytes to the receive function.
+CREATE TABLE bson_external_binary_input (id integer, encoded bytea);
+CREATE TABLE bson_external_binary_received (id integer, external bson_external);
+INSERT INTO bson_external_binary_input VALUES
+    (1, '\x000500000000'),
+    (2, '\x0128b52ffd20052000000500000009000000');
+\copy bson_external_binary_input TO 'bson_external_type.bin' WITH (FORMAT binary)
+\copy bson_external_binary_received FROM 'bson_external_type.bin' WITH (FORMAT binary)
+SELECT r.id, bson_external_send(r.external) = i.encoded AS binary_bytes_preserved,
+       bson_to_bytea(bson_external_to_bson(r.external)) = bson_to_bytea('{}'::bson)
+           AS binary_document_preserved
+FROM bson_external_binary_received r JOIN bson_external_binary_input i USING (id)
+ORDER BY r.id;
+ id | binary_bytes_preserved | binary_document_preserved 
+----+------------------------+---------------------------
+  1 | t                      | t
+  2 | t                      | t
+(2 rows)
+
+\set VERBOSITY terse
+SELECT 'not json'::bson_external;
+ERROR:  invalid input syntax JSON for BSON: Code: '1', Message 'Got parse error at "o", position 1: "SPECIAL_EXPECTED"' at character 8
+SELECT 'BSONHEX00000000'::bson_external;
+ERROR:  invalid input syntax for BSON: Unable to initialize for validate
+SELECT bson_external_to_bson('\x00'::bytea::bson_external);
+ERROR:  invalid input syntax for BSON
+SELECT bson_external_to_bson('\x000800000010780000'::bytea::bson_external);
+ERROR:  invalid input syntax for BSON. Code: 0, Message corrupt BSON
+SELECT bson_external_to_bson('\x02'::bytea::bson_external);
+ERROR:  unsupported BSON external flags value: 2
+SELECT bson_external_to_bson('\x'::bytea::bson_external);
+ERROR:  BSON external data does not include a flags byte
+-- Header-only frames declare 100 MiB + 1 and 1 GiB of output. Reject their
+-- declared sizes before allocating or attempting to decompress missing blocks.
+SELECT bson_external_to_bson('\x0128b52ffda001004006'::bytea::bson_external);
+ERROR:  BSON external uncompressed size exceeds the limit of 104857600 bytes
+SELECT bson_external_to_bson('\x0128b52ffda000000040'::bytea::bson_external);
+ERROR:  BSON external uncompressed size exceeds the limit of 104857600 bytes
+TRUNCATE bson_external_binary_input;
+INSERT INTO bson_external_binary_input VALUES (1, '\x0128b52ffda001004006');
+\copy bson_external_binary_input TO 'bson_external_type.bin' WITH (FORMAT binary)
+\copy bson_external_binary_received FROM 'bson_external_type.bin' WITH (FORMAT binary)
+ERROR:  BSON external uncompressed size exceeds the limit of 104857600 bytes
+-- A BSON document with one "value" string has 17 bytes of encoding overhead.
+-- Reuse a valid document exactly one byte above the limit for both other paths.
+CREATE TEMP TABLE bson_external_oversized AS
+SELECT bson_build_document('value', repeat('a', 100 * 1024 * 1024 - 16)) AS document;
+SELECT octet_length(bson_to_bytea(document)) = 100 * 1024 * 1024 + 1
+       AS oversized_document_is_one_byte_above_limit
+FROM bson_external_oversized;
+ oversized_document_is_one_byte_above_limit 
+--------------------------------------------
+ t
+(1 row)
+
+SELECT bson_external_to_bson(('\x00'::bytea || bson_to_bytea(document))::bson_external)
+FROM bson_external_oversized;
+ERROR:  BSON external uncompressed size exceeds the limit of 104857600 bytes
+SELECT bson_to_bson_external(document) FROM bson_external_oversized;
+ERROR:  BSON external uncompressed size exceeds the limit of 104857600 bytes
+DROP TABLE bson_external_oversized;
+-- Exactly 100 MiB remains valid through raw decoding and compression.
+CREATE TEMP TABLE bson_external_at_limit AS
+SELECT bson_build_document('value', repeat('a', 100 * 1024 * 1024 - 17)) AS document;
+SELECT octet_length(bson_to_bytea(document)) = 100 * 1024 * 1024
+       AS document_is_exactly_at_limit
+FROM bson_external_at_limit;
+ document_is_exactly_at_limit 
+------------------------------
+ t
+(1 row)
+
+SELECT bson_to_bytea(bson_external_to_bson(
+           ('\x00'::bytea || bson_to_bytea(document))::bson_external))
+       = bson_to_bytea(document) AS raw_at_limit_round_trip
+FROM bson_external_at_limit;
+ raw_at_limit_round_trip 
+-------------------------
+ t
+(1 row)
+
+SELECT bson_to_bytea(bson_external_to_bson(bson_to_bson_external(document)))
+       = bson_to_bytea(document) AS compressed_at_limit_round_trip
+FROM bson_external_at_limit;
+ compressed_at_limit_round_trip 
+--------------------------------
+ t
+(1 row)
+
+DROP TABLE bson_external_at_limit;
+TRUNCATE bson_external_binary_input;
+INSERT INTO bson_external_binary_input VALUES (1, '\x02');
+\copy bson_external_binary_input TO 'bson_external_type.bin' WITH (FORMAT binary)
+\copy bson_external_binary_received FROM 'bson_external_type.bin' WITH (FORMAT binary)
+ERROR:  unsupported BSON external flags value: 2
+TRUNCATE bson_external_binary_input;
+INSERT INTO bson_external_binary_input VALUES (1, '\x000800000010780000');
+\copy bson_external_binary_input TO 'bson_external_type.bin' WITH (FORMAT binary)
+\copy bson_external_binary_received FROM 'bson_external_type.bin' WITH (FORMAT binary)
+ERROR:  invalid input syntax for BSON. Code: 0, Message corrupt BSON
+TRUNCATE bson_external_binary_input;
+INSERT INTO bson_external_binary_input VALUES (1, '\x0128b52ffd200529000005');
+\copy bson_external_binary_input TO 'bson_external_type.bin' WITH (FORMAT binary)
+\copy bson_external_binary_received FROM 'bson_external_type.bin' WITH (FORMAT binary)
+ERROR:  could not decompress BSON data: Src size is incorrect
+TRUNCATE bson_external_binary_input;
+INSERT INTO bson_external_binary_input VALUES (1, '\x0128b52ffd20052900000500000001');
+\copy bson_external_binary_input TO 'bson_external_type.bin' WITH (FORMAT binary)
+\copy bson_external_binary_received FROM 'bson_external_type.bin' WITH (FORMAT binary)
+ERROR:  invalid input syntax for BSON: Unable to initialize for validate
+TRUNCATE bson_external_binary_input;
+INSERT INTO bson_external_binary_input VALUES (1, '\x');
+\copy bson_external_binary_input TO 'bson_external_type.bin' WITH (FORMAT binary)
+\copy bson_external_binary_received FROM 'bson_external_type.bin' WITH (FORMAT binary)
+ERROR:  BSON external data does not include a flags byte
+\set VERBOSITY default
+SELECT count(*) = 2 AS rejected_binary_rows_not_stored FROM bson_external_binary_received;
+ rejected_binary_rows_not_stored 
+---------------------------------
+ t
+(1 row)
+
+DROP TABLE bson_external_binary_received, bson_external_binary_input,
+           bson_external_uncompressed, bson_external_copy, bson_external_test;
+DROP CAST (bytea AS bson_external);
+\! rm bson_external_type.bin bson_external_type.txt

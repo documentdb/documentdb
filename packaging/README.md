@@ -169,6 +169,11 @@ majors), the build is tiered:
 The full lists below enumerate everything the scripts *accept*; Tier 1 is the
 subset CI produces automatically.
 
+Extension builds require the system Zstandard development package:
+`libzstd-dev` on Debian/Ubuntu or `libzstd-devel` on EL8/EL9. These provide
+`zstd.h`, the linker library, and `libzstd.pc`. DEB and RPM dependency scanning
+records the dynamically linked Zstandard runtime dependency automatically.
+
 ## Package version formats
 
 One release deliberately carries two version grammars:

@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     libicu-dev \
     libkrb5-dev \
+    libzstd-dev \
     postgresql-${POSTGRES_VERSION}-cron \
     postgresql-${POSTGRES_VERSION}-pgvector \
     $(if [ "${POSTGRES_VERSION}" -lt 18 ]; then echo "postgresql-${POSTGRES_VERSION}-rum"; fi) \
