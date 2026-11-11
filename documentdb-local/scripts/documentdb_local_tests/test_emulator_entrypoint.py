@@ -874,6 +874,96 @@ exit 0
         self.assertIn("getParameter rejection stub", result.stderr)
         self.assertIn(self._fast_stop(), self._recorded_pg_ctl_calls())
 
+    def _run_extension_update(self, rows, query_rc=0, alter_rc=0):
+        """Boot with a catalog whose out-of-date extensions are `rows`
+        (name|installed|default); returns the run and every SQL text psql read."""
+        self._configure_lifecycle_stubs()
+        sql_log = self.root / "psql-sql"
+        answer = "".join(f"{row}\\n" for row in rows)
+        self._write_exec(
+            self.bin_dir / "psql",
+            f"""#!/bin/sh
+case "$*" in
+  *pg_available_extensions*) echo "1,1"; exit 0 ;;
+  *enumvals*) echo t; exit 0 ;;
+esac
+sql="$(cat)"
+printf '%s\\n' "$sql" >> "{sql_log}"
+case "$sql" in
+  *"<> a.default_version"*) printf '{answer}'; exit {query_rc} ;;
+  *"ALTER EXTENSION"*) exit {alter_rc} ;;
+esac
+exit 0
+""",
+        )
+        result = self._run_entrypoint(extra_env=self._lifecycle_env())
+        sql = sql_log.read_text(encoding="utf-8") if sql_log.exists() else ""
+        return result, sql
+
+    def test_an_older_extension_catalog_is_updated_before_the_gateway_starts(self):
+        result, sql = self._run_extension_update(
+            [
+                "documentdb_core|1.0-0|1.2-0",
+                "documentdb|1.0-0|1.2-0",
+                "documentdb_extended_rum|1.0-0|1.2-0",
+            ]
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn(
+            "Updating the DocumentDB extensions on this data volume: "
+            "documentdb_core 1.0-0 -> 1.2-0, documentdb 1.0-0 -> 1.2-0, "
+            "documentdb_extended_rum 1.0-0 -> 1.2-0",
+            result.stdout,
+        )
+        self.assertIn("DocumentDB extensions updated.", result.stdout)
+        # One transaction, core first: documentdb is built against it.
+        self.assertIn(
+            "BEGIN;\nALTER EXTENSION documentdb_core UPDATE;\n"
+            "ALTER EXTENSION documentdb UPDATE;\n"
+            "ALTER EXTENSION documentdb_extended_rum UPDATE;\nCOMMIT;\n",
+            sql,
+        )
+        self.assertLess(sql.index("ALTER EXTENSION"), sql.index("get_parameter"))
+        self.assertLess(
+            result.stdout.index("DocumentDB extensions updated."),
+            result.stdout.index("Starting gateway in the background"),
+        )
+
+    def test_a_current_extension_catalog_is_left_alone(self):
+        result, sql = self._run_extension_update([])
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("ALTER EXTENSION", sql)
+        self.assertNotIn("Updating the DocumentDB extensions", result.stdout)
+
+    def test_a_newer_extension_catalog_is_not_downgraded(self):
+        # 1.10-0 is newer than 1.9-0; a text comparison would say otherwise.
+        result, sql = self._run_extension_update(["documentdb_core|1.10-0|1.9-0"])
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("ALTER EXTENSION", sql)
+        self.assertIn(
+            "documentdb_core on this data volume is at version 1.10-0, newer than "
+            "this image's 1.9-0. Downgrading is not supported",
+            result.stderr,
+        )
+
+    def test_a_failed_extension_update_stops_the_boot(self):
+        for name, kwargs, message in (
+            ("update", {"alter_rc": 3}, "updating the DocumentDB extensions failed and was rolled back"),
+            ("version query", {"query_rc": 2}, "could not read the DocumentDB extension versions"),
+        ):
+            with self.subTest(name):
+                result, _ = self._run_extension_update(
+                    ["documentdb_core|1.0-0|1.2-0"], **kwargs
+                )
+
+                self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertNotIn("Starting gateway in the background", result.stdout)
+                self.assertIn(self._fast_stop(), self._recorded_pg_ctl_calls())
+
     def test_a_signal_during_exit_trap_shutdown_keeps_the_failure_status(self):
         # A bare exit stops PostgreSQL from the EXIT trap; docker stop lands meanwhile.
         stopping = self.root / "pg-ctl-running"
@@ -2806,7 +2896,11 @@ exec /bin/chmod "$@"
         )
 
     def test_get_parameter_stub_install_failure_aborts_startup(self):
-        self._configure_postgres_stubs(psql_exit_code=1)
+        self._configure_postgres_stubs()
+        self._write_exec(
+            self.bin_dir / "psql",
+            "#!/bin/sh\nif grep -q get_parameter; then exit 1; fi\nexit 0\n",
+        )
 
         result = self._run_entrypoint(extra_env={"START_POSTGRESQL": "true"})
 
