@@ -1,4 +1,5 @@
 ### documentdb v1.4-0 (Unreleased) ###
+* Add `bson_to_bson_external(bson)` for measuring dictionary-free Zstandard compression with `pg_column_size`, returning a `bson_external` value with BSON round-trip conversion and text/binary I/O. Readers also accept flag-0 uncompressed BSON payloads. Binary I/O preserves flag-prefixed encoded bytes without the PostgreSQL varlena header and validates them on receive; text I/O uses uncompressed BSON representations. The conversion UDF and text input always compress at the default Zstandard level; small documents can grow. Existing collection storage is unchanged. *[Feature]*
 * Reclaim dead postings during index insertion to avoid posting-list promotion and entry-page splits, controlled by the default-off `documentdb_rum.enable_insert_time_posting_list_reclaim` and `documentdb_rum.enable_insert_time_deletion` settings. *[Perf]*
 
 ### documentdb v1.3-0 (Unreleased) ###

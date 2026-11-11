@@ -37,6 +37,7 @@ BuildRequires:  cmake
 BuildRequires:  postgresql%{pg_version}-devel
 BuildRequires:  libicu-devel
 BuildRequires:  krb5-devel
+BuildRequires:  libzstd-devel
 BuildRequires:  pkg-config
 # The following BuildRequires are for system packages.
 # Libbson and pcre2 development files are provided by scripts

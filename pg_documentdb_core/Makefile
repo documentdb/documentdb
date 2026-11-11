@@ -28,8 +28,9 @@ include $(OSS_SRC_DIR)/Makefile.cflags
 
 INTEL_DECIMAL_MATH_LIB = $(shell pkg-config --cflags intelmathlib)
 PCRE2_LIB = $(shell pkg-config --cflags libpcre2-8)
+ZSTD_LIB = $(shell pkg-config --libs libzstd)
 
-PG_CPPFLAGS += $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
+PG_CPPFLAGS += $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB) $(shell pkg-config --cflags libzstd)
 PG_CFLAGS += $(INTEL_DECIMAL_MATH_LIB) $(PCRE2_LIB)
 PG_LDFLAGS +=  $(shell pkg-config --static --libs --cflags intelmathlib) $(shell pkg-config --static --libs --cflags libpcre2-8)
 
@@ -45,7 +46,7 @@ ifeq ($(DEBUG),yes)
   override CPPFLAGS += -O0
 endif
 
-SHLIB_LINK = $(libpq)
+SHLIB_LINK = $(libpq) $(ZSTD_LIB)
 
 include $(OSS_SRC_DIR)/Makefile.global
 
