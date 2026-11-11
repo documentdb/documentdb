@@ -16,7 +16,7 @@ SET documentdb.next_collection_index_id TO 43000;
 --
 -- The output deliberately avoids the collStats "count", whose value is derived
 -- from per-node table statistics and therefore varies with the cluster
--- topology. This test only asserts that the nested $collStats runs without the
+-- topology. These cases only assert that the nested $collStats runs without the
 -- "query on a shard" error, so the projections emit topology-independent shapes.
 -- ===========================================================================
 
@@ -56,5 +56,56 @@ SELECT document FROM bson_aggregation_pipeline('collstats_nd_db', '{ "aggregate"
     { "$collStats": { "count": {} } },
     { "$project": { "_id": 0, "ns": 1 } } ] }');
 ROLLBACK;
+
+-- ===========================================================================
+-- When a node cannot accept a connection, collStats, count without a query,
+-- dbStats, $indexStats and currentOp must fail their run_command_on_all_nodes
+-- fan-out with a connection failure (SQLSTATE 08006), not with an internal
+-- error.
+--
+-- A worker is made unreachable by moving it to port 0, which is never a
+-- valid port, so every connection attempt to it fails. The move happens in a
+-- transaction that is rolled back, which restores the node metadata without
+-- triggering a metadata sync to the worker.
+-- ===========================================================================
+SELECT nodeid AS worker_node_id, nodeport AS worker_node_port
+FROM pg_dist_node WHERE groupid > 0 AND noderole = 'primary'
+ORDER BY nodeid LIMIT 1 \gset
+
+\set VERBOSITY terse
+BEGIN;
+SELECT citus_update_node(:worker_node_id, 'localhost', 0);
+SAVEPOINT worker_unreachable;
+
+SELECT documentdb_api.coll_stats('collstats_nd_db', 'nd_coll');
+\echo :SQLSTATE
+ROLLBACK TO SAVEPOINT worker_unreachable;
+
+-- A count without a query, skip, limit or hint is answered by $collStats.
+SELECT documentdb_api.count_query('collstats_nd_db', '{ "count": "nd_coll" }');
+\echo :SQLSTATE
+ROLLBACK TO SAVEPOINT worker_unreachable;
+
+SELECT documentdb_api.db_stats('collstats_nd_db');
+\echo :SQLSTATE
+ROLLBACK TO SAVEPOINT worker_unreachable;
+
+-- The $indexStats stage is not permitted in a transaction, so call the
+-- function that the stage runs.
+SELECT documentdb_api_internal.index_stats_aggregation('collstats_nd_db', 'nd_coll');
+\echo :SQLSTATE
+ROLLBACK TO SAVEPOINT worker_unreachable;
+
+SELECT documentdb_api.current_op_command('{ "currentOp": 1 }');
+\echo :SQLSTATE
+ROLLBACK;
+\set VERBOSITY default
+
+-- The rollback restores the worker, and the commands reach it again.
+SELECT nodeport = :worker_node_port AS worker_port_restored
+FROM pg_dist_node WHERE nodeid = :worker_node_id;
+
+SELECT bson_dollar_project(documentdb_api.coll_stats('collstats_nd_db', 'nd_coll'),
+    '{ "ns": 1, "ok": 1 }');
 
 SELECT documentdb_api.drop_collection('collstats_nd_db', 'nd_coll');

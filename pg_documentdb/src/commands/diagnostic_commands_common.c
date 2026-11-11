@@ -258,8 +258,14 @@ RunQueryOnAllServerNodes(const char *commandName, Datum *values, Oid *types,
 					const char *workerError = text_to_cstring(resultText);
 
 					StringView errorView = CreateStringViewFromString(workerError);
+
+					/*
+					 * This text must be the same as the text that Citus writes
+					 * when it cannot connect to a node (citus_tools.c). It is not
+					 * an error message. Do not change it in a message clean-up.
+					 */
 					StringView connectivityView = CreateStringViewFromString(
-						"Unable to establish connection with");
+						"failed to connect to");
 					StringView recoveryErrorView = CreateStringViewFromString(
 						"terminating connection due to conflict with recovery");
 					StringView recoveryCancelErrorView = CreateStringViewFromString(
