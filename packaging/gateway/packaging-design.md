@@ -806,13 +806,9 @@ Package dependencies use `>=` floors, not exact pins (§4.4, "Dependencies (summ
 
 ### 10.8 No documented point-release upgrade runbook
 
-Bumping the extension package to a new point release installs a new `.so` but does not itself update the installed SQL catalog — PostgreSQL's own `ALTER EXTENSION documentdb_core UPDATE;` then `ALTER EXTENSION documentdb UPDATE;` (it does not cascade to dependencies), plus `ALTER EXTENSION documentdb_extended_rum UPDATE;` where that extension is installed, is required to move the catalog forward. `documentdb-setup` already does this idempotently as part of its normal apply path (so a Workflow C re-run after an upgrade picks it up for free), but there is currently no dedicated "after you upgrade the package, do this" section in this document, and no proactive nudge printed by the package upgrade itself (postinst never runs SQL — see [§7](#7-security-posture)).
+Bumping the extension package to a new point release installs a new `.so` but does not itself update the installed SQL catalog — PostgreSQL's own `ALTER EXTENSION documentdb_core UPDATE;` then `ALTER EXTENSION documentdb UPDATE;` (it does not cascade to dependencies), plus `ALTER EXTENSION documentdb_extended_rum UPDATE;` where that extension is installed, is required to move the catalog forward, and the postmaster must first restart to load the new library (postinst never restarts PostgreSQL or runs SQL — see [§7](#7-security-posture)).
 
-**Accepted for this release:** `ALTER EXTENSION ... UPDATE` is a standard PostgreSQL extension-upgrade operation, not a documentdb-specific one, and Workflow A/B administrators who manage their own PostgreSQL instance are expected to already follow that convention. Writing the explicit runbook is deferred rather than blocking this PR.
-
-**Workaround / operator guidance:** after a point-release package upgrade, either re-run `sudo documentdb-setup` (Workflow C — idempotent, safe to repeat) or run `ALTER EXTENSION documentdb_core UPDATE;` then `ALTER EXTENSION documentdb UPDATE;` (and `documentdb_extended_rum` if present) directly against the affected PostgreSQL instance (Workflow A/B).
-
-**Follow-up:** add a "day-2: after upgrading" subsection under [§5 User workflows](#5-user-workflows); documentation-only, no runtime behavior change needed.
+**Resolved:** the steps are in [packaging/README.md, Upgrading](../README.md#upgrading). A Workflow C re-run, `sudo documentdb-setup --pg-version N --yes`, restarts the package-owned PostgreSQL when it still runs the replaced libraries, updates the three extensions in one transaction, and needs no `--admin-user`.
 
 ---
 

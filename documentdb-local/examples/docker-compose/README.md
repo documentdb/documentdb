@@ -70,6 +70,11 @@ and repeat step 1. Restarting an existing stack with a new password will not
 change the already-provisioned user — that user is created once, on a fresh
 data volume.
 
+To move to a newer release, `docker compose pull && docker compose up -d`
+keeps the volume, and the container updates the extensions on it at start.
+Going back to an older image on the same volume is not supported; see
+[Upgrading](../../../packaging/README.md#upgrading).
+
 ## The health check
 
 The image ships a built-in health probe at
