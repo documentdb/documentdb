@@ -5,7 +5,7 @@ set documentdb_rum.enable_new_bulk_delete to off;
 set documentdb_rum.prune_rum_empty_pages to off;
 \i sql/rum_vacuum_cleanup_tests_core.sql
 SELECT name, setting, reset_val, boot_val FROM pg_settings WHERE name in ('documentdb_rum.fix_incomplete_split');
-                name                 | setting | reset_val | boot_val
+                name                 | setting | reset_val | boot_val 
 -------------------------------------+---------+-----------+----------
  documentdb_rum.fix_incomplete_split | on      | on        | on
 (1 row)
@@ -474,7 +474,7 @@ CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 set client_min_messages to LOG;
 SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_%s;', :vacuum_col) \gexec
 VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) documentdb_data.documents_401;
-psql:sql/rum_vacuum_cleanup_tests_core.sql:174: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=5, emptyEntries=999, emptyPostingTrees=1, prunedEntries=994, prunedPages=2,prunedPostingTrees=0, postingPagesDeleted=9, emptyPostingPages=9, numBacktracks=0, isNewBulkDelete=0, numEntryPages=0, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=1, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
+psql:sql/rum_vacuum_cleanup_tests_core.sql:174: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=5, emptyEntries=999, emptyPostingTrees=1, prunedEntries=994, prunedPages=2,prunedPostingTrees=0, postingPagesDeleted=9, emptyPostingPages=9, numBacktracks=0, isNewBulkDelete=0, numEntryPages=0, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=1, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 psql:sql/rum_vacuum_cleanup_tests_core.sql:174: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=2, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=11, numBacktracks=0, isNewBulkDelete=0, numEntryPages=4, numDataPages=5, numVoidPages=2, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0, staleEmptyLeafRetries=0, cleanupRetryRuns=0, cleanupRetryPostingTrees=0, cleanupRetryPostingPagesDeleted=0, cleanupRetryEntryPagesPruned=0, cleanupRetryEntriesPruned=0
 WITH r1 AS (
     SELECT i,

@@ -34,8 +34,8 @@ SELECT NOT current_setting('documentdb_rum.enable_vacuum_cleanup_posting_tree_pr
 SET documentdb_rum.enable_new_bulk_delete TO on;
 SET documentdb_rum.enable_new_bulk_delete_inline_data_pages TO off;
 SET documentdb_rum.enable_vacuum_cleanup_posting_tree_pruning TO on;
--- Enable single-pass, the first weak-lock algorithm under test
-SET documentdb_rum.enable_single_pass_posting_tree_vacuum TO on;
+-- Exercise the default single-pass path, the first weak-lock algorithm under test.
+RESET documentdb_rum.enable_single_pass_posting_tree_vacuum;
 SET documentdb_rum.enable_targeted_posting_tree_pruning TO off;
 
 -- No other session reads this index. Recycle deleted pages immediately so

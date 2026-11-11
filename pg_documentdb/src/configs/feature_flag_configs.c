@@ -224,7 +224,7 @@ bool EnableUniqueNullMissingSemantics =
 bool EnableCollatedUniqueIndexes =
 	DEFAULT_ENABLE_COLLATED_UNIQUE_INDEXES;
 
-/* Added on v0.116, enabled on v0.116, remove after v1.1 */
+/* Added on v0.116, enabled on v0.116, remove after v1.5 */
 #define DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS_FOR_METADATA_TRACKING true
 bool EnableFailureOnParallelIndexArraysForMetadataTracking =
 	DEFAULT_ENABLE_FAILURE_ON_PARALLEL_INDEX_ARRAYS_FOR_METADATA_TRACKING;
@@ -260,7 +260,7 @@ bool TrackIndexOnlyScanFindCandidate =
 bool EmitEnableOrderedIndexFalseInResponse =
 	DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE;
 
-/* Added in v0.116, Pending stabilization, enable in v1.3 */
+/* Added in v0.116, Pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING false
 bool EnableCompositeReducedCorrelatedBoundsPlanning =
 	DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING;
@@ -554,7 +554,7 @@ bool EnableMergeGeneratedIdConsistency = DEFAULT_ENABLE_MERGE_GENERATED_ID_CONSI
  * SECTION: Lookup feature flags
  */
 
-/* Added in v1.0, Pending stabilization, enable in v1.3 */
+/* Added in v1.0, Pending stabilization, enable in v1.5 */
 #define DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN false
 bool ForceNestedLookupPipelineAfterJoin =
 	DEFAULT_FORCE_NESTED_LOOKUP_PIPELINE_AFTER_JOIN;
