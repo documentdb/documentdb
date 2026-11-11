@@ -3034,7 +3034,24 @@ build_rerun_suffix() {
     printf '%s' "${suffix}"
 }
 
+# A package upgrade replaces the DocumentDB libraries on disk, but the running
+# postmaster keeps the ones it preloaded, and ALTER EXTENSION documentdb UPDATE
+# then fails on functions only the new library has. The replaced files show up
+# as "(deleted)" mappings of the postmaster.
+postmaster_runs_replaced_documentdb_library() {
+    local pid=""
+    pid="$(head -n 1 "${DATA_DIR}/postmaster.pid" 2>/dev/null | tr -dc '0-9')" || true
+    [[ -n "${pid}" ]] || return 1
+    grep -qE '/pg_documentdb[^/ ]*\.so \(deleted\)$' "/proc/${pid}/maps" 2>/dev/null
+}
+
 start_or_restart_postgres() {
+    local library_replaced=false
+    if postmaster_runs_replaced_documentdb_library; then
+        library_replaced=true
+        log_info "PostgreSQL still runs the DocumentDB libraries it loaded before a package upgrade; it must restart before the extensions can be updated."
+    fi
+
     # Brownfield: never touch the system PostgreSQL service. We print the
     # required reload/restart command and rely on the operator to execute
     # it once they've inspected the config block we wrote.
@@ -3044,7 +3061,7 @@ start_or_restart_postgres() {
         # broken postgresql@18-.service; Debian vs RHEL layout is handled there.
         local reload_hint=""
         reload_hint="sudo systemctl reload $(resolve_brownfield_pg_service_unit)"
-        if [[ "${PG_CONFIG_CHANGED}" == "true" ]]; then
+        if [[ "${PG_CONFIG_CHANGED}" == "true" || "${library_replaced}" == "true" ]]; then
             # pg_documentdb is a
             # shared_preload_libraries extension — it won't load until the
             # postmaster restarts. We wrote shared_preload_libraries via
@@ -3055,7 +3072,11 @@ start_or_restart_postgres() {
             # (managed blocks in hba/ident/conf, gateway role, drop-in)
             # but no extension, no admin user, and no working gateway.
             # Stop here and tell the operator to restart PG + re-run.
-            log_warn "Brownfield mode: PostgreSQL must be restarted to pick up shared_preload_libraries changes."
+            if [[ "${PG_CONFIG_CHANGED}" == "true" ]]; then
+                log_warn "Brownfield mode: PostgreSQL must be restarted to pick up shared_preload_libraries changes."
+            else
+                log_warn "Brownfield mode: PostgreSQL must be restarted to load the upgraded DocumentDB libraries."
+            fi
             log_warn "    Run: ${reload_hint/reload/restart}"
             log_warn ""
             log_warn "documentdb-setup is exiting BEFORE running CREATE EXTENSION because"
@@ -3145,6 +3166,9 @@ start_or_restart_postgres() {
             if [[ "${PG_CONFIG_CHANGED}" == "true" ]]; then
                 confirm_or_apply "Restart ${pg_unit} to apply shared_preload_libraries changes" \
                     systemctl restart "${pg_unit}"
+            elif [[ "${library_replaced}" == "true" ]]; then
+                confirm_or_apply "Restart ${pg_unit} to load the upgraded DocumentDB libraries" \
+                    systemctl restart "${pg_unit}"
             elif [[ "${PG_RELOAD_CHANGED}" == "true" ]]; then
                 confirm_or_apply "Reload ${pg_unit} to apply hba/ident changes" \
                     systemctl reload-or-restart "${pg_unit}"
@@ -3158,8 +3182,8 @@ start_or_restart_postgres() {
         # as the templated unit so the data directory ownership matches.
         PG_STARTED_VIA="pg_ctl"
         if run_as_user documentdb-local "${PG_CTL}" -D "${DATA_DIR}" status >/dev/null 2>&1; then
-            if [[ "${PG_CONFIG_CHANGED}" == "true" ]]; then
-                log_info "Configuration changed; restarting PostgreSQL to apply new settings."
+            if [[ "${PG_CONFIG_CHANGED}" == "true" || "${library_replaced}" == "true" ]]; then
+                log_info "Restarting PostgreSQL to apply new settings or load upgraded libraries."
                 # -l as on start: without it the new postmaster inherits our
                 # stdout and a piped caller (| tee, $(...)) never sees EOF.
                 run_as_user documentdb-local "${PG_CTL}" -D "${DATA_DIR}" -l "${DATA_DIR}/pglog.log" -w restart
