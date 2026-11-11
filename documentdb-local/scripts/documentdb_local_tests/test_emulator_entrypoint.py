@@ -3257,6 +3257,47 @@ exit 0
                 self.assertNotEqual(result.returncode, 0, msg=result.stdout + result.stderr)
                 self.assertIn(f"value '{value}', must be one of", result.stderr)
 
+    def _gateway_log_level(self, *args, extra_env=None):
+        """The DOCUMENTDB_LOG_LEVEL the gateway process inherits, or "<unset>"."""
+        record = self.root / "gateway-log-level"
+        self._write_exec(
+            self.gateway_release_dir / "documentdb_gateway",
+            f'#!/bin/sh\nprintf "%s" "${{DOCUMENTDB_LOG_LEVEL-<unset>}}" > "{record}"\n',
+        )
+        env = {"LOG_LEVEL": None, "DOCUMENTDB_LOG_LEVEL": None, "RUST_LOG": None}
+        env.update(extra_env or {})
+        result = self._run_entrypoint(*args, extra_env=env)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        return record.read_text(encoding="utf-8")
+
+    def test_log_level_reaches_the_gateway(self):
+        # The gateway never read LOG_LEVEL, so --log-level changed nothing.
+        for level, expected in (
+            ("quiet", "off"),
+            ("error", "error"),
+            ("warn", "warn"),
+            ("info", "info"),
+            ("debug", "debug"),
+            ("trace", "trace"),
+        ):
+            with self.subTest(level):
+                self.assertEqual(self._gateway_log_level("--log-level", level), expected)
+        self.assertEqual(self._gateway_log_level(), "info")
+        self.assertEqual(self._gateway_log_level(extra_env={"LOG_LEVEL": "debug"}), "debug")
+
+    def test_gateway_log_variables_the_operator_set_win_over_log_level(self):
+        self.assertEqual(
+            self._gateway_log_level(
+                "--log-level", "error",
+                extra_env={"DOCUMENTDB_LOG_LEVEL": "documentdb_gateway=debug"},
+            ),
+            "documentdb_gateway=debug",
+        )
+        self.assertEqual(
+            self._gateway_log_level("--log-level", "error", extra_env={"RUST_LOG": "debug"}),
+            "<unset>",
+        )
+
     def test_empty_tlsMode_env_var_fails_fast(self):
         # Treated as unset, it would silently become allowTLS and accept plaintext.
         result = self._run_entrypoint("--password", _TEST_PW, extra_env={"TLS_MODE": ""})
