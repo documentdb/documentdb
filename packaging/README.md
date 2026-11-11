@@ -290,6 +290,70 @@ each workflow.
 > require the administrator to assign distinct public gateway ports for the
 > non-default instances (manual configuration, not automatic allocation).
 
+## Upgrading
+
+These steps move an existing install from one release (1.0.0 or later) to a
+newer one and keep its data. Release candidates have no supported upgrade path.
+
+A new release ships new libraries and a new extension catalog version. The
+catalog in each database is updated only by `ALTER EXTENSION ... UPDATE`, and
+PostgreSQL loads the new libraries only when it restarts. Until both have
+happened, some commands fail with `InternalError`.
+
+### Packages (Workflow C)
+
+1. Upgrade all DocumentDB packages together, from the repository
+   (`sudo apt upgrade`, `sudo dnf upgrade`) or from the new package files
+   (`sudo apt install ./*.deb`, `sudo dnf install ./*.rpm`). The packages
+   restart the gateway but not PostgreSQL.
+2. Finish the upgrade, naming the PostgreSQL major of the install:
+
+   ```sh
+   sudo documentdb-setup --pg-version 18 --yes
+   ```
+
+   This restarts `documentdb-postgresql@18` once to load the new libraries,
+   then updates `documentdb_core`, `documentdb` and `documentdb_extended_rum`
+   in one transaction. Without `--admin-user` it needs no password and leaves
+   every admin user and password as it is; with `--admin-user` it resets that
+   user's password, as on any re-run.
+
+For an adopted PostgreSQL (`--target-postgres-instance 18/main`), setup does
+not restart your PostgreSQL. It prints the restart command and the setup
+command to run next, then stops.
+
+Without `documentdb-setup` (Workflows A and B), restart PostgreSQL, then run
+this in the `postgres` database as a superuser:
+
+```sql
+BEGIN;
+ALTER EXTENSION documentdb_core UPDATE;
+ALTER EXTENSION documentdb UPDATE;
+ALTER EXTENSION documentdb_extended_rum UPDATE;
+COMMIT;
+```
+
+`ALTER EXTENSION` does not update the extensions an extension depends on, so
+`documentdb_core` goes first. Running it before PostgreSQL restarts fails with
+`could not find function ... in file ".../pg_documentdb.so"`.
+
+### documentdb-local image
+
+Start the newer image on the same data volume, for example
+`docker compose pull && docker compose up -d`, or `docker rm` the container
+and `docker run` the new tag with the same `-v <volume>:/data`. At start the
+container updates the extensions on the volume and logs
+`Updating the DocumentDB extensions on this data volume: ...`. If the update
+fails, it is rolled back, the volume is left unchanged, and the container
+exits.
+
+### Downgrading is not supported
+
+Neither the packages nor the image can go back to an older release on the
+same data. An older release starts on a newer catalog, but some commands then
+fail with `InternalError`; the image warns about this at start. To be able to
+go back, back up the data directory or volume before upgrading.
+
 ## Building Debian/Ubuntu Packages
 
 Run `./packaging/build_packages.sh -h` and follow the instructions.
