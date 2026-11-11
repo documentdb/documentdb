@@ -66,17 +66,19 @@ Optional arguments:
                         You still need to publish this port (e.g. -p ${d_gw}:${d_gw}).
                         Defaults to ${d_gw}
                         Overrides DOCUMENTDB_PORT environment variable.
-  --enable-telemetry    Enable telemetry data sent to the usage colletor (Azure Application Insights). 
-                        This is the gateway's OPERATIONAL telemetry and is a separate setting from
-                        the anonymous usage telemetry below: ENABLE_TELEMETRY=false does not turn
-                        that off. Use --usage-telemetry false for it.
+  --enable-telemetry <true|false>
+                        Accepted but has no effect in this release. The gateway's operational
+                        metrics are set by TelemetryOptions in its configuration file, which
+                        ships with them off.
+                        This is a separate setting from the anonymous usage telemetry below:
+                        ENABLE_TELEMETRY=false does not turn that off. Use --usage-telemetry false for it.
                         Overrides ENABLE_TELEMETRY environment variable.
   --usage-telemetry <true|false>
                         Anonymous usage telemetry that reports only this image's version, platform
                         and CPU architecture at startup and periodically, so the project can count
                         running deployments. No database, collection or user names, queries, document
-                        contents or credentials are ever sent. Separate from --enable-telemetry,
-                        which controls the gateway's operational metrics.
+                        contents or credentials are ever sent. Separate from the gateway's
+                        operational metrics.
                         Defaults to $(documentdb_local_setting_default DOCUMENTDB_USAGE_TELEMETRY) (on). Skipped when CI, GITHUB_ACTIONS or
                         TF_BUILD is set in this container; docker run does not forward those
                         from the host, so in a pipeline set this to false explicitly.

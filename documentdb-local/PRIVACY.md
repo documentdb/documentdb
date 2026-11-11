@@ -104,7 +104,7 @@ statement.
 | Destination | An endpoint the operator configures | A collection endpoint, configurable |
 | Mechanism | OpenTelemetry OTLP | HTTP GET request, HTTPS by default |
 | Frequency | Per request | At startup, then periodically |
-| Control | `--enable-telemetry` / `ENABLE_TELEMETRY` | `--usage-telemetry` / `DOCUMENTDB_USAGE_TELEMETRY` |
+| Control | `TelemetryOptions` in the gateway configuration file (`--enable-telemetry` has no effect in this release) | `--usage-telemetry` / `DOCUMENTDB_USAGE_TELEMETRY` |
 | Default | Disabled | Enabled |
 
 The two controls are independent. Setting `ENABLE_TELEMETRY=false` does **not**
