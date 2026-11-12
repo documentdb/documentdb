@@ -406,6 +406,28 @@ ContainsReservedPgRoleNamePrefix(const char *name)
 
 
 /*
+ * Check the baseline read and filtered-write privileges on one table.
+ */
+bool
+HasBaselineRolePrivileges(Oid relationId, Oid baselineReadRole,
+						  Oid baselineWriteRole)
+{
+	AclMode expectedMask = ACL_SELECT;
+	AclMode aclMode = pg_class_aclmask(relationId, baselineReadRole,
+									   expectedMask, ACLMASK_ALL);
+	if (aclMode != expectedMask)
+	{
+		return false;
+	}
+
+	expectedMask = ACL_SELECT | ACL_INSERT | ACL_UPDATE | ACL_DELETE;
+	aclMode = pg_class_aclmask(relationId, baselineWriteRole, expectedMask,
+							   ACLMASK_ALL);
+	return aclMode == expectedMask;
+}
+
+
+/*
  * Grants baseline privileges on a collection's tables.
  *
  * Collection creation and sharding reach this unconditionally. It is a no-op

@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- * SPDX-License-Identifier: MIT
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/commands/validate.c
  *
@@ -85,8 +85,6 @@ typedef struct
 static void validateCollection(MongoCollection *collection, ValidateResult *result);
 static void CheckIndisvalid(uint64 collectionId, ValidateResult *result);
 static pgbson * BuildResponseMessage(ValidateResult *result);
-static bool HasBaselineRolePrivileges(Oid relationId, Oid baselineReadRole,
-									  Oid baselineWriteRole);
 
 /*
  * command_validate is the implementation of the internal logic for
@@ -279,25 +277,6 @@ command_validate(PG_FUNCTION_ARGS)
 	validateCollection(collection, &result);
 	pgbson *response = BuildResponseMessage(&result);
 	PG_RETURN_POINTER(response);
-}
-
-
-static bool
-HasBaselineRolePrivileges(Oid relationId, Oid baselineReadRole,
-						  Oid baselineWriteRole)
-{
-	AclMode expectedMask = ACL_SELECT;
-	AclMode aclMode = pg_class_aclmask(relationId, baselineReadRole,
-									   expectedMask, ACLMASK_ALL);
-	if (aclMode != expectedMask)
-	{
-		return false;
-	}
-
-	expectedMask = ACL_SELECT | ACL_INSERT | ACL_UPDATE | ACL_DELETE;
-	aclMode = pg_class_aclmask(relationId, baselineWriteRole, expectedMask,
-							   ACLMASK_ALL);
-	return aclMode == expectedMask;
 }
 
 
