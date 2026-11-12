@@ -3066,7 +3066,10 @@ postmaster_runs_replaced_documentdb_library() {
     local pid=""
     pid="$(head -n 1 "${DATA_DIR}/postmaster.pid" 2>/dev/null | tr -dc '0-9')" || true
     [[ -n "${pid}" ]] || return 1
-    grep -qE '/pg_documentdb[^/ ]*\.so \(deleted\)$' "/proc/${pid}/maps" 2>/dev/null
+    local pattern='/pg_documentdb[^/ ]*\.so \(deleted\)$'
+    # Root needs CAP_SYS_PTRACE to read another user's maps, which containers drop.
+    grep -qE "${pattern}" "/proc/${pid}/maps" 2>/dev/null \
+        || run_as_user "${PG_OWNER}" grep -qE "${pattern}" "/proc/${pid}/maps" 2>/dev/null
 }
 
 start_or_restart_postgres() {
@@ -3103,11 +3106,17 @@ start_or_restart_postgres() {
             fi
             log_warn "    Run: ${reload_hint/reload/restart}"
             log_warn ""
-            log_warn "documentdb-setup is exiting BEFORE running CREATE EXTENSION because"
-            log_warn "pg_documentdb is a preload library and will not load until the"
-            log_warn "postmaster has restarted. Re-run this command after PostgreSQL has"
-            log_warn "been restarted; the second run will detect that the managed blocks"
-            log_warn "are already in place and proceed to CREATE EXTENSION + admin bootstrap."
+            if [[ "${PG_CONFIG_CHANGED}" == "true" ]]; then
+                log_warn "documentdb-setup is exiting BEFORE running CREATE EXTENSION because"
+                log_warn "pg_documentdb is a preload library and will not load until the"
+                log_warn "postmaster has restarted. Re-run this command after PostgreSQL has"
+                log_warn "been restarted; the second run will detect that the managed blocks"
+                log_warn "are already in place and proceed to CREATE EXTENSION + admin bootstrap."
+            else
+                log_warn "documentdb-setup is exiting BEFORE updating the extensions, which fails"
+                log_warn "until PostgreSQL runs the upgraded libraries. The extensions are still"
+                log_warn "at their old version: re-run this command after PostgreSQL has been restarted."
+            fi
             log_warn ""
             log_warn "Steps:"
             log_warn "  1. ${reload_hint/reload/restart}"
@@ -3206,11 +3215,14 @@ start_or_restart_postgres() {
         # as the templated unit so the data directory ownership matches.
         PG_STARTED_VIA="pg_ctl"
         if run_as_user documentdb-local "${PG_CTL}" -D "${DATA_DIR}" status >/dev/null 2>&1; then
-            if [[ "${PG_CONFIG_CHANGED}" == "true" || "${library_replaced}" == "true" ]]; then
-                log_info "Restarting PostgreSQL to apply new settings or load upgraded libraries."
+            if [[ "${PG_CONFIG_CHANGED}" == "true" ]]; then
+                log_info "Configuration changed; restarting PostgreSQL to apply new settings."
                 # -l as on start: without it the new postmaster inherits our
                 # stdout and a piped caller (| tee, $(...)) never sees EOF.
                 run_as_user documentdb-local "${PG_CTL}" -D "${DATA_DIR}" -l "${DATA_DIR}/pglog.log" -w restart
+            elif [[ "${library_replaced}" == "true" ]]; then
+                confirm_or_apply "Restart PostgreSQL to load the upgraded DocumentDB libraries" \
+                    run_as_user documentdb-local "${PG_CTL}" -D "${DATA_DIR}" -l "${DATA_DIR}/pglog.log" -w restart
             elif [[ "${PG_RELOAD_CHANGED}" == "true" ]]; then
                 log_info "Authentication mapping changed; reloading PostgreSQL configuration."
                 run_as_user documentdb-local "${PG_CTL}" -D "${DATA_DIR}" reload
@@ -5379,7 +5391,8 @@ main() {
             log_info "[dry-run]     - documentdb-register-gateway --yes --pg-owner postgres  (writes pg_hba.conf, pg_ident.conf, gateway role, ${_gw_url_file})"
             log_info "[dry-run]     - Print 'systemctl reload postgresql@${preview_pg_version}-${preview_cluster_name}' for the operator to run"
         fi
-        log_info "[dry-run]     - psql: CREATE EXTENSION documentdb CASCADE${_ext_note}"
+        log_info "[dry-run]     - restart PostgreSQL if it still runs DocumentDB libraries a package upgrade replaced (an adopted instance: print the restart and exit)"
+        log_info "[dry-run]     - psql: CREATE EXTENSION documentdb CASCADE${_ext_note}, then ALTER EXTENSION ... UPDATE to the installed version"
         log_info "[dry-run]     - psql: install temporary getParameter rejection stub if the backend function is missing"
         if [[ "${KEEP_ADMIN_USERS}" != "true" ]]; then
             log_info "[dry-run]     - psql: bootstrap admin user '${USERNAME}' via documentdb_api.create_user()${_admin_note}"

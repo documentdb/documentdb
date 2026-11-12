@@ -11518,7 +11518,7 @@ class PackageUpgradeRestartTests(unittest.TestCase):
     DocumentDB libraries loaded, and ALTER EXTENSION documentdb UPDATE fails
     until PostgreSQL restarts."""
 
-    def _detect(self, mapped_name, deleted):
+    def _detect(self, mapped_name, deleted, root_blocked=False):
         shell = shutil.which("bash")
         if not shell or not os.path.isdir("/proc/self/map_files"):
             self.skipTest("needs bash and Linux /proc")
@@ -11542,11 +11542,17 @@ class PackageUpgradeRestartTests(unittest.TestCase):
             if deleted:
                 lib.unlink()
             (Path(tmp) / "postmaster.pid").write_text(f"{holder.pid}\n{tmp}\n")
+            # A root without CAP_SYS_PTRACE (a container) gets EACCES on the maps; the owner does not.
+            as_owner = Path(tmp) / "as-owner"
+            prelude = (f'run_as_user() {{ echo "$1" > {shlex.quote(str(as_owner))}; shift; command "$@"; }}\n'
+                       + ('grep() { return 2; }\n' if root_blocked else ""))
             r = subprocess.run(
-                [shell, "-c", f"set -euo pipefail\nDATA_DIR={shlex.quote(tmp)}\n{func}\n"
+                [shell, "-c", f"set -euo pipefail\nDATA_DIR={shlex.quote(tmp)}; PG_OWNER=pgowner\n{prelude}{func}\n"
                  "if postmaster_runs_replaced_documentdb_library; then echo REPLACED; else echo CURRENT; fi\n"],
                 capture_output=True, text=True, timeout=10)
             self.assertEqual(r.returncode, 0, r.stderr)
+            if root_blocked:
+                self.assertEqual(as_owner.read_text().strip(), "pgowner")
             return r.stdout.strip()
 
     def test_a_deleted_documentdb_library_mapping_means_replaced(self):
@@ -11557,7 +11563,11 @@ class PackageUpgradeRestartTests(unittest.TestCase):
         self.assertEqual(self._detect("pg_documentdb.so", deleted=False), "CURRENT")
         self.assertEqual(self._detect("vector.so", deleted=True), "CURRENT")
 
-    def _restart(self, target_cluster=""):
+    def test_the_postgres_owner_reads_the_maps_when_root_cannot(self):
+        self.assertEqual(self._detect("pg_documentdb.so", deleted=True, root_blocked=True), "REPLACED")
+        self.assertEqual(self._detect("pg_documentdb.so", deleted=False, root_blocked=True), "CURRENT")
+
+    def _restart(self, target_cluster="", systemd=True, replaced=True):
         shell = shutil.which("bash")
         if not shell:
             self.skipTest("bash not available")
@@ -11570,11 +11580,13 @@ class PackageUpgradeRestartTests(unittest.TestCase):
                 "ensure_socket_dir_writable() { :; }; wait_for_postgres() { :; }\n"
                 "has_systemd_unit_file() { return 0; }\n"
                 f'systemctl() {{ echo "systemctl $*" >> {shlex.quote(str(calls))}; }}\n'
-                'confirm_or_apply() { shift; "$@"; }\n'
-                "postmaster_runs_replaced_documentdb_library() { return 0; }\n"
+                f'run_as_user() {{ shift; echo "$*" >> {shlex.quote(str(calls))}; }}\n'
+                f'confirm_or_apply() {{ echo "confirm: $1" >> {shlex.quote(str(calls))}; shift; "$@"; }}\n'
+                f"postmaster_runs_replaced_documentdb_library() {{ return {0 if replaced else 1}; }}\n"
                 "resolve_brownfield_pg_service_unit() { echo postgresql@17-main.service; }\n"
                 "build_rerun_suffix() { echo ' --yes'; }; build_rerun_env_prefix() { :; }\n"
-                f"TARGET_CLUSTER={shlex.quote(target_cluster)}; HAS_WORKING_SYSTEMD=true\n"
+                f"TARGET_CLUSTER={shlex.quote(target_cluster)}; HAS_WORKING_SYSTEMD={str(systemd).lower()}\n"
+                "PG_CTL=pg_ctl\n"
                 "PG_CONFIG_CHANGED=false; PG_RELOAD_CHANGED=false\n"
                 f"PASSWORD_FROM_STDIN=false; PG_VERSION=17; DATA_DIR={shlex.quote(tmp)}\n"
                 + func + "\nstart_or_restart_postgres\necho CONTINUED\n"
@@ -11590,12 +11602,30 @@ class PackageUpgradeRestartTests(unittest.TestCase):
         self.assertIn("systemctl restart documentdb-postgresql@17.service", calls)
         self.assertIn("CONTINUED", r.stdout)
 
+    def test_current_libraries_mean_no_restart(self):
+        for target, systemd in (("", True), ("", False), ("17/main", True)):
+            with self.subTest(target=target, systemd=systemd):
+                r, calls = self._restart(target_cluster=target, systemd=systemd, replaced=False)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertNotIn("restart", calls)
+                self.assertIn("CONTINUED", r.stdout)
+
+    def test_without_systemd_the_restart_is_confirmed_like_with_it(self):
+        r, calls = self._restart(systemd=False)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        lines = calls.splitlines()
+        i = lines.index("confirm: Restart PostgreSQL to load the upgraded DocumentDB libraries")
+        self.assertTrue(lines[i + 1].endswith("-w restart"), calls)
+        self.assertIn("CONTINUED", r.stdout)
+
     def test_adopted_postgres_is_not_restarted_and_the_operator_is_told_how(self):
         r, calls = self._restart(target_cluster="17/main")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("restart", calls)
         self.assertNotIn("CONTINUED", r.stdout)
         self.assertIn("load the upgraded DocumentDB libraries", r.stdout)
+        self.assertIn("exiting BEFORE updating the extensions", r.stdout)
+        self.assertNotIn("admin bootstrap", r.stdout)
         self.assertIn("sudo systemctl restart postgresql@17-main.service", r.stdout)
         self.assertIn("documentdb-setup --target-postgres-instance 17/main --yes", r.stdout)
 
