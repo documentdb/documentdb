@@ -1963,6 +1963,9 @@ validate_required_arguments() {
     if [[ "${KEEP_ADMIN_USERS:-}" == "true" ]]; then
         [[ "${LOAD_SAMPLE_DATA}" != "true" ]] \
             || die "--load-sample-data signs in as an admin user; pass --admin-user and its password source."
+        # A password given without a user would be ignored, and one on stdin read as a [y/N] answer.
+        [[ -z "${PASSWORD_FILE:-}" && "${PASSWORD_FROM_STDIN:-}" != "true" && -z "${DOCUMENTDB_PASSWORD:-}" ]] \
+            || die "A password source needs --admin-user: pass --admin-user NAME to set that user's password, or drop the password source to keep the existing admin users."
     else
         [[ -n "${USERNAME}" ]] || die "--username is required."
         # Before the TLS ownership repair below, so a refused password changes nothing.
@@ -2139,6 +2142,8 @@ preflight_validation() {
         fi
     fi
 
+    refuse_missing_install_data
+
     refresh_extension_state
     validate_documentdb_extension_installation
     [[ -x "${GATEWAY_BINARY}" ]] || die "The gateway binary was not found at ${GATEWAY_BINARY}."
@@ -2306,7 +2311,7 @@ persisted_listen_addr() {
 }
 
 # existing_install_named: --pg-version N or --target-postgres-instance N/C
-# names a major that a previous run already set up.
+# names an install that a previous run already set up.
 existing_install_named() {
     local major="" state="setup.conf"
     if [[ -n "${TARGET_CLUSTER}" ]]; then
@@ -2315,7 +2320,25 @@ existing_install_named() {
     elif [[ "${PG_VERSION_EXPLICIT}" == "true" ]]; then
         major="${PG_VERSION}"
     fi
-    [[ "${major}" =~ ^[0-9]+$ && -f "/etc/documentdb/local/${major}/${state}" ]]
+    state="/etc/documentdb/local/${major}/${state}"
+    [[ "${major}" =~ ^[0-9]+$ && -f "${state}" ]] || return 1
+    # brownfield.conf is per major and may record another cluster of it. Root
+    # can always read it; a non-root --dry-run cannot and only previews.
+    if [[ -n "${TARGET_CLUSTER}" && -r "${state}" ]]; then
+        local recorded="" wanted="${TARGET_CLUSTER}"
+        recorded="$(grep -E '^TARGET_CLUSTER=' "${state}" | head -1 | cut -d= -f2- || true)"
+        # "N/" means N/main.
+        [[ "${wanted}" != */ ]] || wanted+="main"
+        [[ "${recorded}" != */ ]] || recorded+="main"
+        [[ "${recorded}" == "${wanted}" ]] || return 1
+    fi
+}
+
+# refuse_missing_install_data: setup.conf records an install, but DATA_DIR is
+# not where its data is. A new instance there would have no admin user.
+refuse_missing_install_data() {
+    [[ "${KEEP_ADMIN_USERS:-}" == "true" && -z "${TARGET_CLUSTER}" && ! -f "${DATA_DIR}/PG_VERSION" ]] || return 0
+    die "${DATA_DIR} holds no PostgreSQL data, but /etc/documentdb/local/${PG_VERSION}/setup.conf records an install. Pass the --data-dir it was set up with, or --admin-user NAME and a password source to create a new instance."
 }
 
 # persisted_gateway_port <major> — the GATEWAY_PORT a previous run recorded in
@@ -3253,6 +3276,17 @@ reload_self_managed_postgres_auth_mapping() {
 create_required_extensions_and_users() {
     log_info "Creating required extensions and roles."
 
+    # The state file is written before a first run ends, so it can name an install that never got this far.
+    if [[ "${KEEP_ADMIN_USERS:-}" == "true" ]]; then
+        local installed=""
+        installed="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v ON_ERROR_STOP=1 <<'SQL'
+SELECT 1 FROM pg_extension WHERE extname = 'documentdb';
+SQL
+        )" || die "Could not check for the documentdb extension."
+        [[ -n "${installed}" ]] \
+            || die "DocumentDB is not set up on this PostgreSQL instance yet, so there are no admin users to keep. Re-run with --admin-user NAME and a password source."
+    fi
+
     confirm_or_apply "Run CREATE EXTENSION documentdb CASCADE in the postgres database" \
         _create_documentdb_extension_inline
 
@@ -3266,17 +3300,26 @@ create_required_extensions_and_users() {
 
     if [[ "${KEEP_ADMIN_USERS:-}" == "true" ]]; then
         local admins=""
+        # Members through other roles count too: root and custom roles reach the admin role that way.
+        # A role's creator holds it with ADMIN OPTION only and is not a member in effect.
         admins="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v ON_ERROR_STOP=1 <<'SQL'
+WITH RECURSIVE members(oid) AS (
+    SELECT oid FROM pg_roles WHERE rolname = 'documentdb_admin_role'
+    UNION
+    SELECT m.member FROM pg_auth_members m JOIN members ON m.roleid = members.oid
+    WHERE m.inherit_option OR m.set_option
+)
 SELECT string_agg(r.rolname, ' ' ORDER BY r.rolname) FROM pg_roles r
-JOIN pg_auth_members m ON m.member = r.oid
-JOIN pg_roles g ON g.oid = m.roleid
-WHERE g.rolname = 'documentdb_admin_role' AND r.rolcanlogin
-  AND r.rolname !~* '^(documentdb|citus|pg|internal_role)';
+JOIN members ON members.oid = r.oid
+WHERE r.rolcanlogin AND r.rolname !~* '^(documentdb|citus|pg|internal_role)';
 SQL
         )" || die "Could not list the DocumentDB admin users."
-        [[ -n "${admins}" ]] \
-            || die "This install has no DocumentDB admin user. Re-run with --admin-user NAME and a password source to create one."
-        log_info "Keeping the existing admin users: ${admins}. Pass --admin-user to add one or to reset its password."
+        # A warning, not a refusal: PostgreSQL and the extensions were already changed above.
+        if [[ -z "${admins}" ]]; then
+            log_warn "Found no DocumentDB admin user. Create one with: sudo documentdb-gateway-admin create-user --username <name> --password-file <file>"
+        else
+            log_info "Keeping the existing admin users: ${admins}. Pass --admin-user to add one or to reset its password."
+        fi
         return 0
     fi
 
@@ -4096,11 +4139,13 @@ print_completion_message() {
             # creates or resets that account, so following a plain "re-run
             # documentdb-setup" hint can silently mint a second
             # full-privilege admin.
-            echo "  Restart:    re-run sudo documentdb-setup with the SAME --admin-user"
-            echo "              and --admin-password-file you used for this install"
-            echo "              (restarts any non-systemd component; a bare re-run"
-            echo "               would prompt for an admin name and could create"
-            echo "               another account)"
+            local _rerun="--pg-version ${PG_VERSION}"
+            [[ -z "${TARGET_CLUSTER}" ]] || _rerun="--target-postgres-instance ${TARGET_CLUSTER}"
+            echo "  Restart:    re-run sudo documentdb-setup ${_rerun}, plus any"
+            echo "              --data-dir / --pg-port / --no-enable used for this install"
+            echo "              (restarts any non-systemd component and keeps the admin"
+            echo "               users; a bare re-run would prompt for an admin name and"
+            echo "               could create another account)"
         fi
     fi
     echo "  Health:     sudo documentdb-setup --status"
