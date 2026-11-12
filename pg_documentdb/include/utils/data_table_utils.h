@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * include/utils/data_table_utils.h
  *
@@ -12,7 +13,7 @@
  #define DATA_TABLE_UTILS_H
 
 ArrayType * GetCollectionIds(void);
-ArrayType * GetCollectionIdsStartingFrom(uint64 startCollectionId);
+ArrayType * GetCollectionIdsStartingFrom(uint64 startCollectionId, int limit);
 void AlterCreationTime(void);
 void AlterRolesTablePrimaryKey(void);
 void CreateValidateDbNameTrigger(void);

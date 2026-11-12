@@ -159,6 +159,8 @@ void EnsureRoleMembershipLimits(const char *roleName, int64 numRolesToAdd);
 
 void GrantCollectionPrivilegesToBaselineRoles(uint64 collectionId, bool
 											  includeRetryTable);
+bool HasBaselineRolePrivileges(Oid relationId, Oid baselineReadRole,
+							   Oid baselineWriteRole);
 
 /*
  * Reports whether the current effective role is the role that owns the

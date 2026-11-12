@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/utils/data_table_utils.c
  *
@@ -23,7 +24,7 @@ RunOptionalUpgradeDataTables_HookType run_optional_upgrade_data_tables_hook = NU
 static inline bool IsUpdateForVersion(ExtensionVersion inputVersion,
 									  MajorVersion expectedMajor, int expectedMinor, int
 									  expectedPatch);
-static ArrayType * GetCollectionIdsCore(const char *conditions);
+static ArrayType * GetCollectionIdsCore(const char *conditions, int limit);
 static void RunOptionalUpgradeDataTables(ExtensionVersion inputVersion);
 
 PG_FUNCTION_INFO_V1(apply_extension_data_table_upgrade);
@@ -84,22 +85,23 @@ apply_extension_data_table_upgrade(PG_FUNCTION_ARGS)
 ArrayType *
 GetCollectionIds(void)
 {
-	return GetCollectionIdsCore(NULL);
+	return GetCollectionIdsCore(NULL, -1);
 }
 
 
 /*
- * Get the collectonIds starting from the given collectionId.
- * Returns all collectionIds if startCollectionId is 0.
- * Only returns non-view and non sentinel collecitonIds.
+ * Get collection IDs starting from the given collection ID, inclusive.
+ * A startCollectionId of 0 starts at the first collection.
+ * Only returns non-view and non-sentinel collection IDs.
+ * A limit less than 1 leaves the result unbounded.
  */
 ArrayType *
-GetCollectionIdsStartingFrom(uint64 startCollectionId)
+GetCollectionIdsStartingFrom(uint64 startCollectionId, int limit)
 {
 	StringInfo conditions = makeStringInfo();
 	appendStringInfo(conditions, "collection_name != 'system.dbSentinel' AND "
 								 "collection_id >= %lu", startCollectionId);
-	ArrayType *result = GetCollectionIdsCore(conditions->data);
+	ArrayType *result = GetCollectionIdsCore(conditions->data, limit);
 	pfree(conditions->data);
 	pfree(conditions);
 	return result;
@@ -190,17 +192,33 @@ AlterRolesTablePrimaryKey(void)
  * if provided.
  */
 static ArrayType *
-GetCollectionIdsCore(const char *conditions)
+GetCollectionIdsCore(const char *conditions, int limit)
 {
 	bool isNull = false;
 	bool readOnly = true;
 	StringInfo cmdStr = makeStringInfo();
-	appendStringInfo(cmdStr,
-					 "SELECT array_agg(DISTINCT collection_id ORDER BY collection_id)::bigint[] FROM %s.collections where view_definition IS NULL",
-					 ApiCatalogSchemaName);
+	if (limit > 0)
+	{
+		appendStringInfo(cmdStr,
+						 "SELECT array_agg(collection_id)::bigint[] FROM ("
+						 " SELECT collection_id FROM %s.collections WHERE view_definition IS NULL",
+						 ApiCatalogSchemaName);
+	}
+	else
+	{
+		appendStringInfo(cmdStr,
+						 "SELECT array_agg(collection_id ORDER BY collection_id)::bigint[]"
+						 " FROM %s.collections WHERE view_definition IS NULL",
+						 ApiCatalogSchemaName);
+	}
 	if (conditions != NULL && strlen(conditions) > 0)
 	{
 		appendStringInfo(cmdStr, " AND %s", conditions);
+	}
+
+	if (limit > 0)
+	{
+		appendStringInfo(cmdStr, " ORDER BY collection_id LIMIT %d) collections", limit);
 	}
 
 	Datum versionDatum = ExtensionExecuteQueryViaSPI(cmdStr->data, readOnly,
