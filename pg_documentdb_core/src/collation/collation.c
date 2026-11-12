@@ -30,8 +30,8 @@
 
 typedef struct
 {
-	unsigned long collationKey;
-	UCollator *collator; /* locale_t struct, or 0 if not valid */
+	char collationString[MAX_ICU_COLLATION_LENGTH];
+	UCollator *collator;
 } ucollator_cache_entry;
 
 
@@ -890,24 +890,6 @@ CheckCollationInputParamType(bson_type_t expectedType, bson_type_t foundType, co
 
 
 /*
- * Well known hash function to efficiently calculate hash of a string. While it may have collisions it's unlikely in our case
- * where the hash function is used to generate hash code for limited number of collation strings. Even if there is collision,
- * the functionality will not be broken, we will just generate a few more cache entries
- */
-static unsigned long
-djb2(const char *str)
-{
-	unsigned long hash = 5381;
-	int c;
-	while ((c = *str++))
-	{
-		hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
-	}
-	return hash;
-}
-
-
-/*
  * Cache that live the lifetime of a backend process and caches a Ucollator object for performing
  * collation related operations. Open a collator object can be expensive and hence we create this cache.
  * When the backend process dies all memory associated with the collator cache is cleaned up.
@@ -920,36 +902,43 @@ LookupUCollatorCache(const char *collationString)
 	ucollator_cache_entry *cache_entry;
 	bool found;
 
+	/* HASH_STRINGS must not truncate distinct tags to the same cache key. */
+	if (strlen(collationString) >= MAX_ICU_COLLATION_LENGTH)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg(
+							"Collation language tag exceeds the maximum supported length of %d bytes",
+							MAX_ICU_COLLATION_LENGTH - 1)));
+	}
+
 	if (collation_cache == NULL)
 	{
 		/* First time through, initialize the hash table */
 		HASHCTL ctl;
 		memset(&ctl, 0, sizeof(ctl));
 
-		ctl.keysize = sizeof(char *);
+		ctl.keysize = MAX_ICU_COLLATION_LENGTH;
 		ctl.entrysize = sizeof(ucollator_cache_entry);
-
-		MemoryContext tempContext = AllocSetContextCreate(CurrentMemoryContext,
-														  "Collation Context",
-														  ALLOCSET_DEFAULT_SIZES);
-
-		MemoryContext oldContext = MemoryContextSwitchTo(tempContext);
+		ctl.hcxt = CacheMemoryContext;
 		collation_cache = hash_create("Collator cache", 100, &ctl,
-									  HASH_ELEM | HASH_BLOBS);
-		MemoryContextSwitchTo(oldContext);
+									  HASH_ELEM | HASH_STRINGS | HASH_CONTEXT);
 	}
 
-	unsigned long collationKey = djb2(collationString);
-
-	cache_entry = hash_search(collation_cache, &collationKey, HASH_ENTER, &found);
+	cache_entry = hash_search(collation_cache, collationString, HASH_ENTER, &found);
 	if (!found)
 	{
-		cache_entry->collationKey = collationKey;
 		UErrorCode status = U_ZERO_ERROR;
 		UCollator *collator = ucol_open(collationString, &status);
 
-		if (U_FAILURE(status))
+		if (U_FAILURE(status) || collator == NULL)
 		{
+			if (collator != NULL)
+			{
+				ucol_close(collator);
+			}
+
+			bool removed = false;
+			hash_search(collation_cache, collationString, HASH_REMOVE, &removed);
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 							errmsg(
 								"Collation is not supported by ICU for collation language tag: %s",
