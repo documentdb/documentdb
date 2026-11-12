@@ -306,7 +306,8 @@ happened, some commands fail with `InternalError`.
    (`sudo apt upgrade`, `sudo dnf upgrade`) or from the new package files
    (`sudo apt install ./*.deb`, `sudo dnf install ./*.rpm`). The packages
    restart the gateway but not PostgreSQL.
-2. Finish the upgrade, naming the PostgreSQL major of the install:
+2. Finish the upgrade, naming the PostgreSQL major of the install, plus any
+   `--data-dir` or `--pg-port` it was set up with:
 
    ```sh
    sudo documentdb-setup --pg-version 18 --yes
@@ -351,8 +352,9 @@ exits.
 
 Neither the packages nor the image can go back to an older release on the
 same data. An older release starts on a newer catalog, but some commands then
-fail with `InternalError`; the image warns about this at start. To be able to
-go back, back up the data directory or volume before upgrading.
+fail with `InternalError`. Images from this release on warn about this at
+start; earlier ones do not. To be able to go back, back up the data directory
+or volume before upgrading.
 
 ## Building Debian/Ubuntu Packages
 
