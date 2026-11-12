@@ -270,5 +270,94 @@ SELECT documentdb_api.drop_collection('collation_basic_db', 'coll_null_empty');
  t
 (1 row)
 
+-- ============================================================================
+-- Collator cache identity and failed initialization.
+-- ============================================================================
+-- These tags collide under the old djb2 key. ICU ignores the foo keyword.
+-- Primary strength matches case variants; tertiary strength does not.
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=primary;foo=aaaaaaaaaaaaaa"}'::bson);
+ bson_dollar_eq
+----------------
+ t
+(1 row)
+
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=tertiary;foo=aoxqauyiyuysji"}'::bson);
+ bson_dollar_eq
+----------------
+ f
+(1 row)
+
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=primary;foo=aaaaaaaaaaaaaa"}'::bson);
+ bson_dollar_eq
+----------------
+ t
+(1 row)
+
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=tertiary;foo=aoxqauyiyuysji"}'::bson);
+ bson_dollar_eq
+----------------
+ f
+(1 row)
+
+-- A common suffix preserves the collision and gives fresh keys for reverse order.
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=tertiary;foo=aoxqauyiyuysjia"}'::bson);
+ bson_dollar_eq
+----------------
+ f
+(1 row)
+
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=primary;foo=aaaaaaaaaaaaaaa"}'::bson);
+ bson_dollar_eq
+----------------
+ t
+(1 row)
+
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=tertiary;foo=aoxqauyiyuysjia"}'::bson);
+ bson_dollar_eq
+----------------
+ f
+(1 row)
+
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=primary;foo=aaaaaaaaaaaaaaa"}'::bson);
+ bson_dollar_eq
+----------------
+ t
+(1 row)
+
+-- Both attempts must fail, without leaving an unusable cached collator.
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=bogus"}'::bson);
+ERROR:  Collation is not supported by ICU for collation language tag: en@colStrength=bogus
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=bogus"}'::bson);
+ERROR:  Collation is not supported by ICU for collation language tag: en@colStrength=bogus
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en-u-ks-level1"}'::bson);
+ bson_dollar_eq
+----------------
+ t
+(1 row)
+
+-- A 109-byte key is accepted, a 110-byte key is rejected, and retry still works.
+SELECT bson_dollar_eq('{"a": "Cat"}', json_build_object(
+  'a', 'cat',
+  'collation', 'en@colStrength=primary;foo=' || repeat('a', 109 - length('en@colStrength=primary;foo='))
+)::text::bson);
+ bson_dollar_eq
+----------------
+ t
+(1 row)
+
+SELECT bson_dollar_eq('{"a": "Cat"}', json_build_object(
+  'a', 'cat',
+  'collation', 'en@colStrength=primary;foo=' || repeat('a', 110 - length('en@colStrength=primary;foo='))
+)::text::bson);
+ERROR:  Collation language tag exceeds the maximum supported length of 109 bytes
+SELECT bson_dollar_eq('{"a": "Cat"}', json_build_object(
+  'a', 'cat',
+  'collation', 'en@colStrength=primary;foo=' || repeat('a', 109 - length('en@colStrength=primary;foo='))
+)::text::bson);
+ bson_dollar_eq
+----------------
+ t
+(1 row)
+
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb_core.enableCollation;

@@ -190,5 +190,41 @@ SET documentdb_core.enableCollation TO on;
 
 SELECT documentdb_api.drop_collection('collation_basic_db', 'coll_null_empty');
 
+-- ============================================================================
+-- Collator cache identity and failed initialization.
+-- ============================================================================
+
+-- These tags collide under the old djb2 key. ICU ignores the foo keyword.
+-- Primary strength matches case variants; tertiary strength does not.
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=primary;foo=aaaaaaaaaaaaaa"}'::bson);
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=tertiary;foo=aoxqauyiyuysji"}'::bson);
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=primary;foo=aaaaaaaaaaaaaa"}'::bson);
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=tertiary;foo=aoxqauyiyuysji"}'::bson);
+
+-- A common suffix preserves the collision and gives fresh keys for reverse order.
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=tertiary;foo=aoxqauyiyuysjia"}'::bson);
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=primary;foo=aaaaaaaaaaaaaaa"}'::bson);
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=tertiary;foo=aoxqauyiyuysjia"}'::bson);
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=primary;foo=aaaaaaaaaaaaaaa"}'::bson);
+
+-- Both attempts must fail, without leaving an unusable cached collator.
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=bogus"}'::bson);
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en@colStrength=bogus"}'::bson);
+SELECT bson_dollar_eq('{"a": "Cat"}', '{"a": "cat", "collation": "en-u-ks-level1"}'::bson);
+
+-- A 109-byte key is accepted, a 110-byte key is rejected, and retry still works.
+SELECT bson_dollar_eq('{"a": "Cat"}', json_build_object(
+  'a', 'cat',
+  'collation', 'en@colStrength=primary;foo=' || repeat('a', 109 - length('en@colStrength=primary;foo='))
+)::text::bson);
+SELECT bson_dollar_eq('{"a": "Cat"}', json_build_object(
+  'a', 'cat',
+  'collation', 'en@colStrength=primary;foo=' || repeat('a', 110 - length('en@colStrength=primary;foo='))
+)::text::bson);
+SELECT bson_dollar_eq('{"a": "Cat"}', json_build_object(
+  'a', 'cat',
+  'collation', 'en@colStrength=primary;foo=' || repeat('a', 109 - length('en@colStrength=primary;foo='))
+)::text::bson);
+
 RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
 RESET documentdb_core.enableCollation;
