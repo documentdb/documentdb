@@ -36,17 +36,22 @@ mongosh "mongodb://localhost:10260/?tls=true&tlsAllowInvalidCertificates=true" \
     --username "$DOCUMENTDB_USERNAME"
 ```
 
-On Windows, run the same steps from PowerShell (5.1 or 7) with the block
-below. It stops at the first error instead of starting the stack with a bad
-password.
+On Windows, after the `cd`, replace steps 1 and 2 with the block below in
+PowerShell (5.1 or 7). It stops at the first error instead of starting the
+stack with a bad password. In step 4, pass `--username $env:DOCUMENTDB_USERNAME`
+and drop the trailing `\`.
 
 ```powershell
 & {
     $ErrorActionPreference = 'Stop'
+    # A missing docker sets no exit code, so the checks below would not see it.
+    $null = Get-Command docker
     $bytes = [byte[]]::new(24)
     [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
     $env:DOCUMENTDB_USERNAME = 'appuser'
     $env:DOCUMENTDB_PASSWORD = [Convert]::ToBase64String($bytes)
+    # docker prints progress on stderr, which some hosts (ISE) turn into errors.
+    $ErrorActionPreference = 'Continue'
     docker compose pull
     if ($LASTEXITCODE -ne 0) { throw 'docker compose pull failed' }
     docker compose up -d
@@ -63,6 +68,15 @@ placeholders (they are not used for anything):
 
 ```bash
 DOCUMENTDB_USERNAME=x DOCUMENTDB_PASSWORD=x docker compose down -v
+```
+
+In a PowerShell window where the variables are gone, set the placeholders
+and remove them afterwards, so a later `up` cannot start on them:
+
+```powershell
+$env:DOCUMENTDB_USERNAME = $env:DOCUMENTDB_PASSWORD = 'x'
+docker compose down -v
+Remove-Item Env:DOCUMENTDB_USERNAME, Env:DOCUMENTDB_PASSWORD
 ```
 
 Pick any username that does not start with a reserved role prefix —

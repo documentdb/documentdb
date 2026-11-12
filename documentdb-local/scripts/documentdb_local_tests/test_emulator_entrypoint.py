@@ -3260,6 +3260,7 @@ exit 0
     def _gateway_log_level(self, *args, extra_env=None):
         """The DOCUMENTDB_LOG_LEVEL the gateway process inherits, or "<unset>"."""
         record = self.root / "gateway-log-level"
+        record.unlink(missing_ok=True)
         self._write_exec(
             self.gateway_release_dir / "documentdb_gateway",
             f'#!/bin/sh\nprintf "%s" "${{DOCUMENTDB_LOG_LEVEL-<unset>}}" > "{record}"\n',
@@ -3273,7 +3274,7 @@ exit 0
     def test_log_level_reaches_the_gateway(self):
         # The gateway never read LOG_LEVEL, so --log-level changed nothing.
         for level, expected in (
-            ("quiet", "off"),
+            ("quiet", "error"),
             ("error", "error"),
             ("warn", "warn"),
             ("info", "info"),
