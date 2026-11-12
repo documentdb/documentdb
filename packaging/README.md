@@ -303,9 +303,34 @@ happened, some commands fail with `InternalError`.
 ### Packages (Workflow C)
 
 1. Upgrade all DocumentDB packages together, from the repository
-   (`sudo apt upgrade`, `sudo dnf upgrade`) or from the new package files
-   (`sudo apt install ./*.deb`, `sudo dnf install ./*.rpm`). The packages
-   restart the gateway but not PostgreSQL.
+   (`sudo apt upgrade`, `sudo dnf upgrade`) or from the new package files.
+   A release holds the files for both architectures and both PostgreSQL
+   majors, so install only the five for the host. For PostgreSQL 18 on amd64,
+   on Ubuntu 24.04:
+
+   ```sh
+   sudo apt install ./ubuntu24.04-documentdb-18_*_all.deb \
+       ./ubuntu24.04-documentdb-common_*_all.deb \
+       ./ubuntu24.04-documentdb-postgresql-tools_*_all.deb \
+       ./ubuntu24.04-documentdb-gateway_*_amd64.deb \
+       ./ubuntu24.04-postgresql-18-documentdb_*_amd64.deb
+   ```
+
+   and on EL9:
+
+   ```sh
+   sudo dnf install ./documentdb-18-*.noarch.rpm \
+       ./documentdb-common-*.noarch.rpm \
+       ./documentdb-postgresql-tools-*.noarch.rpm \
+       ./documentdb-gateway-*.el9.x86_64.rpm \
+       ./rhel9-postgresql18-documentdb-*.el9.x86_64.rpm
+   ```
+
+   On arm64, replace `amd64` with `arm64` and `x86_64` with `aarch64`; for
+   PostgreSQL 17, replace `18` with `17`. Under systemd the packages restart a
+   running gateway service; they never restart PostgreSQL. Without systemd
+   they restart nothing, and the old gateway keeps running until step 2
+   restarts it.
 2. Finish the upgrade, naming the PostgreSQL major of the install, plus any
    `--data-dir` or `--pg-port` it was set up with:
 
@@ -313,15 +338,25 @@ happened, some commands fail with `InternalError`.
    sudo documentdb-setup --pg-version 18 --yes
    ```
 
-   This restarts `documentdb-postgresql@18` once to load the new libraries,
-   then updates `documentdb_core`, `documentdb` and `documentdb_extended_rum`
-   in one transaction. Without `--admin-user` it needs no password and leaves
-   every admin user and password as it is; with `--admin-user` it resets that
-   user's password, as on any re-run.
+   This restarts the install's PostgreSQL once to load the new libraries,
+   then updates `documentdb_core` and `documentdb` in one transaction and
+   `documentdb_extended_rum` separately. Without `--admin-user` it needs no
+   password and leaves every admin user and password as it is; with
+   `--admin-user` it resets that user's password, as on any re-run. Without
+   the install's `--pg-port`, it moves PostgreSQL to the major's default port
+   (9718 for 18).
 
-For an adopted PostgreSQL (`--target-postgres-instance 18/main`), setup does
-not restart your PostgreSQL. It prints the restart command and the setup
-command to run next, then stops.
+For an adopted PostgreSQL, step 2 names the instance instead, since
+`--pg-version` does not find an adopted install:
+
+```sh
+sudo documentdb-setup --target-postgres-instance 18/main --yes
+```
+
+Setup does not restart your PostgreSQL. While it still runs the old
+libraries, as it does after step 1, setup prints a restart command and a
+second `documentdb-setup` command, then stops with exit status 0 before
+updating the extensions. The upgrade is finished only after you run both.
 
 Without `documentdb-setup` (Workflows A and B), restart PostgreSQL, then run
 this in the `postgres` database as a superuser:
@@ -340,10 +375,10 @@ COMMIT;
 
 ### documentdb-local image
 
-Start the newer image on the same data volume, for example
-`docker compose pull && docker compose up -d`, or `docker rm` the container
-and `docker run` the new tag with the same `-v <volume>:/data`. At start the
-container updates the extensions on the volume and logs
+Start the newer image on the same data volume: with compose, run
+`docker compose pull` and then `docker compose up -d`; otherwise `docker rm`
+the container and `docker run` the new tag with the same `-v <volume>:/data`.
+At start the container updates the extensions on the volume and logs
 `Updating the DocumentDB extensions on this data volume: ...`. If the update
 fails, it is rolled back, the volume is left unchanged, and the container
 exits.
