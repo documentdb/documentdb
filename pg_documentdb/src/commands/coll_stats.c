@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/commands/coll_stats.c
  *
@@ -11,9 +12,11 @@
 #include <executor/spi.h>
 #include <fmgr.h>
 #include <funcapi.h>
+#include <miscadmin.h>
 #include <utils/builtins.h>
 #include <nodes/makefuncs.h>
 #include <catalog/namespace.h>
+#include <utils/lsyscache.h>
 
 #include "utils/documentdb_errors.h"
 #include "metadata/collection.h"
@@ -34,6 +37,7 @@
 extern int CollStatsCountPolicyThreshold;
 extern bool UsePgStatsLiveTuplesForCount;
 extern bool ForceCollStatsDataCollection;
+extern bool EnableAvgSizeFromSample;
 
 PG_FUNCTION_INFO_V1(command_coll_stats);
 PG_FUNCTION_INFO_V1(command_coll_stats_worker);
@@ -49,7 +53,7 @@ typedef struct
 	char *ns;
 	int64 size;
 	int64 count;
-	int32 avgObjSize;
+	double avgObjSize;
 	int64 totalIndexSize;
 	pgbson *indexSizes;
 	int64 storageSize;
@@ -58,6 +62,10 @@ typedef struct
 	int64 totalSize;
 	int32 scaleFactor;
 	int64 analyzedCount;
+	double avgDocSizeStored;
+	bool hasSampledDocSize;
+	pgbson *queryExecStats;
+	pgbson *compactStats;
 	int32 ok;
 } CollStatsResult;
 
@@ -71,7 +79,13 @@ typedef enum CollStatsAggMode
 
 	CollStatsAggMode_CountAndStorage = 0x3,
 
-	CollStatsAggMode_Max = CollStatsAggMode_CountAndStorage,
+	CollStatsAggMode_QueryExecStats = 0x4,
+
+	CollStatsAggMode_CompactStats = 0x8,
+
+	CollStatsAggMode_Max = CollStatsAggMode_CountAndStorage |
+						   CollStatsAggMode_QueryExecStats |
+						   CollStatsAggMode_CompactStats,
 } CollStatsAggMode;
 
 /* Forward Declaration */
@@ -98,6 +112,14 @@ static int64 GetPostgresDocumentCountStats(ArrayType *relationIds,
 static int64 GetPostgresLiveDocumentStats(ArrayType *relationIds);
 static int32 GetAverageDocumentSizeFromStats(ArrayType *relationIds);
 static void WriteIndexSizesScaledWorker(ArrayType *relationIds, pgbson_writer *writer);
+static void WriteSampledDocumentSizesWorker(ArrayType *relationIds,
+											pgbson_writer *writer);
+static pgbson * GetQueryExecStatsWorker(ArrayType *relationIds);
+static pgbson * MergeWorkerQueryExecStats(List *workerStats);
+static pgbson * GetCompactStatsWorker(ArrayType *relationIds);
+static pgbson * MergeWorkerCompactStats(List *workerStats);
+static void WriteMergedWorkerTimestampArray(List *workerStats, const char *fieldName,
+											pgbson_writer *writer);
 
 /*
  * command_coll_stats is the implementation of the internal logic for
@@ -160,7 +182,7 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 	 */
 	AllowNestedDistributionInCurrentTransaction();
 
-	/* We either support count or storage stats currently */
+	/* Validate the requested statistics. */
 	bson_iter_t collStatsSpecIter;
 	PgbsonInitIterator(collStatsSpec, &collStatsSpecIter);
 
@@ -223,8 +245,25 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 		}
 		else if (strcmp(key, "queryExecStats") == 0)
 		{
-			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-							errmsg("collStats with queryExecStats not supported yet")));
+			EnsureTopLevelFieldValueType("$collStats.queryExecStats", value,
+										 BSON_TYPE_DOCUMENT);
+			if (!IsBsonValueEmptyDocument(value))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg("queryExecStats must be an empty document")));
+			}
+			aggregateMode |= CollStatsAggMode_QueryExecStats;
+		}
+		else if (strcmp(key, "compactStats") == 0)
+		{
+			EnsureTopLevelFieldValueType("$collStats.compactStats", value,
+										 BSON_TYPE_DOCUMENT);
+			if (!IsBsonValueEmptyDocument(value))
+			{
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+								errmsg("compactStats must be an empty document")));
+			}
+			aggregateMode |= CollStatsAggMode_CompactStats;
 		}
 		else
 		{
@@ -299,6 +338,16 @@ command_coll_stats_aggregation(PG_FUNCTION_ARGS)
 		PgbsonWriterStartDocument(&writer, "storageStats", 12, &childWriter);
 		WriteCoreStorageStats(&result, &childWriter);
 		PgbsonWriterEndDocument(&writer, &childWriter);
+	}
+
+	if ((aggregateMode & CollStatsAggMode_QueryExecStats) != 0)
+	{
+		PgbsonWriterAppendDocument(&writer, "queryExecStats", 14, result.queryExecStats);
+	}
+
+	if ((aggregateMode & CollStatsAggMode_CompactStats) != 0)
+	{
+		PgbsonWriterAppendDocument(&writer, "compactStats", 12, result.compactStats);
 	}
 
 	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
@@ -423,7 +472,12 @@ MergeWorkerResults(CollStatsResult *result, MongoCollection *collection,
 	int64 totalDocCountFromStats = 0;
 	int64 totalDocColumnSize = 0;
 	int64 totalDocColumnSizeFromStats = 0;
+	double totalSampledRawSize = 0;
+	double totalSampledStoredSize = 0;
+	int64 totalSampleCount = 0;
 	List *indexDocs = NIL;
+	List *queryExecStatsDocs = NIL;
+	List *compactStatsDocs = NIL;
 
 	foreach(workerCell, workerResults)
 	{
@@ -434,6 +488,10 @@ MergeWorkerResults(CollStatsResult *result, MongoCollection *collection,
 		int64 workerTotalDocCount = 0;
 		int64 workerTotalDocCountFromStats = 0;
 		int32 averageDocSize = 0;
+		double averageRawSize = 0;
+		double averageStoredSize = 0;
+		int64 sampleCount = 0;
+		bool hasQueryExecStats = false;
 
 		int errorCode = 0;
 		const char *errorMessage = NULL;
@@ -483,6 +541,32 @@ MergeWorkerResults(CollStatsResult *result, MongoCollection *collection,
 			{
 				averageDocSize = BsonValueAsInt32(bson_iter_value(&workerIter));
 			}
+			else if (strcmp(key, "avg_obj_size_sampled") == 0)
+			{
+				averageRawSize = BsonValueAsDouble(bson_iter_value(&workerIter));
+				result->hasSampledDocSize = true;
+			}
+			else if (strcmp(key, "avg_obj_size_stored") == 0)
+			{
+				averageStoredSize = BsonValueAsDouble(bson_iter_value(&workerIter));
+			}
+			else if (strcmp(key, "doc_size_sample_count") == 0)
+			{
+				sampleCount = BsonValueAsInt64(bson_iter_value(&workerIter));
+			}
+			else if (strcmp(key, "query_exec_stats") == 0)
+			{
+				queryExecStatsDocs = lappend(queryExecStatsDocs,
+											 PgbsonInitFromDocumentBsonValue(
+												 bson_iter_value(&workerIter)));
+				hasQueryExecStats = true;
+			}
+			else if (strcmp(key, "compact_stats") == 0)
+			{
+				compactStatsDocs = lappend(compactStatsDocs,
+										   PgbsonInitFromDocumentBsonValue(
+											   bson_iter_value(&workerIter)));
+			}
 			else if (strcmp(key, "index_sizes") == 0)
 			{
 				bson_value_t *value = palloc(sizeof(bson_value_t));
@@ -503,10 +587,41 @@ MergeWorkerResults(CollStatsResult *result, MongoCollection *collection,
 													   errorMessage)));
 		}
 
+		if ((mode & CollStatsAggMode_QueryExecStats) != 0 && !hasQueryExecStats)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+							errmsg("queryExecStats is not supported by every worker")));
+		}
+
+		totalSampledRawSize += averageRawSize * sampleCount;
+		totalSampledStoredSize += averageStoredSize * sampleCount;
+		totalSampleCount += sampleCount;
 		totalDocColumnSize += (averageDocSize * workerTotalDocCount);
 		totalDocCount += workerTotalDocCount;
 		totalDocCountFromStats += workerTotalDocCountFromStats;
 		totalDocColumnSizeFromStats += (averageDocSize * workerTotalDocCountFromStats);
+	}
+
+	if (totalSampleCount > 0)
+	{
+		result->avgObjSize = totalSampledRawSize / totalSampleCount;
+		result->avgDocSizeStored = totalSampledStoredSize / totalSampleCount;
+	}
+
+	if ((mode & CollStatsAggMode_QueryExecStats) != 0)
+	{
+		result->queryExecStats = MergeWorkerQueryExecStats(queryExecStatsDocs);
+	}
+
+	if ((mode & CollStatsAggMode_CompactStats) != 0)
+	{
+		result->compactStats = MergeWorkerCompactStats(compactStatsDocs);
+	}
+
+	if ((mode & CollStatsAggMode_CountAndStorage) == 0 &&
+		!ForceCollStatsDataCollection)
+	{
+		return;
 	}
 
 	bool isSmallCollection = false;
@@ -551,39 +666,47 @@ MergeWorkerResults(CollStatsResult *result, MongoCollection *collection,
 	/* Gather relevant data */
 	if ((mode & CollStatsAggMode_Storage) != 0 || ForceCollStatsDataCollection)
 	{
-		int32 avgObjSize = 0;
-		if (docCountResult == 0)
+		if (result->hasSampledDocSize)
 		{
-			avgObjSize = 0;
-		}
-		else if (UsePgStatsLiveTuplesForCount &&
-				 docCountResult < CollStatsCountPolicyThreshold)
-		{
-			/* In this case, we can use the runtime to fetch the avg column width
-			 * but instead of using the AVG at runtime, we'll use a table sample of a small
-			 * set of rows to make this go quick. This ensures that even when stats lie
-			 * and the table may be much bigger than we expect, we spend minimal time on this.
-			 */
-			avgObjSize = GetAverageColumnWidthSampled(collection);
-		}
-		else if (isSmallCollection)
-		{
-			avgObjSize = GetAverageColumnWidthRuntime(collection);
+			result->size = (int64) (docCountResult * result->avgObjSize) / (int64) scale;
 		}
 		else
 		{
-			/* Avg size cannot be smaller than the storage size - cap it at this value */
-			avgObjSize = (int32) (docColumnSizeTotalResult / docCountResult);
-			int32 avgSizeFromStorage = (int32_t) (result->storageSize * 1.0 /
-												  docCountResult);
-			if (avgSizeFromStorage > (avgObjSize * 2))
+			int32 avgObjSize = 0;
+			if (docCountResult == 0)
 			{
-				avgObjSize = avgSizeFromStorage;
+				avgObjSize = 0;
 			}
+			else if (UsePgStatsLiveTuplesForCount &&
+					 docCountResult < CollStatsCountPolicyThreshold)
+			{
+				/* In this case, we can use the runtime to fetch the avg column width
+				 * but instead of using the AVG at runtime, we'll use a table sample of a small
+				 * set of rows to make this go quick. This ensures that even when stats lie
+				 * and the table may be much bigger than we expect, we spend minimal time on this.
+				 */
+				avgObjSize = GetAverageColumnWidthSampled(collection);
+			}
+			else if (isSmallCollection)
+			{
+				avgObjSize = GetAverageColumnWidthRuntime(collection);
+			}
+			else
+			{
+				/* Avg size cannot be smaller than the storage size - cap it at this value */
+				avgObjSize = (int32) (docColumnSizeTotalResult / docCountResult);
+				int32 avgSizeFromStorage = (int32_t) (result->storageSize * 1.0 /
+													  docCountResult);
+				if (avgSizeFromStorage > (avgObjSize * 2))
+				{
+					avgObjSize = avgSizeFromStorage;
+				}
+			}
+
+			result->avgObjSize = avgObjSize;
+			result->size = (docCountResult * avgObjSize) / (int64) scale;
 		}
 
-		result->avgObjSize = avgObjSize;
-		result->size = (docCountResult * avgObjSize) / (int64) scale;
 		result->totalIndexSize = (result->totalSize - result->storageSize) /
 								 (int64) scale;
 		result->totalSize = result->totalSize / (int64) scale;
@@ -741,15 +864,19 @@ CollStatsWorker(void *fcinfoPointer)
 		 * We don't do runtime counts here - instead we do it in the coordinator
 		 * if it's needed.
 		 */
-		bool isSmallCollection = false;
-		int64 documentCount = GetPostgresDocumentCountStats(shardOids,
-															&isSmallCollection);
+		if ((mode & CollStatsAggMode_CountAndStorage) != 0 ||
+			ForceCollStatsDataCollection)
+		{
+			bool isSmallCollection = false;
+			int64 documentCount = GetPostgresDocumentCountStats(shardOids,
+																&isSmallCollection);
 
-		PgbsonWriterAppendInt64(&writer, "total_doc_count", 15, documentCount);
+			PgbsonWriterAppendInt64(&writer, "total_doc_count", 15, documentCount);
 
-		int64 documentCountFromStats = GetPostgresLiveDocumentStats(shardOids);
-		PgbsonWriterAppendInt64(&writer, "total_stats_doc_count", 21,
-								documentCountFromStats);
+			int64 documentCountFromStats = GetPostgresLiveDocumentStats(shardOids);
+			PgbsonWriterAppendInt64(&writer, "total_stats_doc_count", 21,
+									documentCountFromStats);
+		}
 
 
 		/*
@@ -775,6 +902,11 @@ CollStatsWorker(void *fcinfoPointer)
 
 			PgbsonWriterAppendInt32(&writer, "avg_doc_size", 12, averageDocSize);
 
+			if ((mode & CollStatsAggMode_Storage) != 0 && EnableAvgSizeFromSample)
+			{
+				WriteSampledDocumentSizesWorker(shardOids, &writer);
+			}
+
 			/*
 			 * Walk the indexes for these shards and write out their sizes.
 			 */
@@ -785,7 +917,208 @@ CollStatsWorker(void *fcinfoPointer)
 		}
 	}
 
+	if ((mode & CollStatsAggMode_QueryExecStats) != 0)
+	{
+		pgbson *queryExecStats = shardOids == NULL ?
+								 PgbsonInitEmpty() :
+								 GetQueryExecStatsWorker(shardOids);
+		PgbsonWriterAppendDocument(&writer, "query_exec_stats", 16, queryExecStats);
+	}
+
+	if ((mode & CollStatsAggMode_CompactStats) != 0)
+	{
+		pgbson *compactStats = shardOids == NULL ?
+							   PgbsonInitEmpty() :
+							   GetCompactStatsWorker(shardOids);
+		PgbsonWriterAppendDocument(&writer, "compact_stats", 13, compactStats);
+	}
+
 	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+static void
+WriteSampledDocumentSizesWorker(ArrayType *relationIds, pgbson_writer *writer)
+{
+	StringInfo query = makeStringInfo();
+	appendStringInfoString(query,
+						   "SELECT avg(raw_size)::float8, avg(stored_size)::float8, count(*)::bigint FROM (");
+	ArrayIterator iterator = array_create_iterator(relationIds, 0, NULL);
+	Datum relationId;
+	bool isNull;
+	const char *separator = "";
+	while (array_iterate(iterator, &relationId, &isNull))
+	{
+		CHECK_FOR_INTERRUPTS();
+		if (isNull)
+		{
+			continue;
+		}
+		Oid relationOid = DatumGetObjectId(relationId);
+		char *qualifiedName = quote_qualified_identifier(
+			get_namespace_name(get_rel_namespace(relationOid)), get_rel_name(
+				relationOid));
+		appendStringInfo(query,
+						 "%s SELECT length(document::bytea) AS raw_size,"
+						 " pg_column_size(document) AS stored_size FROM %s"
+						 " TABLESAMPLE public.SYSTEM_ROWS(1000)",
+						 separator, qualifiedName);
+		separator = " UNION ALL";
+	}
+	array_free_iterator(iterator);
+	appendStringInfoString(query, ") sample");
+
+	bool readOnly = true;
+	Datum resultValues[3];
+	bool nullValues[3];
+	int numResults = 3;
+	ExtensionExecuteMultiValueQueryViaSPI(query->data, readOnly, SPI_OK_SELECT,
+										  resultValues, nullValues, numResults);
+	double averageRawSize = nullValues[0] ? 0 : DatumGetFloat8(resultValues[0]);
+	double averageStoredSize = nullValues[1] ? 0 : DatumGetFloat8(resultValues[1]);
+	int64 count = nullValues[2] ? 0 : DatumGetInt64(resultValues[2]);
+
+	PgbsonWriterAppendDouble(writer, "avg_obj_size_sampled", 20, averageRawSize);
+	PgbsonWriterAppendDouble(writer, "avg_obj_size_stored", 19, averageStoredSize);
+	PgbsonWriterAppendInt64(writer, "doc_size_sample_count", 21, count);
+}
+
+
+static pgbson *
+GetQueryExecStatsWorker(ArrayType *relationIds)
+{
+	StringInfo query = makeStringInfo();
+	appendStringInfo(query,
+					 "SELECT %s.row_get_bson(stats) FROM (SELECT"
+					 " COALESCE(sum(seq_scan), 0)::bigint AS \"collScan\","
+					 " COALESCE(sum(seq_tup_read), 0)::bigint AS \"collScanNumDocs\","
+					 " COALESCE(sum(idx_scan), 0)::bigint AS \"ixscan\","
+					 " COALESCE(sum(idx_tup_fetch), 0)::bigint AS \"ixscanNumDocs\""
+					 " FROM pg_catalog.pg_stat_user_tables WHERE relid = ANY($1)) stats",
+					 CoreSchemaName);
+	Oid argTypes[1] = { OIDARRAYOID };
+	Datum argValues[1] = { PointerGetDatum(relationIds) };
+	bool readOnly = true;
+	bool isNull;
+	Datum result = ExtensionExecuteQueryWithArgsViaSPI(query->data, 1, argTypes,
+													   argValues, NULL, readOnly,
+													   SPI_OK_SELECT, &isNull);
+	return isNull ? PgbsonInitEmpty() : DatumGetPgBson(result);
+}
+
+
+static pgbson *
+MergeWorkerQueryExecStats(List *workerStats)
+{
+	int64 collectionScanCount = 0;
+	int64 collectionScanNumDocs = 0;
+	int64 indexScanCount = 0;
+	int64 indexScanNumDocs = 0;
+
+	ListCell *cell;
+	foreach(cell, workerStats)
+	{
+		CHECK_FOR_INTERRUPTS();
+		bson_iter_t iter;
+		PgbsonInitIterator(lfirst(cell), &iter);
+		while (bson_iter_next(&iter))
+		{
+			const char *key = bson_iter_key(&iter);
+			if (strcmp(key, "collScan") == 0)
+			{
+				collectionScanCount += BsonValueAsInt64(bson_iter_value(&iter));
+			}
+			else if (strcmp(key, "collScanNumDocs") == 0)
+			{
+				collectionScanNumDocs += BsonValueAsInt64(bson_iter_value(&iter));
+			}
+			else if (strcmp(key, "ixscan") == 0)
+			{
+				indexScanCount += BsonValueAsInt64(bson_iter_value(&iter));
+			}
+			else if (strcmp(key, "ixscanNumDocs") == 0)
+			{
+				indexScanNumDocs += BsonValueAsInt64(bson_iter_value(&iter));
+			}
+		}
+	}
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	pgbson_writer scansWriter;
+	PgbsonWriterStartDocument(&writer, "collectionScans", 15, &scansWriter);
+	PgbsonWriterAppendInt64(&scansWriter, "count", 5, collectionScanCount);
+	PgbsonWriterAppendInt64(&scansWriter, "numDocs", 7, collectionScanNumDocs);
+	PgbsonWriterEndDocument(&writer, &scansWriter);
+
+	PgbsonWriterStartDocument(&writer, "indexScans", 10, &scansWriter);
+	PgbsonWriterAppendInt64(&scansWriter, "count", 5, indexScanCount);
+	PgbsonWriterAppendInt64(&scansWriter, "numDocs", 7, indexScanNumDocs);
+	PgbsonWriterEndDocument(&writer, &scansWriter);
+
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+static pgbson *
+GetCompactStatsWorker(ArrayType *relationIds)
+{
+	StringInfo query = makeStringInfo();
+	appendStringInfo(query,
+					 "SELECT %s.row_get_bson(stats) FROM (SELECT"
+					 " array_agg(GREATEST(last_vacuum, last_autovacuum) ORDER BY relid)"
+					 " AS \"lastCompact\","
+					 " array_agg(GREATEST(last_analyze, last_autoanalyze) ORDER BY relid)"
+					 " AS \"lastCompactStats\""
+					 " FROM pg_catalog.pg_stat_user_tables WHERE relid = ANY($1)) stats",
+					 CoreSchemaName);
+	Oid argTypes[1] = { OIDARRAYOID };
+	Datum argValues[1] = { PointerGetDatum(relationIds) };
+	bool readOnly = true;
+	bool isNull;
+	Datum result = ExtensionExecuteQueryWithArgsViaSPI(query->data, 1, argTypes,
+													   argValues, NULL, readOnly,
+													   SPI_OK_SELECT, &isNull);
+	return isNull ? PgbsonInitEmpty() : DatumGetPgBson(result);
+}
+
+
+static pgbson *
+MergeWorkerCompactStats(List *workerStats)
+{
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	WriteMergedWorkerTimestampArray(workerStats, "lastCompact", &writer);
+	WriteMergedWorkerTimestampArray(workerStats, "lastCompactStats", &writer);
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+static void
+WriteMergedWorkerTimestampArray(List *workerStats, const char *fieldName,
+								pgbson_writer *writer)
+{
+	pgbson_array_writer arrayWriter;
+	PgbsonWriterStartArray(writer, fieldName, strlen(fieldName), &arrayWriter);
+	ListCell *cell;
+	foreach(cell, workerStats)
+	{
+		CHECK_FOR_INTERRUPTS();
+		bson_iter_t iter;
+		PgbsonInitIterator(lfirst(cell), &iter);
+		if (!bson_iter_find(&iter, fieldName) || !BSON_ITER_HOLDS_ARRAY(&iter))
+		{
+			continue;
+		}
+		bson_iter_t values;
+		bson_iter_recurse(&iter, &values);
+		while (bson_iter_next(&values))
+		{
+			CHECK_FOR_INTERRUPTS();
+			PgbsonArrayWriterWriteValue(&arrayWriter, bson_iter_value(&values));
+		}
+	}
+	PgbsonWriterEndArray(writer, &arrayWriter);
 }
 
 
@@ -1048,7 +1381,16 @@ WriteCoreStorageStats(CollStatsResult *result, pgbson_writer *writer)
 {
 	PgbsonWriterAppendInt32OrDouble(writer, "size", 4, result->size);
 	PgbsonWriterAppendInt32OrDouble(writer, "count", 5, result->count);
-	PgbsonWriterAppendInt32(writer, "avgObjSize", 10, result->avgObjSize);
+	if (result->hasSampledDocSize)
+	{
+		PgbsonWriterAppendDouble(writer, "avgObjSize", 10, result->avgObjSize);
+		PgbsonWriterAppendDouble(writer, "avgObjSizeStored", 16,
+								 result->avgDocSizeStored);
+	}
+	else
+	{
+		PgbsonWriterAppendInt32(writer, "avgObjSize", 10, (int32) result->avgObjSize);
+	}
 	PgbsonWriterAppendInt32OrDouble(writer, "storageSize", 11, result->storageSize);
 	PgbsonWriterAppendInt32(writer, "nindexes", 8, result->nindexes);
 

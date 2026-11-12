@@ -76,6 +76,17 @@ step "s1-take-advisory-lock"
     SELECT pg_advisory_xact_lock(25709000);
 }
 
+step "s1-prepare-analyze-progress"
+{
+    DROP INDEX documentdb_data.compact_progress_blocker;
+    CREATE STATISTICS compact_progress_stats
+        ON shard_key_value, object_id
+        FROM documentdb_data.documents_25709000;
+    CREATE STATISTICS compact_progress_expression_stats
+        ON (documentdb_api_internal.block_compact_progress(shard_key_value))
+        FROM documentdb_data.documents_25709000;
+}
+
 session "s2"
 
 step "s2-real-compact"
@@ -140,7 +151,7 @@ step "s3-current-op-compact"
     WHERE document OPERATOR(documentdb_api_catalog.@@) documentdb_core.bson_build_document('ns', 'isolation.compact-currentop-test'::text);
 }
 
-step "s3-current-op-vacuum-full-progress"
+step "s3-current-op-maintenance-progress"
 {
     SELECT documentdb_api_catalog.bson_dollar_project(
         document,
@@ -161,5 +172,6 @@ permutation "s1-take-lock" "s2-real-compact" "s1-release-lock" "s2-real-compact"
 permutation "s1-take-lock" "s2-begin-stub-compact" "s3-current-op-compact" "s1-release-lock" "s2-rollback-stub-compact"
 permutation "s1-take-lock" "s2-raw-vacuum" "s3-current-op-compact" "s1-release-lock"
 permutation "s1-take-lock" "s2-raw-vacuum-full" "s3-current-op-compact" "s1-release-lock"
-permutation "s1-prepare-vacuum-full-progress" "s1-take-advisory-lock" "s2-raw-vacuum-full" "s3-current-op-vacuum-full-progress" "s1-release-lock"
+permutation "s1-prepare-vacuum-full-progress" "s1-take-advisory-lock" "s2-raw-vacuum-full" "s3-current-op-maintenance-progress" "s1-release-lock"
 permutation "s1-take-lock" "s2-raw-analyze" "s3-current-op-compact" "s1-release-lock"
+permutation "s1-prepare-vacuum-full-progress" "s1-prepare-analyze-progress" "s1-take-advisory-lock" "s2-raw-analyze" "s3-current-op-maintenance-progress" "s1-release-lock"

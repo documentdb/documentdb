@@ -717,11 +717,26 @@ bool EnableBackgroundIndexBuildNotify = DEFAULT_ENABLE_BACKGROUND_INDEX_BUILD_NO
 bool EnableDeadIndexEntryMarkingByTTLTask =
 	DEFAULT_ENABLE_DEAD_INDEX_ENTRY_MARKING_BY_TTL_TASK;
 
+/*
+ * SECTION: Collection statistics
+ */
+
+/* Added on v1.4, enabled on v1.4, remove after v1.6 */
+#define DEFAULT_ENABLE_AVG_SIZE_FROM_SAMPLE true
+bool EnableAvgSizeFromSample = DEFAULT_ENABLE_AVG_SIZE_FROM_SAMPLE;
+
 /* FEATURE FLAGS END */
 
 void
 InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix)
 {
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_avg_size_from_sample", newGucPrefix),
+		gettext_noop(
+			"Include sampled raw and stored document sizes in collection statistics."),
+		NULL, &EnableAvgSizeFromSample, DEFAULT_ENABLE_AVG_SIZE_FROM_SAMPLE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
 	DefineCustomBoolVariable(
 		psprintf("%s.enableVectorHNSWIndex", prefix),
 		gettext_noop(

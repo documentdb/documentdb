@@ -128,9 +128,9 @@ step s3-current-op-compact:
         documentdb_core.bson_build_document('allUsers', true, 'localOps', true, 'idleSessions', true, 'idleConnections', true))
     WHERE document OPERATOR(documentdb_api_catalog.@@) documentdb_core.bson_build_document('ns', 'isolation.compact-currentop-test'::text);
 
-bson_dollar_project                                                                                                                                                                                                                                                                                                                                                                                                                 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-{ "shard" : "shard_0", "active" : true, "type" : "op", "ns" : "isolation.compact-currentop-test", "command" : { "compact" : "compact-currentop-test" }, "op" : "workerCommand", "waitingForLock" : true, "writeConflicts" : { "$numberInt" : "1" }, "progress" : { "phase" : "waiting to start", "blocks_done" : { "$numberLong" : "0" }, "blocks_total" : { "$numberLong" : "0" } }, "msg" : "Vacuum progress: waiting to start." }
+bson_dollar_project                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+{ "shard" : "shard_0", "active" : true, "type" : "op", "ns" : "isolation.compact-currentop-test", "command" : { "compact" : "compact-currentop-test" }, "op" : "workerCommand", "waitingForLock" : true, "writeConflicts" : { "$numberInt" : "1" }, "progress" : { "phase" : "waiting to start", "blocks_done" : { "$numberLong" : "0" }, "blocks_total" : { "$numberLong" : "0" }, "num_dead_tuples" : { "$numberLong" : "0" }, "index_vacuum_count" : { "$numberLong" : "0" } }, "msg" : "Vacuum progress: waiting to start." }
 (1 row)
 
 step s1-release-lock: 
@@ -167,9 +167,9 @@ step s3-current-op-compact:
         documentdb_core.bson_build_document('allUsers', true, 'localOps', true, 'idleSessions', true, 'idleConnections', true))
     WHERE document OPERATOR(documentdb_api_catalog.@@) documentdb_core.bson_build_document('ns', 'isolation.compact-currentop-test'::text);
 
-bson_dollar_project                                                                                                                                                                                                                                                                                                                                                                                                                                  
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-{ "shard" : "shard_0", "active" : true, "type" : "op", "ns" : "isolation.compact-currentop-test", "command" : { "compact" : "compact-currentop-test", "mode" : "full" }, "op" : "workerCommand", "waitingForLock" : true, "writeConflicts" : { "$numberInt" : "1" }, "progress" : { "phase" : "waiting to start", "blocks_done" : { "$numberLong" : "0" }, "blocks_total" : { "$numberLong" : "0" } }, "msg" : "Vacuum progress: waiting to start." }
+bson_dollar_project                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+{ "shard" : "shard_0", "active" : true, "type" : "op", "ns" : "isolation.compact-currentop-test", "command" : { "compact" : "compact-currentop-test", "mode" : "full" }, "op" : "workerCommand", "waitingForLock" : true, "writeConflicts" : { "$numberInt" : "1" }, "progress" : { "phase" : "waiting to start", "blocks_done" : { "$numberLong" : "0" }, "blocks_total" : { "$numberLong" : "0" }, "num_dead_tuples" : { "$numberLong" : "0" }, "index_vacuum_count" : { "$numberLong" : "0" } }, "msg" : "Vacuum progress: waiting to start." }
 (1 row)
 
 step s1-release-lock: 
@@ -177,7 +177,7 @@ step s1-release-lock:
 
 step s2-raw-vacuum-full: <... completed>
 
-starting permutation: s1-prepare-vacuum-full-progress s1-take-advisory-lock s2-raw-vacuum-full s3-current-op-vacuum-full-progress s1-release-lock
+starting permutation: s1-prepare-vacuum-full-progress s1-take-advisory-lock s2-raw-vacuum-full s3-current-op-maintenance-progress s1-release-lock
 create_collection
 -----------------
 t                
@@ -218,7 +218,7 @@ pg_advisory_xact_lock
 step s2-raw-vacuum-full: 
     VACUUM FULL documentdb_data.documents_25709000;
  <waiting ...>
-step s3-current-op-vacuum-full-progress: 
+step s3-current-op-maintenance-progress: 
     SELECT documentdb_api_catalog.bson_dollar_project(
         document,
         documentdb_core.bson_build_document(
@@ -233,9 +233,9 @@ step s3-current-op-vacuum-full-progress:
         documentdb_core.bson_build_document(
             'ns', 'isolation.compact-currentop-test'::text);
 
-bson_dollar_project                                                                                                                                                                                                                                                                                                                                               
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-{ "shard" : "shard_0", "active" : true, "type" : "op", "ns" : "isolation.compact-currentop-test", "command" : { "compact" : "compact-currentop-test", "mode" : "full" }, "op" : "workerCommand", "waitingForLock" : true, "writeConflicts" : { "$numberInt" : "1" }, "progress" : { "phase" : "rebuilding index" }, "msg" : "Vacuum progress: rebuilding index." }
+bson_dollar_project                                                                                                                                                                                                                                                                                                                                                                                                                                            
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+{ "shard" : "shard_0", "active" : true, "type" : "op", "ns" : "isolation.compact-currentop-test", "command" : { "compact" : "compact-currentop-test", "mode" : "full" }, "op" : "workerCommand", "waitingForLock" : true, "writeConflicts" : { "$numberInt" : "1" }, "progress" : { "phase" : "rebuilding index", "num_dead_tuples" : { "$numberLong" : "0" }, "index_vacuum_count" : { "$numberLong" : "0" } }, "msg" : "Vacuum progress: rebuilding index." }
 (1 row)
 
 step s1-release-lock: 
@@ -272,9 +272,84 @@ step s3-current-op-compact:
         documentdb_core.bson_build_document('allUsers', true, 'localOps', true, 'idleSessions', true, 'idleConnections', true))
     WHERE document OPERATOR(documentdb_api_catalog.@@) documentdb_core.bson_build_document('ns', 'isolation.compact-currentop-test'::text);
 
-bson_dollar_project                                                                                                                                                                                                                                                                                                                                                                                                                                          
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-{ "shard" : "shard_0", "active" : true, "type" : "op", "ns" : "isolation.compact-currentop-test", "command" : { "compact" : "compact-currentop-test", "mode" : "updateStats" }, "op" : "workerCommand", "waitingForLock" : true, "writeConflicts" : { "$numberInt" : "1" }, "progress" : { "phase" : "waiting to start", "blocks_done" : { "$numberLong" : "0" }, "blocks_total" : { "$numberLong" : "0" } }, "msg" : "Analyze progress: waiting to start." }
+bson_dollar_project                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+{ "shard" : "shard_0", "active" : true, "type" : "op", "ns" : "isolation.compact-currentop-test", "command" : { "compact" : "compact-currentop-test", "mode" : "updateStats" }, "op" : "workerCommand", "waitingForLock" : true, "writeConflicts" : { "$numberInt" : "1" }, "progress" : { "phase" : "waiting to start", "blocks_done" : { "$numberLong" : "0" }, "blocks_total" : { "$numberLong" : "0" }, "statsComputed" : { "$numberLong" : "0" }, "statsTotal" : { "$numberLong" : "0" } }, "msg" : "Analyze progress: waiting to start." }
+(1 row)
+
+step s1-release-lock: 
+    COMMIT;
+
+step s2-raw-analyze: <... completed>
+
+starting permutation: s1-prepare-vacuum-full-progress s1-prepare-analyze-progress s1-take-advisory-lock s2-raw-analyze s3-current-op-maintenance-progress s1-release-lock
+create_collection
+-----------------
+t                
+(1 row)
+
+step s1-prepare-vacuum-full-progress: 
+    CREATE FUNCTION documentdb_api_internal.block_compact_progress(value bigint)
+    RETURNS bigint
+    AS $fn$
+    BEGIN
+        PERFORM pg_advisory_xact_lock(25709000);
+        RETURN value;
+    END
+    $fn$ LANGUAGE plpgsql IMMUTABLE;
+
+    SELECT documentdb_api.insert_one(
+        'isolation',
+        'compact-currentop-test',
+        documentdb_core.bson_build_document('_id', 1));
+    CREATE INDEX compact_progress_blocker
+        ON documentdb_data.documents_25709000
+        (documentdb_api_internal.block_compact_progress(shard_key_value));
+
+insert_one                                                          
+--------------------------------------------------------------------
+{ "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+step s1-prepare-analyze-progress: 
+    DROP INDEX documentdb_data.compact_progress_blocker;
+    CREATE STATISTICS compact_progress_stats
+        ON shard_key_value, object_id
+        FROM documentdb_data.documents_25709000;
+    CREATE STATISTICS compact_progress_expression_stats
+        ON (documentdb_api_internal.block_compact_progress(shard_key_value))
+        FROM documentdb_data.documents_25709000;
+
+step s1-take-advisory-lock: 
+    BEGIN;
+    SELECT pg_advisory_xact_lock(25709000);
+
+pg_advisory_xact_lock
+---------------------
+                     
+(1 row)
+
+step s2-raw-analyze: 
+    ANALYZE documentdb_data.documents_25709000;
+ <waiting ...>
+step s3-current-op-maintenance-progress: 
+    SELECT documentdb_api_catalog.bson_dollar_project(
+        document,
+        documentdb_core.bson_build_document(
+            'opid', 0, 'secs_running', 0, 'locking_op_prefixes', 0,
+            'op_prefix', 0, 'currentOpTime', 0, 'progress.blocks_done', 0,
+            'progress.blocks_total', 0, 'progress.Progress', 0))
+    FROM documentdb_api_internal.current_op_aggregation(
+        documentdb_core.bson_build_document(
+            'allUsers', true, 'localOps', true, 'idleSessions', true,
+            'idleConnections', true))
+    WHERE document OPERATOR(documentdb_api_catalog.@@)
+        documentdb_core.bson_build_document(
+            'ns', 'isolation.compact-currentop-test'::text);
+
+bson_dollar_project                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+{ "shard" : "shard_0", "active" : true, "type" : "op", "ns" : "isolation.compact-currentop-test", "command" : { "compact" : "compact-currentop-test", "mode" : "updateStats" }, "op" : "workerCommand", "waitingForLock" : true, "writeConflicts" : { "$numberInt" : "1" }, "progress" : { "phase" : "computing extended statistics", "statsComputed" : { "$numberLong" : "1" }, "statsTotal" : { "$numberLong" : "2" } }, "msg" : "Analyze progress: computing extended statistics." }
 (1 row)
 
 step s1-release-lock: 

@@ -1,6 +1,7 @@
 
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/commands/current_op.c
  *
@@ -147,6 +148,11 @@ typedef struct
 	/* Total number of heap or sample blocks. */
 	int64 maintenanceBlocksTotal;
 
+	int64 maintenanceStatsComputed;
+	int64 maintenanceStatsTotal;
+	int64 maintenanceDeadTuples;
+	int64 maintenanceIndexVacuumCount;
+
 	/* Index spec for running create Index */
 	IndexSpec *indexSpec;
 } SingleWorkerActivity;
@@ -286,18 +292,27 @@ const char *FirstLockingPidQuery =
 	") + pid::integer) FROM unnest(pg_blocking_pids($1::integer)) pid LIMIT 1";
 
 static const char *MaintenanceProgressQuery =
-	"SELECT maintenance_type, phase, blocks_done, blocks_total FROM ("
+	"SELECT maintenance_type, phase, blocks_done, blocks_total,"
+	" stats_computed, stats_total, num_dead_tuples, index_vacuum_count FROM ("
 	" SELECT 'vacuum'::text AS maintenance_type, phase,"
 	" heap_blks_scanned::bigint AS blocks_done,"
-	" heap_blks_total::bigint AS blocks_total"
+	" heap_blks_total::bigint AS blocks_total,"
+	" 0::bigint AS stats_computed, 0::bigint AS stats_total,"
+#if PG_VERSION_NUM >= 170000
+	" num_dead_item_ids::bigint AS num_dead_tuples,"
+#else
+	" num_dead_tuples::bigint,"
+#endif
+	" index_vacuum_count::bigint"
 	" FROM pg_catalog.pg_stat_progress_vacuum WHERE pid = $1"
 	" UNION ALL"
 	" SELECT 'analyze'::text, phase, sample_blks_scanned::bigint,"
-	" sample_blks_total::bigint"
+	" sample_blks_total::bigint, ext_stats_computed::bigint,"
+	" ext_stats_total::bigint, 0::bigint, 0::bigint"
 	" FROM pg_catalog.pg_stat_progress_analyze WHERE pid = $1"
 	" UNION ALL"
 	" SELECT 'vacuum'::text, phase, heap_blks_scanned::bigint,"
-	" heap_blks_total::bigint"
+	" heap_blks_total::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint"
 	" FROM pg_catalog.pg_stat_progress_cluster WHERE pid = $1"
 	") progress LIMIT 1";
 
@@ -1819,6 +1834,34 @@ WriteMaintenanceProgressAndGetMessage(SingleWorkerActivity *activity,
 		{
 			activity->maintenanceBlocksTotal = DatumGetInt64(resultDatum);
 		}
+
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 5, &isNull);
+		if (!isNull)
+		{
+			activity->maintenanceStatsComputed = DatumGetInt64(resultDatum);
+		}
+
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 6, &isNull);
+		if (!isNull)
+		{
+			activity->maintenanceStatsTotal = DatumGetInt64(resultDatum);
+		}
+
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 7, &isNull);
+		if (!isNull)
+		{
+			activity->maintenanceDeadTuples = DatumGetInt64(resultDatum);
+		}
+
+		resultDatum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc, 8, &isNull);
+		if (!isNull)
+		{
+			activity->maintenanceIndexVacuumCount = DatumGetInt64(resultDatum);
+		}
 	}
 	SPI_finish();
 
@@ -1832,6 +1875,20 @@ WriteMaintenanceProgressAndGetMessage(SingleWorkerActivity *activity,
 	PgbsonWriterAppendInt64(writer, "blocks_done", 11, activity->maintenanceBlocksDone);
 	PgbsonWriterAppendInt64(writer, "blocks_total", 12,
 							activity->maintenanceBlocksTotal);
+	if (activity->maintenanceProgressType == MAINTENANCE_PROGRESS_ANALYZE)
+	{
+		PgbsonWriterAppendInt64(writer, "statsComputed", 13,
+								activity->maintenanceStatsComputed);
+		PgbsonWriterAppendInt64(writer, "statsTotal", 10,
+								activity->maintenanceStatsTotal);
+	}
+	else
+	{
+		PgbsonWriterAppendInt64(writer, "num_dead_tuples", 15,
+								activity->maintenanceDeadTuples);
+		PgbsonWriterAppendInt64(writer, "index_vacuum_count", 18,
+								activity->maintenanceIndexVacuumCount);
+	}
 	if (activity->maintenanceBlocksTotal > 0)
 	{
 		double progress = activity->maintenanceBlocksDone * 100.0 /
