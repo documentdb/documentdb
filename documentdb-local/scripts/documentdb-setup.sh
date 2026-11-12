@@ -3273,6 +3273,24 @@ reload_self_managed_postgres_auth_mapping() {
     PG_RELOAD_CHANGED=false
 }
 
+# admin_users_sql: the login roles that hold documentdb_admin_role, one per
+# row, without the names the gateway refuses. Members through other roles count
+# (root and custom roles reach the admin role that way); a role's creator holds
+# it with ADMIN OPTION only and is not a member in effect.
+admin_users_sql() {
+    cat <<'SQL'
+WITH RECURSIVE members(oid) AS (
+    SELECT oid FROM pg_roles WHERE rolname = 'documentdb_admin_role'
+    UNION
+    SELECT m.member FROM pg_auth_members m JOIN members ON m.roleid = members.oid
+    WHERE m.inherit_option OR m.set_option
+)
+SELECT r.rolname FROM pg_roles r JOIN members ON members.oid = r.oid
+WHERE r.rolcanlogin AND r.rolname !~* '^(documentdb|citus|pg|internal_role)'
+ORDER BY 1;
+SQL
+}
+
 create_required_extensions_and_users() {
     log_info "Creating required extensions and roles."
 
@@ -3300,20 +3318,9 @@ SQL
 
     if [[ "${KEEP_ADMIN_USERS:-}" == "true" ]]; then
         local admins=""
-        # Members through other roles count too: root and custom roles reach the admin role that way.
-        # A role's creator holds it with ADMIN OPTION only and is not a member in effect.
-        admins="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v ON_ERROR_STOP=1 <<'SQL'
-WITH RECURSIVE members(oid) AS (
-    SELECT oid FROM pg_roles WHERE rolname = 'documentdb_admin_role'
-    UNION
-    SELECT m.member FROM pg_auth_members m JOIN members ON m.roleid = members.oid
-    WHERE m.inherit_option OR m.set_option
-)
-SELECT string_agg(r.rolname, ' ' ORDER BY r.rolname) FROM pg_roles r
-JOIN members ON members.oid = r.oid
-WHERE r.rolcanlogin AND r.rolname !~* '^(documentdb|citus|pg|internal_role)';
-SQL
-        )" || die "Could not list the DocumentDB admin users."
+        admins="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v ON_ERROR_STOP=1 \
+            <<<"$(admin_users_sql)")" || die "Could not list the DocumentDB admin users."
+        admins="${admins//$'\n'/ }"
         # A warning, not a refusal: PostgreSQL and the extensions were already changed above.
         if [[ -z "${admins}" ]]; then
             log_warn "Found no DocumentDB admin user. Create one with: sudo documentdb-gateway-admin create-user --username <name> --password-file <file>"
@@ -3344,15 +3351,8 @@ SQL
 
     # A different --admin-user on a rerun adds an admin; it never replaces one.
     local other_admins=""
-    other_admins="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v role_name="${USERNAME}" 2>/dev/null <<'SQL' | paste -sd ' ' - || true
-SELECT r.rolname FROM pg_roles r
-JOIN pg_auth_members m ON m.member = r.oid
-JOIN pg_roles g ON g.oid = m.roleid
-WHERE g.rolname = 'documentdb_admin_role' AND r.rolcanlogin
-  AND r.rolname <> :'role_name' AND r.rolname !~* '^(documentdb|citus|pg|internal_role)'
-ORDER BY 1;
-SQL
-    )"
+    other_admins="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA 2>/dev/null \
+        <<<"$(admin_users_sql)" | grep -vxF -- "${USERNAME}" | paste -sd ' ' - || true)"
     if [[ -n "${other_admins}" ]]; then
         log_warn "Adding admin user '${USERNAME}' alongside the existing DocumentDB admin(s): ${other_admins}. They keep full access; remove one with: sudo documentdb-gateway-admin drop-user --username <name>"
     fi
@@ -4142,7 +4142,7 @@ print_completion_message() {
             local _rerun="--pg-version ${PG_VERSION}"
             [[ -z "${TARGET_CLUSTER}" ]] || _rerun="--target-postgres-instance ${TARGET_CLUSTER}"
             echo "  Restart:    re-run sudo documentdb-setup ${_rerun}, plus any"
-            echo "              --data-dir / --pg-port / --no-enable used for this install"
+            echo "              --data-dir / --pg-port used for this install"
             echo "              (restarts any non-systemd component and keeps the admin"
             echo "               users; a bare re-run would prompt for an admin name and"
             echo "               could create another account)"
@@ -4659,11 +4659,12 @@ status_database_check() {
     # -w and the timeouts: a status probe must never prompt or hang.
     if ! admins="$(run_as_user documentdb-gateway env PGCONNECT_TIMEOUT=5 PGOPTIONS='-c statement_timeout=5000' \
             "${psql_bin}" -X -w -A -t -q -d "${url}" -c \
-            "SELECT coalesce(string_agg(r.rolname, ' ' ORDER BY r.rolname), '') FROM pg_roles r JOIN pg_auth_members m ON m.member = r.oid JOIN pg_roles g ON g.oid = m.roleid WHERE g.rolname = 'documentdb_admin_role' AND r.rolcanlogin AND r.rolname !~* '^(documentdb|citus|pg|internal_role)'" \
+            "$(admin_users_sql)" \
             2>/dev/null)"; then
         printf 'not answering (PostgreSQL refused or did not answer the gateway connection in %s)' "${url_file}"
         return 0
     fi
+    admins="${admins//$'\n'/ }"
     if [[ -z "${admins}" ]]; then
         printf 'no DocumentDB admin user (create one with: sudo documentdb-gateway-admin create-user --username <name> --password-file <file>)'
         return 0

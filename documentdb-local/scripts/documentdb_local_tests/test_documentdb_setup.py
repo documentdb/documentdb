@@ -7347,6 +7347,7 @@ class SetupReportsTrueStateTests(unittest.TestCase):
             '  case "${sql}" in *"SELECT 1 FROM pg_roles"*) [[ "${EXISTS}" == 1 ]] && echo 1; true ;;\n'
             '  *documentdb_admin_role*) [[ -z "${OTHERS}" ]] || printf "%s\\n" ${OTHERS} ;; esac; }\n'
             'USERNAME=alice PG_OWNER=documentdb PSQL=psql PG_SOCKET_DIR=/tmp PG_PORT=9718 HAS_EXTENDED_RUM=false\n'
+            + self._shell_function("admin_users_sql") + "\n"
             + self._shell_function("create_required_extensions_and_users")
             + '\ncreate_required_extensions_and_users\n'
         )
@@ -7363,7 +7364,8 @@ class SetupReportsTrueStateTests(unittest.TestCase):
         self.assertIn("APPLY: Reset password for existing admin user 'alice'", out)
 
     def test_new_admin_name_warns_about_existing_admins(self):
-        out = self._create_admin(exists=False, others="admin ops")
+        # The query lists every admin; the name being added is left out of the warning.
+        out = self._create_admin(exists=False, others="admin alice ops")
         self.assertRegex(out, r"WARN: Adding admin user 'alice' alongside .*: admin ops\.")
         self.assertIn("documentdb-gateway-admin drop-user", out)
         self.assertIn("APPLY: Bootstrap first admin user 'alice'", out)
@@ -7372,8 +7374,8 @@ class SetupReportsTrueStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             fake_psql = Path(td) / "psql"
             fake_psql.write_text(
-                '#!/bin/bash\ncase "${FAKE_MODE}" in\n'
-                '  down) exit 2 ;;\n  none) echo ;;\n  ok) echo "admin ops" ;;\nesac\n',
+                '#!/bin/bash\ncase "$*" in *pg_auth_members*) ;; *) exit 3 ;; esac\ncase "${FAKE_MODE}" in\n'
+                '  down) exit 2 ;;\n  none) echo ;;\n  ok) printf "admin\\nops\\n" ;;\nesac\n',
                 encoding="utf-8")
             fake_psql.chmod(0o755)
             url_file = Path(td) / "pg-url"
@@ -7383,6 +7385,7 @@ class SetupReportsTrueStateTests(unittest.TestCase):
                 f'id() {{ echo {uid}; }}\n'
                 f'documentdb_pg_bindir_candidates() {{ echo {shlex.quote(td)}; }}\n'
                 'run_as_user() { shift; "$@"; }\n'
+                + self._shell_function("admin_users_sql") + "\n"
                 + self._shell_function("status_database_check")
                 + f'\nstatus_database_check 18 {shlex.quote(str(url_file))}\n'
             )
@@ -7395,6 +7398,10 @@ class SetupReportsTrueStateTests(unittest.TestCase):
         # --status said healthy with the admin user dropped or PostgreSQL
         # down, because it only asked systemd whether the units were active.
         self.assertEqual(self._database_check("ok"), "ok (admin users: admin ops)")
+        # psql is faked, so only the text can show that indirect members count and creators do not.
+        sql = self._shell_function("admin_users_sql")
+        self.assertIn("WITH RECURSIVE", sql)
+        self.assertIn("WHERE m.inherit_option OR m.set_option", sql)
         self.assertTrue(self._database_check("none").startswith("no DocumentDB admin user"))
         self.assertTrue(self._database_check("down").startswith("not answering"))
         self.assertTrue(self._database_check("ok", uid="1000").startswith("unknown"))
@@ -11709,9 +11716,10 @@ class RerunKeepsAdminUsersTests(unittest.TestCase):
             'die() { echo "DIE: $*"; exit 1; }\n'
             'confirm_or_apply() { echo "APPLY: $1"; }\n'
             'run_as_user() { local sql; sql="$(cat)";\n'
-            '  case "${sql}" in *string_agg*) echo "${ADMINS}" ;; *pg_extension*) echo "${INSTALLED}" ;;\n'
+            '  case "${sql}" in *pg_auth_members*) printf "%s\\n" ${ADMINS} ;; *pg_extension*) echo "${INSTALLED}" ;;\n'
             '    *) echo "UNEXPECTED: ${sql}" ;; esac; }\n'
             'KEEP_ADMIN_USERS=true USERNAME="" PG_OWNER=documentdb PSQL=psql PG_SOCKET_DIR=/tmp PG_PORT=9718 HAS_EXTENDED_RUM=false\n'
+            + _shell_function(self, SETUP_SCRIPT, "admin_users_sql") + "\n"
             + _shell_function(self, SETUP_SCRIPT, "create_required_extensions_and_users")
             + "\ncreate_required_extensions_and_users\n"
         )
