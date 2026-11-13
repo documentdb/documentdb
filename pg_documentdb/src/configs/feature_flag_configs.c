@@ -499,7 +499,7 @@ bool EnableRumDynamicIndexScansSkipToTid =
 bool EnableProjectPushUpBeforeUnwindWithGroup =
 	DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP;
 
-/* Added in v0.116, Pending stabilization, enable in v1.3 */
+/* Added in v0.116, Pending stabilization, enable in v1.7 */
 #define DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX false
 bool EnableMergeSortForInPrefix = DEFAULT_ENABLE_MERGE_SORT_FOR_IN_PREFIX;
 
