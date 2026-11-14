@@ -43,6 +43,7 @@ extern bool RumSkipGlobalVisibilityCheckOnPrune;
 extern bool RumEnableOverwriteEntryTupleOnVacuum;
 extern bool RumEnableTargetedPostingTreePruning;
 extern bool RumEnableSinglePassPostingTreeVacuum;
+extern bool RumEnableSinglePassDeferredLeafDelete;
 extern bool RumEnableVacuumCleanupPostingTreePruningIfBulkDeleteSkipped;
 
 typedef struct
@@ -763,6 +764,12 @@ FindLeftMostLeafDataPage(RumVacuumState *gvs, BlockNumber blkno, bool *isPageRoo
 /*
  * Scan through posting tree leafs, delete empty tuples.
  * Returns the number of empty pages in the leaves.
+ *
+ * TODO: Delete this walk when RumEnableSinglePassDeferredLeafDelete is
+ * retired, and call rumCleanPostingTreeLeavesTidsByRightlinkDeferred from
+ * both callers. Switching the inline bulk delete caller does not change its
+ * behavior: the walk never deletes leaves when inlineVacuumBulkDelDataPages
+ * is set.
  */
 static int
 rumCleanPostingTreeLeavesTidsByRightlink(RumVacuumState *gvs, OffsetNumber attnum,
@@ -885,6 +892,168 @@ rumCleanPostingTreeLeavesTidsByRightlink(RumVacuumState *gvs, OffsetNumber attnu
 
 
 /*
+ * Variant of rumCleanPostingTreeLeavesTidsByRightlink used when
+ * RumEnableSinglePassDeferredLeafDelete is on: single-pass vacuum deletes an
+ * emptied leaf only after vacuuming its right sibling. Keep the two walks in
+ * sync until the flag is retired; this walk then replaces the original.
+ */
+static int
+rumCleanPostingTreeLeavesTidsByRightlinkDeferred(RumVacuumState *gvs, OffsetNumber attnum,
+												 BlockNumber blkno,
+												 int32_t *nonVoidPageCount,
+												 RumVacuumStatistics *vacStats)
+{
+	Buffer buffer;
+	Page page;
+	bool isPageRoot = true;
+	int numVoidPages = 0;
+	int32_t numNonVoidPages = 0;
+	bool exclusive = true;
+	BlockNumber rootBlockNo = blkno;
+
+	/*
+	 * Single-pass deletes an empty leaf only after vacuuming its right
+	 * sibling. rumDeletePage() unlinks the leaf by rewriting the right
+	 * sibling's left link, so its WAL record also includes the right sibling.
+	 * The first change to a page after a checkpoint logs a full image of that
+	 * page, so deleting first would log the sibling with all of its dead TIDs
+	 * still on it. Vacuuming the sibling first means its image is of the
+	 * cleaned page. If vacuum removes nothing from the sibling, both orders
+	 * log the same image of it.
+	 */
+	RumPostingTreeDeleteEntry pendingDeleteEntry = { 0 };
+	bool hasPendingDelete = false;
+
+	/* Find leftmost leaf page of posting tree and lock it in exclusive mode */
+	buffer = FindLeftMostLeafDataPage(gvs, blkno, &isPageRoot, exclusive);
+	page = BufferGetPage(buffer);
+
+	/* Iterate all posting tree leaves using rightlinks and vacuum them */
+	while (true)
+	{
+		bool deferLeafDelete = false;
+		RumPostingTreeDeleteEntry leafDeleteEntry = { 0 };
+		OffsetNumber maxOffAfterPrune;
+		blkno = RumPageGetOpaque(page)->rightlink;
+		bool pageEmptiedThisCycle = rumCleanPostingTreeLeafTids(gvs, attnum, page, buffer,
+																isPageRoot,
+																&maxOffAfterPrune);
+		bool isPageEmpty = maxOffAfterPrune < FirstOffsetNumber;
+
+		/*
+		 * A leaf with no left or right sibling is the posting tree's
+		 * leftmost/rightmost bound, which rumDeletePage always refuses to
+		 * remove. Skip the inline prune for those so we do not take the
+		 * posting-tree root cleanup lock for a delete that cannot succeed.
+		 */
+		bool isBoundLeaf =
+			RumPageGetOpaque(page)->leftlink == InvalidBlockNumber ||
+			RumPageGetOpaque(page)->rightlink == InvalidBlockNumber;
+
+		bool isPrunableEmptyLeaf = isPageEmpty && !isPageRoot && !isBoundLeaf;
+
+		/*
+		 * This leaf may have had all its tids removed in an earlier cycle
+		 * without being deleted, because structural pruning could not proceed
+		 * or was disabled. Such a leaf is empty on arrival and can never shed
+		 * more tids to re-trigger pruning, so treat it as pruning work again.
+		 *
+		 * Bound leaves are excluded even though they are empty: they can never
+		 * be deleted, so counting them on every cycle would inflate the empty
+		 * page total without ever adding a matching deletion.
+		 */
+		bool isPreviouslySkippedPrunableLeaf = isPrunableEmptyLeaf &&
+											   !pageEmptiedThisCycle;
+
+		if (pageEmptiedThisCycle || isPreviouslySkippedPrunableLeaf)
+		{
+			numVoidPages++;
+
+			/*
+			 * All structural-pruning strategies retry stale, prunable leaves:
+			 * single-pass deletes them inline, while targeted and full-scan
+			 * use numVoidPages to arm their second pruning pass. Do not count
+			 * a retry when the structural-pruning kill switch suppresses it.
+			 */
+			if (isPreviouslySkippedPrunableLeaf &&
+				!RumVacuumSkipPrunePostingTreePages)
+			{
+				vacStats->numStaleEmptyLeafRetries++;
+			}
+
+			if (!gvs->inlineVacuumBulkDelDataPages &&
+				RumEnableSinglePassPostingTreeVacuum &&
+				!RumVacuumSkipPrunePostingTreePages &&
+				isPrunableEmptyLeaf)
+			{
+				/*
+				 * Single-pass vacuum: prune the empty leaf during this walk
+				 * instead of in a second pass in rumVacuumPostingTree. The
+				 * delete itself waits until the next leaf is vacuumed.
+				 */
+				RumItem *maxEntry = RumDataPageGetRightBound(page);
+				leafDeleteEntry.deleteBlock = BufferGetBlockNumber(buffer);
+				leafDeleteEntry.pageMaxItem = *maxEntry;
+				leafDeleteEntry.entryDeleted = false;
+				deferLeafDelete = true;
+			}
+		}
+		else if (!isPageEmpty)
+		{
+			numNonVoidPages++;
+		}
+
+		UnlockReleaseBuffer(buffer);
+
+		/*
+		 * The previous leaf's delete locks the posting-tree root and then
+		 * this leaf, its right sibling, so it runs only after this leaf is
+		 * released. Check the settings again: a configuration reload in
+		 * vacuum_delay_point() may have turned them off since the delete
+		 * was deferred.
+		 */
+		if (hasPendingDelete && RumEnableSinglePassPostingTreeVacuum &&
+			!RumVacuumSkipPrunePostingTreePages)
+		{
+			TryDeletePostingLeafFromTree(gvs, rootBlockNo, attnum,
+										 &pendingDeleteEntry, vacStats);
+		}
+
+		hasPendingDelete = false;
+
+		if (deferLeafDelete)
+		{
+			pendingDeleteEntry = leafDeleteEntry;
+			hasPendingDelete = true;
+		}
+
+		if (blkno == InvalidBlockNumber)
+		{
+			break;
+		}
+
+		/* Delay and accept interrupts while no buffer lock is held. */
+		RumVacuumDelayPointCompat();
+
+		buffer = ReadBufferExtended(gvs->index, MAIN_FORKNUM, blkno,
+									RBM_NORMAL, gvs->strategy);
+		LockBuffer(buffer, RUM_EXCLUSIVE);
+		page = BufferGetPage(buffer);
+	}
+
+	/*
+	 * No delete can still be pending: the walk ends on the rightmost leaf,
+	 * and a bound leaf (no right sibling) is never made pending above. If
+	 * rightmost leaves ever become deletable, run the pending delete here.
+	 */
+	Assert(!hasPendingDelete);
+
+	*nonVoidPageCount = numNonVoidPages;
+	return numVoidPages;
+}
+
+
+/*
  * Vacuum one posting tree end-to-end.
  *
  * Step 1: clean dead TIDs from all leaves (via rightlinks).
@@ -913,10 +1082,18 @@ rumVacuumPostingTree(RumVacuumState *gvs,
 	 * below is skipped. Once single-pass is the default this second pass (and
 	 * the targeted/full-scan branches) can be removed entirely.
 	 */
-	int numEmptyLeafPages = rumCleanPostingTreeLeavesTidsByRightlink(gvs, attnum,
-																	 rootBlkno,
-																	 &numNonEmptyLeafPages,
-																	 vacStats);
+	int numEmptyLeafPages;
+
+	if (RumEnableSinglePassDeferredLeafDelete)
+	{
+		numEmptyLeafPages = rumCleanPostingTreeLeavesTidsByRightlinkDeferred(
+			gvs, attnum, rootBlkno, &numNonEmptyLeafPages, vacStats);
+	}
+	else
+	{
+		numEmptyLeafPages = rumCleanPostingTreeLeavesTidsByRightlink(
+			gvs, attnum, rootBlkno, &numNonEmptyLeafPages, vacStats);
+	}
 
 	if (!RumEnableSinglePassPostingTreeVacuum &&
 		!RumVacuumSkipPrunePostingTreePages && numEmptyLeafPages > 0)
