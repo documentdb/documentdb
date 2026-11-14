@@ -165,6 +165,11 @@ PGDLLEXPORT bool RumEnableTargetedPostingTreePruning =
 PGDLLEXPORT bool RumEnableSinglePassPostingTreeVacuum =
 	RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM;
 
+/* FeatureFlag: Added in v1.4, Pending stabilization, enable on v1.6 */
+#define RUM_DEFAULT_ENABLE_SINGLE_PASS_DEFERRED_LEAF_DELETE false
+PGDLLEXPORT bool RumEnableSinglePassDeferredLeafDelete =
+	RUM_DEFAULT_ENABLE_SINGLE_PASS_DEFERRED_LEAF_DELETE;
+
 /* FeatureFlag: Added in v1.0, Pending stabilization, enable on v1.3 */
 #define RUM_DEFAULT_ENABLE_VACUUM_CLEANUP_POSTING_TREE_PRUNING_IF_BULK_DELETE_SKIPPED \
 	false
@@ -454,6 +459,17 @@ InitializeCommonDocumentDBGUCs(const char *rumGucPrefix, const
 		"setting has no effect.",
 		&RumEnableSinglePassPostingTreeVacuum,
 		RUM_DEFAULT_ENABLE_SINGLE_PASS_POSTING_TREE_VACUUM,
+		PGC_USERSET, 0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_single_pass_deferred_leaf_delete", documentDBRumGucPrefix),
+		"Deletes an empty posting tree leaf during single-pass vacuum only after vacuuming its right sibling",
+		"Only applies to single-pass posting tree vacuum. Deleting a leaf rewrites "
+		"its right sibling's left link, so vacuuming the sibling first avoids "
+		"logging a full-page image of the sibling with its dead items still on it.",
+		&RumEnableSinglePassDeferredLeafDelete,
+		RUM_DEFAULT_ENABLE_SINGLE_PASS_DEFERRED_LEAF_DELETE,
 		PGC_USERSET, 0,
 		NULL, NULL, NULL);
 
