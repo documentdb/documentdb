@@ -49,7 +49,7 @@
 * Mark composite indexes as multi-key when an indexed path holds an empty array, even without per-path multi-key tracking, so index-only count, group, and find queries no longer drop documents with empty arrays on array range filters. Existing indexes are marked when an empty array is next inserted or updated; rebuild existing indexes that already contain empty arrays to apply the fix. Controlled for non-wildcard indexes by the default-on `documentdb.enable_empty_array_multi_key_marking` setting, tracked by the `index_empty_array_marked_multi_key` feature counter, and the index-level flag of a composite non-wildcard index can be cleared with the `documentdb_extended_rum_repair_unset_multi_key_status` C entry point in `pg_documentdb_extended_rum` (no SQL function is installed). The repair rejects wildcard, per-path tracked, invalid, and not-ready indexes, and calls that are not in their own transaction; clear the flag only after all array values (empty or not) on the indexed paths are removed and committed, otherwise queries can return wrong results; reindex is the fallback. *[Bugfix]*
 * Support collation when deduplicating `$group` `$addToSet` values, preserving their original representation and applying parsed collation metadata consistently during hashing and comparison. *[Feature]*
 
-### documentdb v1.2-0 (Unreleased) ###
+### documentdb v1.2-0 (November 12, 2026) ###
 * Use PostgreSQL `date_bin` for `$dateTrunc` with `unit: "day"`, preserving exact calendar days, reference-aligned bins, and timezone boundaries. Reject strides and results outside PostgreSQL's supported range. Controlled by the default-on `documentdb.enable_date_trunc_day_with_pg_bin` setting; turn it off to restore legacy interval-based behavior. *[Bugfix]*
 * Restrict access to the change-stream heartbeat task and skip heartbeat WAL emission during read-only transactions or disk-full read-only mode. *[Bugfix]* (work item 5713030)
 * Bound timestamp-based change-stream startup scans by the configured archive-segment download limit. *[Bugfix]* (work item 5713030)
@@ -69,7 +69,8 @@
 * Allow `_id` support-function predicates to prove eligible partial RUM index filters when `documentdb.enable_support_function_id_pushdown` is enabled, with the default-on `documentdb.enable_support_object_id_function_pfe_pushdown` setting independently controlling partial-index implication. *[Bugfix/Perf]*
 * Apply find, count, and distinct command stages after a view's terminal aggregation stage, preventing grouped views from producing invalid aggregate plans. *[Bugfix]*
 
-### documentdb v1.1-0 (Unreleased) ###
+### documentdb v1.1-0 (November 12, 2026) [Release skipped] ###
+* The v1.1-0 release was skipped; these changes were included in v1.2-0.
 * Remove gateway SQLCommenter injection and its build feature while preserving gateway spans and incoming trace context. *[Refactor]*
 * Preserve backward-compatible `connectionStatus` role reporting through PostgreSQL membership catalogs, filter helper roles, and emit each client-facing role once. *[Bugfix]* (PR 2319746)
 * Return supported built-in role definitions from `rolesInfo`, restricting each definition to callers that inherit the role or can view all roles, and preserve built-in memberships alongside custom roles in `usersInfo` and `connectionStatus`. *[Bugfix]*
