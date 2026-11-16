@@ -350,6 +350,7 @@ DollarArrayToObjectAllMustBeArrays,M0083,40396
 DollarArrayToObjectIncorrectArrayLength,M0084,40397
 DollarArrayToObjectBadInputTypeFormat,M0085,40398
 DollarMergeObjectsInvalidType,M0086,40400
+Location40413,M00FP,40413
 Location40414,M0087,40414
 UnknownBsonField,M0088,40415
 Location40485,M0089,40485

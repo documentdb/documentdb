@@ -3357,23 +3357,23 @@ SELECT documentdb_api.drop_collection('coll_q_db', 'coll_delete_sort');
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "upper", "numericOrdering": true, "alternate": "none"} }');
 psql:sql/bson_collation_query_tests_core.sql:919: ERROR:  Collation field 'alternate' must be one of 'non-ignorable' or 'shifted', got 'none'.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en_DB", "strength" : 1, "caseLevel": true, "caseFirst": "upper", "numericOrdering": true, "alternate": "shifted"} }');
-psql:sql/bson_collation_query_tests_core.sql:920: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "en_DB", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:920: ERROR:  Unsupported collation locale 'en_DB'
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "bad", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:921: ERROR:  unable to parse collation :: caused by :: Enumeration value 'bad' for field 'collation.caseFirst' is not a valid value.
+psql:sql/bson_collation_query_tests_core.sql:921: ERROR:  Collation caseFirst must be 'upper', 'lower', or 'off', got 'bad'
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 0, "caseLevel": true, "caseFirst": "bad", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:922: ERROR:  unable to parse collation :: caused by :: Enumeration value '0' for field 'collation.strength' is not a valid value
+psql:sql/bson_collation_query_tests_core.sql:922: ERROR:  Collation strength must resolve to a value from 1 to 5, got 0
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : -1, "caseLevel": true, "caseFirst": "bad", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:923: ERROR:  unable to parse collation :: caused by :: BSON field 'strength' value must be >= 0, actual value '-1'
+psql:sql/bson_collation_query_tests_core.sql:923: ERROR:  Collation strength must resolve to a value from 1 to 5, got -1
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 6, "caseLevel": true, "caseFirst": "bad", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:924: ERROR:  unable to parse collation :: caused by :: BSON field 'strength' value must be <= 5, actual value '6'
+psql:sql/bson_collation_query_tests_core.sql:924: ERROR:  Collation strength must resolve to a value from 1 to 5, got 6
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "abcd", "strength" : 1, "caseLevel": true, "caseFirst": "upper", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:925: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "abcd", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:925: ERROR:  Unsupported collation locale 'abcd'
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "fr_FR", "strength" : 1, "caseLevel": true, "caseFirst": "lower", "numericOrdering": true} }');
-psql:sql/bson_collation_query_tests_core.sql:926: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "fr_FR", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:926: ERROR:  Unsupported collation locale 'fr_FR'
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "upper", "numericOrdering": true, "alternate": "shifted", "backwards" : "0"} }');
-psql:sql/bson_collation_query_tests_core.sql:927: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.backwards' is the wrong type 'string', expected type 'bool'
+psql:sql/bson_collation_query_tests_core.sql:927: ERROR:  Collation backwards must have type bool, got string
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "lower", "numericOrdering": true, "alternate": "non-ignorable", "backwards" : true, "normalization" : 1} }');
-psql:sql/bson_collation_query_tests_core.sql:928: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.normalization' is the wrong type 'int', expected type 'bool'
+psql:sql/bson_collation_query_tests_core.sql:928: ERROR:  Collation normalization must have type bool, got int
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1, "caseLevel": true, "caseFirst": "lower", "numericOrdering": true, "alternate": "non-ignorable", "backwards" : true, "normalization" : true} }');
                     document                     
 -------------------------------------------------
@@ -3381,7 +3381,7 @@ SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_c
 (1 row)
 
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_multi_collation", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 0.9 } }');
-psql:sql/bson_collation_query_tests_core.sql:930: ERROR:  unable to parse collation :: caused by :: Enumeration value '0' for field 'collation.strength' is not a valid value
+psql:sql/bson_collation_query_tests_core.sql:930: ERROR:  Collation strength must resolve to a value from 1 to 5, got 0.9
 -- ==============================================================================
 -- SECTION 15: collation parsing
 -- ==============================================================================
@@ -3420,7 +3420,7 @@ psql:sql/bson_collation_query_tests_core.sql:948: ERROR:  Collation field 'alter
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "alternate": "shifted", "maxVariable": "bogus" } }');
 psql:sql/bson_collation_query_tests_core.sql:949: ERROR:  Collation field 'maxVariable' must be one of 'punct' or 'space', got 'bogus'.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": {}, "collation": { "locale": "en", "backwards": "true" } }');
-psql:sql/bson_collation_query_tests_core.sql:950: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.backwards' is the wrong type 'string', expected type 'bool'
+psql:sql/bson_collation_query_tests_core.sql:950: ERROR:  Collation backwards must have type bool, got string
 -- Locale lookup table entries.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "a": "cat" }, "sort": { "_id": 1 }, "limit": 1, "collation": { "locale": "sr_Latn", "strength": 1 } }');
                     document                     
@@ -3859,15 +3859,15 @@ SELECT document FROM documentdb_api.distinct_query('coll_q_db', '{"distinct":"co
 SELECT document FROM documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_distinct","key":"value","collation":{"strength":1}}');
 psql:sql/bson_collation_query_tests_core.sql:1146: ERROR:  Collation specification is missing the required 'locale' field.
 SELECT document FROM documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_distinct","key":"value","collation":{"locale":"en","unknown":true}}');
-psql:sql/bson_collation_query_tests_core.sql:1147: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.unknown' is an unknown field.
+psql:sql/bson_collation_query_tests_core.sql:1147: ERROR:  Unknown collation field 'unknown'
 SELECT document FROM documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_distinct","key":"value","collation":{"locale":"not-a-real-locale"}}');
-psql:sql/bson_collation_query_tests_core.sql:1148: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "not-a-real-locale", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:1148: ERROR:  Unsupported collation locale 'not-a-real-locale'
 SELECT document FROM documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_distinct","key":"value","collation":{"locale":"en","strength":0}}');
-psql:sql/bson_collation_query_tests_core.sql:1149: ERROR:  unable to parse collation :: caused by :: Enumeration value '0' for field 'collation.strength' is not a valid value
+psql:sql/bson_collation_query_tests_core.sql:1149: ERROR:  Collation strength must resolve to a value from 1 to 5, got 0
 SELECT document FROM documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_distinct","key":"value","collation":{"locale":"en","strength":6}}');
-psql:sql/bson_collation_query_tests_core.sql:1150: ERROR:  unable to parse collation :: caused by :: BSON field 'strength' value must be <= 5, actual value '6'
+psql:sql/bson_collation_query_tests_core.sql:1150: ERROR:  Collation strength must resolve to a value from 1 to 5, got 6
 SELECT document FROM documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_distinct","key":"value","collation":{"locale":"en","strength":"1"}}');
-psql:sql/bson_collation_query_tests_core.sql:1151: ERROR:  unable to parse collation :: caused by :: BSON field 'collation.strength' is the wrong type 'string', expected type 'int'
+psql:sql/bson_collation_query_tests_core.sql:1151: ERROR:  Collation strength must be numeric, got string
 SELECT document FROM documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_distinct","key":"value","collation":[]}');
 psql:sql/bson_collation_query_tests_core.sql:1152: ERROR:  The BSON field 'collation' has an incorrect type 'array'; it should be of type 'object'.
 SELECT document FROM documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_distinct","key":"value","collation":"en"}');
@@ -4275,7 +4275,7 @@ SELECT documentdb_api.count_query('coll_q_db', '{"count":"coll_locale", "query":
 
 -- An unknown locale is rejected.
 SELECT documentdb_api.count_query('coll_q_db', '{"count":"coll_locale", "query":{"s":"a"}, "collation":{"locale":"xx","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:1263: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "xx", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:1263: ERROR:  Unsupported collation locale 'xx'
 -- ==============================================================================
 -- SECTION 21: aggregation $count and collation-aware index fixtures
 -- ==============================================================================
@@ -5479,23 +5479,23 @@ ROLLBACK;
 -- Invalid collation fails the entire unordered command without applying
 -- either the preceding or following updates.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "beforeErrors": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "CAT" }, "u": { "$set": { "missingLocale": true } }, "multi": false, "collation": { "strength": 1 } }, { "q": { "_id": "DOG" }, "u": { "$set": { "afterErrors": true } }, "multi": false } ] }');
-psql:sql/bson_collation_query_tests_core.sql:1771: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:1771: ERROR:  Unsupported collation locale 'invalid_locale_xyz'
 -- An invalid collation also fails the entire ordered command.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": true, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "beforeError": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "DOG" }, "u": { "$set": { "afterError": true } }, "multi": false } ] }');
-psql:sql/bson_collation_query_tests_core.sql:1774: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:1774: ERROR:  Unsupported collation locale 'invalid_locale_xyz'
 -- A non-document collation remains a command-level type error, so no write
 -- operation starts.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "_id": "dog" }, "u": { "$set": { "shouldNotRun": true } }, "multi": false }, { "q": { "_id": "cat" }, "u": { "$set": { "invalidType": true } }, "multi": false, "collation": "en" } ] }');
 psql:sql/bson_collation_query_tests_core.sql:1778: ERROR:  The BSON field 'update.updates.collation' has an incorrect type 'string'; it should be of type 'object'.
 -- Collation parsing fails the command even when the collection does not exist.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_missing", "ordered": false, "updates": [ { "q": { "_id": "cat" }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": "dog" }, "u": { "$set": { "validNoop": true } }, "multi": false } ] }');
-psql:sql/bson_collation_query_tests_core.sql:1781: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:1781: ERROR:  Unsupported collation locale 'invalid_locale_xyz'
 -- Update-many also fails the entire unordered command on invalid collation.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": false, "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "multiBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiMissingLocale": true } }, "multi": true, "collation": { "strength": 1 } }, { "q": { "group": "pet" }, "u": { "$set": { "multiAfterErrors": true } }, "multi": true } ] }');
-psql:sql/bson_collation_query_tests_core.sql:1784: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:1784: ERROR:  Unsupported collation locale 'invalid_locale_xyz'
 -- An invalid collation also fails the entire ordered update-many command.
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "ordered": true, "updates": [ { "q": { "group": "PeT" }, "u": { "$set": { "multiBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "group": "PeT" }, "u": { "$set": { "multiInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "group": "pet" }, "u": { "$set": { "multiAfterError": true } }, "multi": true } ] }');
-psql:sql/bson_collation_query_tests_core.sql:1787: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
+psql:sql/bson_collation_query_tests_core.sql:1787: ERROR:  Unsupported collation locale 'invalid_locale_xyz'
 -- ==============================================================================
 -- SECTION 28: shard-key targeting under explicit simple
 -- ==============================================================================
