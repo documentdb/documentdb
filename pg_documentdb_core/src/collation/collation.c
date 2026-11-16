@@ -35,6 +35,20 @@ typedef struct
 } ucollator_cache_entry;
 
 
+typedef enum CollationField
+{
+	CollationField_Locale = 1 << 0,
+	CollationField_Strength = 1 << 1,
+	CollationField_CaseLevel = 1 << 2,
+	CollationField_CaseFirst = 1 << 3,
+	CollationField_NumericOrdering = 1 << 4,
+	CollationField_Backwards = 1 << 5,
+	CollationField_Normalization = 1 << 6,
+	CollationField_Alternate = 1 << 7,
+	CollationField_MaxVariable = 1 << 8,
+} CollationField;
+
+
 static UConverter *icu_converter = NULL;
 
 /*
@@ -248,6 +262,10 @@ static void GenerateICULocaleAndExtractCollationOption(char *inputLocale, char *
 
 inline static void CheckCollationInputParamType(bson_type_t expectedType, bson_type_t
 												foundType, const char *paramName);
+inline static void CheckDuplicateCollationField(uint32 *seenFields, CollationField field,
+												const char *fieldName);
+inline static void CheckCollationStringNoEmbeddedNul(const bson_value_t *value,
+													 const char *fieldName);
 
 inline static bool CheckIfValidLocale(const char *locale);
 inline static void ThrowInvalidLocaleError(const char *locale);
@@ -280,6 +298,7 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 	const char *maxVariable = NULL; /* optional, ICU default punct */
 
 	char *inputLocale = NULL;    /* required */
+	uint32 seenFields = 0;
 	while (bson_iter_next(&docIter))
 	{
 		const char *key = bson_iter_key(&docIter);
@@ -288,6 +307,9 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 		if (strcmp(key, "locale") == 0)
 		{
 			CheckCollationInputParamType(BSON_TYPE_UTF8, value.value_type, "locale");
+			CheckDuplicateCollationField(&seenFields, CollationField_Locale, "locale");
+			CheckCollationStringNoEmbeddedNul(&value, "locale");
+
 			inputLocale = value.value.v_utf8.str;
 
 			if (strcmp(inputLocale, "simple") == 0)
@@ -301,50 +323,40 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 		}
 		else if (strcmp(key, "strength") == 0)
 		{
-			if (value.value_type == BSON_TYPE_DOUBLE)
+			if (!BsonValueIsNumber(&value))
 			{
-				/* If the value is double we casts it to int. Strength 2.9 is treated as 2 and so on. */
-				strength = (int) value.value.v_double;
-			}
-			else
-			{
-				CheckCollationInputParamType(BSON_TYPE_INT32, value.value_type,
-											 "strength");
-				strength = value.value.v_int32;
+				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH), errmsg(
+									"Collation strength must be numeric, got %s",
+									BsonTypeName(value.value_type))));
 			}
 
-			if (strength == 0)
+			CheckDuplicateCollationField(&seenFields, CollationField_Strength,
+										 "strength");
+
+			strength = BsonValueAsInt32Clamped(&value);
+
+			if (strength < 1 || strength > 5)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-									"unable to parse collation :: caused by :: Enumeration value '0' for field 'collation.strength' is not a valid value")));
-			}
-			else if (strength < 0)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION51024), errmsg(
-									"unable to parse collation :: caused by :: BSON field 'strength' value must be >= 0, actual value '%d'",
-									strength),
-								errdetail_log(
-									"unable to parse collation :: caused by :: BSON field 'strength' value must be >= 0, actual value '%d'",
-									strength)));
-			}
-			else if (strength > 5)
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION51024), errmsg(
-									"unable to parse collation :: caused by :: BSON field 'strength' value must be <= 5, actual value '%d'",
-									strength),
-								errdetail_log(
-									"unable to parse collation :: caused by :: BSON field 'strength' value must be <= 5, actual value '%d'",
-									strength)));
+									"Collation strength must resolve to a value from 1 to 5, got %s",
+									BsonValueToJsonForLogging(&value))));
 			}
 		}
 		else if (strcmp(key, "caseLevel") == 0)
 		{
 			CheckCollationInputParamType(BSON_TYPE_BOOL, value.value_type, "caseLevel");
+			CheckDuplicateCollationField(&seenFields, CollationField_CaseLevel,
+										 "caseLevel");
+
 			caseLevel = value.value.v_bool;
 		}
 		else if (strcmp(key, "caseFirst") == 0)
 		{
 			CheckCollationInputParamType(BSON_TYPE_UTF8, value.value_type, "caseFirst");
+			CheckDuplicateCollationField(&seenFields, CollationField_CaseFirst,
+										 "caseFirst");
+			CheckCollationStringNoEmbeddedNul(&value, "caseFirst");
+
 			caseFirst = value.value.v_utf8.str;
 
 			if (strcmp(caseFirst, "off") == 0)
@@ -356,7 +368,7 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 			else if (strcmp(caseFirst, "upper") != 0 && strcmp(caseFirst, "lower") != 0)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-									"unable to parse collation :: caused by :: Enumeration value '%s' for field 'collation.caseFirst' is not a valid value.",
+									"Collation caseFirst must be 'upper', 'lower', or 'off', got '%s'",
 									caseFirst)));
 			}
 		}
@@ -364,23 +376,36 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 		{
 			CheckCollationInputParamType(BSON_TYPE_BOOL, value.value_type,
 										 "numericOrdering");
+			CheckDuplicateCollationField(&seenFields, CollationField_NumericOrdering,
+										 "numericOrdering");
+
 			numericOrdering = value.value.v_bool;
 		}
 		else if (strcmp(key, "backwards") == 0)
 		{
 			CheckCollationInputParamType(BSON_TYPE_BOOL, value.value_type,
 										 "backwards");
+			CheckDuplicateCollationField(&seenFields, CollationField_Backwards,
+										 "backwards");
+
 			backwards = value.value.v_bool;
 		}
 		else if (strcmp(key, "normalization") == 0)
 		{
 			CheckCollationInputParamType(BSON_TYPE_BOOL, value.value_type,
 										 "normalization");
+			CheckDuplicateCollationField(&seenFields, CollationField_Normalization,
+										 "normalization");
+
 			normalization = value.value.v_bool;
 		}
 		else if (strcmp(key, "alternate") == 0)
 		{
 			CheckCollationInputParamType(BSON_TYPE_UTF8, value.value_type, "alternate");
+			CheckDuplicateCollationField(&seenFields, CollationField_Alternate,
+										 "alternate");
+			CheckCollationStringNoEmbeddedNul(&value, "alternate");
+
 			alternate = value.value.v_utf8.str;
 
 			if (strcmp(alternate, "non-ignorable") == 0)
@@ -398,6 +423,10 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 		else if (strcmp(key, "maxVariable") == 0)
 		{
 			CheckCollationInputParamType(BSON_TYPE_UTF8, value.value_type, "maxVariable");
+			CheckDuplicateCollationField(&seenFields, CollationField_MaxVariable,
+										 "maxVariable");
+			CheckCollationStringNoEmbeddedNul(&value, "maxVariable");
+
 			maxVariable = value.value.v_utf8.str;
 
 			if (strcmp(maxVariable, "punct") == 0)
@@ -421,7 +450,7 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 		else
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_UNKNOWNBSONFIELD), errmsg(
-								"unable to parse collation :: caused by :: BSON field 'collation.%s' is an unknown field.",
+								"Unknown collation field '%s'",
 								key)));
 		}
 	}
@@ -441,8 +470,7 @@ ParseAndGetCollationString(const bson_value_t *collationValue, const char *colat
 	GenerateICULocaleAndExtractCollationOption(inputLocale, &locale,
 											   &collationOptionString);
 
-	/* "simple" means binary comparison, which is what an absent collation already
-	 * does, so emit an empty tag and ignore all other options. */
+	/* Validate the whole spec before emitting an empty tag for binary comparison. */
 	if (locale != NULL && strcmp(locale, "simple") == 0)
 	{
 		icuCollation.data[0] = '\0';
@@ -863,7 +891,7 @@ pg_noreturn static inline void
 ThrowInvalidLocaleError(const char *locale)
 {
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
-						"unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: \"%s\", strength: 1 }.",
+						"Unsupported collation locale '%s'",
 						locale)));
 }
 
@@ -881,11 +909,38 @@ CheckCollationInputParamType(bson_type_t expectedType, bson_type_t foundType, co
 	}
 
 	ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_TYPEMISMATCH), errmsg(
-						"unable to parse collation :: caused by :: BSON field 'collation.%s' is the wrong type '%s', expected type '%s'",
-						paramName, BsonTypeName(foundType), BsonTypeName(expectedType)),
+						"Collation %s must have type %s, got %s",
+						paramName, BsonTypeName(expectedType), BsonTypeName(foundType)),
 					errdetail_log(
-						"unable to parse collation :: caused by :: BSON field 'collation.%s' is the wrong type '%s', expected type '%s'",
-						paramName, BsonTypeName(foundType), BsonTypeName(expectedType))));
+						"Collation %s must have type %s, got %s",
+						paramName, BsonTypeName(expectedType), BsonTypeName(foundType))));
+}
+
+
+inline static void
+CheckDuplicateCollationField(uint32 *seenFields, CollationField field,
+							 const char *fieldName)
+{
+	if ((*seenFields & field) != 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_LOCATION40413), errmsg(
+							"Duplicate collation field '%s'",
+							fieldName)));
+	}
+
+	*seenFields |= field;
+}
+
+
+inline static void
+CheckCollationStringNoEmbeddedNul(const bson_value_t *value, const char *fieldName)
+{
+	if (memchr(value->value.v_utf8.str, '\0', value->value.v_utf8.len) != NULL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE), errmsg(
+							"Collation %s contains a null character",
+							fieldName)));
+	}
 }
 
 

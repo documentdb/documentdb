@@ -739,10 +739,10 @@ SELECT documentdb_api.create_collection_view('collated_creation',
 ERROR:  Collation specification is missing the required 'locale' field.
 SELECT documentdb_api.create_collection_view('collated_creation',
     '{"create":"bad","collation":{"locale":"en","version":1}}');
-ERROR:  unable to parse collation :: caused by :: BSON field 'collation.version' is the wrong type 'int', expected type 'string'
+ERROR:  Collation version must have type string, got int
 SELECT documentdb_api.create_collection_view('collated_creation',
     '{"create":"bad","idIndex":{"key":{"_id":1},"name":"_id_","collation":{"locale":"en","version":null}}}');
-ERROR:  unable to parse collation :: caused by :: BSON field 'collation.version' is the wrong type 'null', expected type 'string'
+ERROR:  Collation version must have type string, got null
 SELECT documentdb_api.create_collection_view('collated_creation',
     '{"create":"bad","idIndex":{"key":{"_id":1},"name":"_id_","collation":{"locale":"simple"},"unique":true}}');
 ERROR:  BSON field 'create.idIndex.unique' is invalid for an _id index

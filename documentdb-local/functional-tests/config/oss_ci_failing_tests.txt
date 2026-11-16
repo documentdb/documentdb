@@ -19,6 +19,7 @@
 # 2026-11-09: restored the 2 $addToSet collation cases: OSS CI still rejects collation in aggregate (code 115). Removed the GeometryCollection $geometry case, which now passes (strict XPASS). Moved 2 hidden-index indexStats counter cases to the flaky list.
 # 2026-11-09: added wildcard dedup_exists_on_embedded_object: $exists on an embedded object through a $** index returns the document once per leaf. Regression from this sync (likely dynamic cursors on by default, PR 820); remove once fixed.
 # 2026-11-11: removed 20 $collStats queryExecStats cases fixed in the shared backend aggregation path. Evidence: strict XPASS in build 246015631 parallel shards p0-p5 and all three recovery passes; no OSS lane execution claimed. Strict node-id count after removal: 12697.
+# 2026-11-13: removed 2 collation strength-range cases fixed in the shared parser. Evidence: strict XPASS in build 246382911 main pass and all three recovery passes; no OSS lane execution claimed. Strict node-id count after removal: 12695.
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-agnostic_empty_pipeline]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-agnostic_list_local_sessions]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_agnostic.py::test_aggregate_agnostic[documentdb-documents_with_string_collection]
@@ -4304,11 +4305,9 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/propert
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_create_invalid[documentdb-locale_as_empty_array]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_create_invalid[documentdb-locale_as_empty_object]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_create_invalid[documentdb-missing_locale]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_create_invalid[documentdb-strength_above_max]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_create_invalid[documentdb-strength_as_empty_array]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_create_invalid[documentdb-strength_as_empty_object]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_create_invalid[documentdb-strength_as_string]
-docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_create_invalid[documentdb-strength_negative]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_create_invalid[documentdb-strength_zero]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_unique_compound_rejects_duplicate[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/case_insensitive/test_case_insensitive_errors.py::test_case_insensitive_unique_multiple_case_variants_rejected[documentdb]

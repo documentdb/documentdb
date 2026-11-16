@@ -881,7 +881,7 @@ SELECT document FROM documentdb_api.collection('coll_q_dist_db', 'coll_update_un
 CALL documentdb_api.update_bulk(
     'coll_q_dist_db',
     '{ "update": "coll_update_unsharded_d", "ordered": false, "updates": [ { "q": { "_id": 1 }, "u": { "$set": { "beforeError": true } }, "multi": false }, { "q": { "_id": 1 }, "u": { "$set": { "invalidLocale": true } }, "multi": false, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "_id": 2 }, "u": { "$set": { "afterError": true } }, "multi": false } ] }');
-psql:sql/bson_collation_query_tests_dist_core.sql:401: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
+psql:sql/bson_collation_query_tests_dist_core.sql:401: ERROR:  Unsupported collation locale 'invalid_locale_xyz'
 RESET documentdb.useLocalExecutionShardQueries;
 RESET documentdb_core.enableCollation;
 -- A collation-sensitive shard-key equality must fan out rather than prune to
@@ -969,7 +969,7 @@ BEGIN;
 SET LOCAL documentdb_core.enableCollation TO on;
 SET LOCAL documentdb.enable_update_many_worker_pushdown TO on;
 SELECT documentdb_api.update('coll_q_dist_db', '{ "update": "coll_update_select_d", "ordered": false, "updates": [ { "q": { "name": "CaT" }, "u": { "$set": { "workerBeforeError": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } }, { "q": { "name": "CaT" }, "u": { "$set": { "workerInvalidLocale": true } }, "multi": true, "collation": { "locale": "invalid_locale_xyz" } }, { "q": { "name": "cat" }, "u": { "$set": { "workerAfterError": true } }, "multi": true } ] }');
-psql:sql/bson_collation_query_tests_dist_core.sql:445: ERROR:  unable to parse collation :: caused by :: Field 'locale' is invalid in: { locale: "invalid_locale_xyz", strength: 1 }.
+psql:sql/bson_collation_query_tests_dist_core.sql:445: ERROR:  Unsupported collation locale 'invalid_locale_xyz'
 ROLLBACK;
 -- The global _id lookup applies the requested sort before choosing a shard.
 BEGIN;

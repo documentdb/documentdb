@@ -347,6 +347,7 @@ ErrorMapping,ErrorName
 40397,DollarArrayToObjectIncorrectArrayLength
 40398,DollarArrayToObjectBadInputTypeFormat
 40400,DollarMergeObjectsInvalidType
+40413,Location40413
 40414,Location40414
 40415,UnknownBsonField
 40485,Location40485

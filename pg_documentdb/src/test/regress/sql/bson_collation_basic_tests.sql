@@ -188,6 +188,45 @@ SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty
 SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": {} } ] }');
 SET documentdb_core.enableCollation TO on;
 
+-- Strength conversion preserves BSON numeric types without narrowing overflow.
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberLong": "1" } } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberDouble": "1.9" } } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberDecimal": "0.9" } } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberDecimal": "2.5" } } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberDecimal": "3.5" } } }');
+
+-- Reject out-of-range and non-finite strengths.
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": -1 } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": { "$numberLong": "-4294967297" } } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": 6 } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": { "$numberLong": "4294967297" } } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": { "$numberDouble": "NaN" } } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": { "$numberDouble": "Infinity" } } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": { "$numberDecimal": "1E6144" } } }');
+
+-- Reject duplicates across every effective option, including equal values.
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "locale": "fr" } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": 1, "strength": 1 } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "caseLevel": false, "caseLevel": true } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "caseFirst": "off", "caseFirst": "upper" } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "numericOrdering": false, "numericOrdering": true } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "backwards": false, "backwards": true } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "normalization": false, "normalization": true } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "alternate": "non-ignorable", "alternate": "shifted" } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "maxVariable": "punct", "maxVariable": "space" } }');
+
+-- Embedded nulls must not let C-string validation see only a valid prefix.
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en\u0000ignored" } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "caseFirst": "off\u0000ignored" } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "alternate": "shifted\u0000ignored" } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "maxVariable": "punct\u0000ignored" } }');
+
+-- Type checks precede duplicate detection; repeated values are not interpreted.
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": 1, "strength": true } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": 1, "strength": 99 } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "strength": { "$numberLong": "1" }, "locale": "simple", "version": "ignored" } }');
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "simple", "strength": 1, "strength": 1 } }');
+
 SELECT documentdb_api.drop_collection('collation_basic_db', 'coll_null_empty');
 
 -- ============================================================================

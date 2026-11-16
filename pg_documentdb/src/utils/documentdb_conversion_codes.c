@@ -2846,6 +2846,11 @@ ConvertDocumentDBErrorToWireError(int32 sqlState)
 			return 50741;
 		}
 
+		case ERRCODE_DOCUMENTDB_LOCATION40413:
+		{
+			return 40413;
+		}
+
 		default:
 		{
 			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),

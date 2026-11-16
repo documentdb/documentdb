@@ -264,6 +264,97 @@ ERROR:  BSON field 'update.updates.collation' is not yet supported
 SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": {} } ] }');
 ERROR:  BSON field 'update.updates.collation' is not yet supported
 SET documentdb_core.enableCollation TO on;
+-- Strength conversion preserves BSON numeric types without narrowing overflow.
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberLong": "1" } } }');
+                   document
+-----------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "s" : "A" }
+ { "_id" : { "$numberInt" : "2" }, "s" : "a" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberDouble": "1.9" } } }');
+                   document
+-----------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "s" : "A" }
+ { "_id" : { "$numberInt" : "2" }, "s" : "a" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberDecimal": "0.9" } } }');
+                   document
+-----------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "s" : "A" }
+ { "_id" : { "$numberInt" : "2" }, "s" : "a" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberDecimal": "2.5" } } }');
+                   document
+-----------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "s" : "A" }
+ { "_id" : { "$numberInt" : "2" }, "s" : "a" }
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberDecimal": "3.5" } } }');
+                   document
+-----------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "s" : "a" }
+(1 row)
+
+-- Reject out-of-range and non-finite strengths.
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": -1 } }');
+ERROR:  Collation strength must resolve to a value from 1 to 5, got -1
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": { "$numberLong": "-4294967297" } } }');
+ERROR:  Collation strength must resolve to a value from 1 to 5, got -4294967297
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": 6 } }');
+ERROR:  Collation strength must resolve to a value from 1 to 5, got 6
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": { "$numberLong": "4294967297" } } }');
+ERROR:  Collation strength must resolve to a value from 1 to 5, got 4294967297
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": { "$numberDouble": "NaN" } } }');
+ERROR:  Collation strength must resolve to a value from 1 to 5, got NaN
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": { "$numberDouble": "Infinity" } } }');
+ERROR:  Collation strength must resolve to a value from 1 to 5, got Infinity
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": { "$numberDecimal": "1E6144" } } }');
+ERROR:  Collation strength must resolve to a value from 1 to 5, got 1.000000000000000000000000000000000E+6144
+-- Reject duplicates across every effective option, including equal values.
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "locale": "fr" } }');
+ERROR:  Duplicate collation field 'locale'
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": 1, "strength": 1 } }');
+ERROR:  Duplicate collation field 'strength'
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "caseLevel": false, "caseLevel": true } }');
+ERROR:  Duplicate collation field 'caseLevel'
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "caseFirst": "off", "caseFirst": "upper" } }');
+ERROR:  Duplicate collation field 'caseFirst'
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "numericOrdering": false, "numericOrdering": true } }');
+ERROR:  Duplicate collation field 'numericOrdering'
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "backwards": false, "backwards": true } }');
+ERROR:  Duplicate collation field 'backwards'
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "normalization": false, "normalization": true } }');
+ERROR:  Duplicate collation field 'normalization'
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "alternate": "non-ignorable", "alternate": "shifted" } }');
+ERROR:  Duplicate collation field 'alternate'
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "maxVariable": "punct", "maxVariable": "space" } }');
+ERROR:  Duplicate collation field 'maxVariable'
+-- Embedded nulls must not let C-string validation see only a valid prefix.
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en\u0000ignored" } }');
+ERROR:  Collation locale contains a null character
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "caseFirst": "off\u0000ignored" } }');
+ERROR:  Collation caseFirst contains a null character
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "alternate": "shifted\u0000ignored" } }');
+ERROR:  Collation alternate contains a null character
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "maxVariable": "punct\u0000ignored" } }');
+ERROR:  Collation maxVariable contains a null character
+-- Type checks precede duplicate detection; repeated values are not interpreted.
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": 1, "strength": true } }');
+ERROR:  Collation strength must be numeric, got bool
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "en", "strength": 1, "strength": 99 } }');
+ERROR:  Duplicate collation field 'strength'
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "strength": { "$numberLong": "1" }, "locale": "simple", "version": "ignored" } }');
+                   document
+-----------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "s" : "a" }
+(1 row)
+
+SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "collation": { "locale": "simple", "strength": 1, "strength": 1 } }');
+ERROR:  Duplicate collation field 'strength'
 SELECT documentdb_api.drop_collection('collation_basic_db', 'coll_null_empty');
  drop_collection 
 -----------------
