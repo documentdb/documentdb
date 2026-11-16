@@ -75,11 +75,12 @@ RUN dnf -y install \
         llvm-devel
 
 # PostgreSQL with JIT enabled expects LLVM tools in a versioned bin directory.
-# PG16 was built against LLVM20; PG17.10+/PG18 from PGDG are built against LLVM21.
-# On RHEL 8, llvm-toolset places binaries in /usr/bin, so symlink both versioned paths to it.
-RUN mkdir -p /usr/lib64/llvm20 /usr/lib64/llvm21 && \
+# PGDG has built against LLVM20, then LLVM21, and LLVM22 since PG 17.12-2 on EL8.
+# On RHEL 8, llvm-toolset places binaries in /usr/bin, so symlink each versioned path to it.
+RUN mkdir -p /usr/lib64/llvm20 /usr/lib64/llvm21 /usr/lib64/llvm22 && \
     ln -s /usr/bin /usr/lib64/llvm20/bin && \
-    ln -s /usr/bin /usr/lib64/llvm21/bin
+    ln -s /usr/bin /usr/lib64/llvm21/bin && \
+    ln -s /usr/bin /usr/lib64/llvm22/bin
 
 RUN rpmdev-setuptree
 
