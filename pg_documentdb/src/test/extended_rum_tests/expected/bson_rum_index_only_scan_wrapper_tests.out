@@ -257,3 +257,568 @@ SELECT document FROM bson_aggregation_pipeline('rumidxonly_db',
 (4 rows)
 
 RESET documentdb.enable_rum_index_only_scan_projection_wrapper;
+-- Native path generation supplies a parallel IOS alternative with bitmap scans enabled.
+ALTER TABLE documentdb_data.documents_29501 SET (parallel_workers = 2);
+SET documentdb.enableCompositeParallelIndexScan TO on;
+SET documentdb.enableDynamicCursors TO off;
+SET documentdb.forceUseIndexIfAvailable TO off;
+SET enable_bitmapscan TO on;
+SET max_parallel_workers_per_gather TO 2;
+SET min_parallel_table_scan_size TO 0;
+SET min_parallel_index_scan_size TO 0;
+SET parallel_setup_cost TO 0;
+SET parallel_tuple_cost TO 0;
+-- On PG19 this tiny fixture costs 10.18 for bitmap versus 10.59 for parallel IOS.
+-- Lower random_page_cost for plan stability while keeping bitmap paths enabled.
+SET random_page_cost TO 1;
+SET documentdb.enable_native_planner_index_only_scan TO on;
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "zone": { "$gte": "z0" } } }');
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
+ Finalize Aggregate
+   ->  Gather
+         Workers Planned: 2
+         ->  Partial Aggregate
+               ->  Parallel Index Only Scan using idx_zone_band on documents_29501 collection
+                     Index Cond: (document @>= '{ "zone" : "z0" }'::bson)
+(6 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "zone": { "$gte": "z0" } } }');
+                                document                                
+------------------------------------------------------------------------
+ { "n" : { "$numberInt" : "200" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.enable_native_planner_index_only_scan;
+RESET documentdb.enableCompositeParallelIndexScan;
+RESET documentdb.enableDynamicCursors;
+RESET documentdb.forceUseIndexIfAvailable;
+RESET enable_bitmapscan;
+RESET max_parallel_workers_per_gather;
+RESET min_parallel_table_scan_size;
+RESET min_parallel_index_scan_size;
+RESET parallel_setup_cost;
+RESET parallel_tuple_cost;
+RESET random_page_cost;
+-- Object-ID support functions must not leave an object_id dependency on covered scans.
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.enable_support_function_id_pushdown TO on;
+SET documentdb.enable_native_planner_index_only_scan TO on;
+SET documentdb.forceIndexOnlyScanIfAvailable TO off;
+SET documentdb.forceUseIndexIfAvailable TO off;
+SET documentdb.enableDynamicCursors TO off;
+SET max_parallel_workers_per_gather TO 0;
+SET enable_bitmapscan TO off;
+SELECT documentdb_api.insert_one('rumidxonly_db', 'records', '{ "_id": "Alpha", "zone": "z0", "band": "b0" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rumidxonly_db', 'records', '{ "_id": "alpha", "zone": "z0", "band": "b0" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rumidxonly_db', 'records', '{ "_id": "Beta", "zone": "z1", "band": "b1" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumidxonly_db',
+    '{ "createIndexes": "records", "indexes": [
+        { "key": { "_id": 1, "zone": 1 }, "name": "idx_id_zone", "enableOrderedIndex": 1 },
+        { "key": { "_id": 1, "zone": 1 }, "name": "idx_id_zone_ci", "enableOrderedIndex": 1, "collation": { "locale": "en", "strength": 1 } }
+    ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+VACUUM (ANALYZE) documentdb_data.documents_29501;
+-- Equality, two-sided ranges, membership and regex all use covered object-ID predicates.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": 17 }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                     run_explain_and_trim                                      
+-----------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Index Only Scan using idx_id_zone on documents_29501 collection (actual rows=1 loops=1)
+         Index Cond: (document @= '{ "_id" : { "$numberInt" : "17" } }'::bson)
+         Heap Fetches: xxx
+(4 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": 17 }, "hint": "idx_id_zone" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$gte": 20, "$lt": 25 } }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                              run_explain_and_trim                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Index Only Scan using idx_id_zone on documents_29501 collection (actual rows=5 loops=1)
+         Index Cond: ((document @>= '{ "_id" : { "$numberInt" : "20" } }'::bson) AND (document @< '{ "_id" : { "$numberInt" : "25" } }'::bson))
+         Heap Fetches: xxx
+(4 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$gte": 20, "$lt": 25 } }, "hint": "idx_id_zone" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "5" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$gt": 19, "$lte": 24 } }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                              run_explain_and_trim                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Index Only Scan using idx_id_zone on documents_29501 collection (actual rows=5 loops=1)
+         Index Cond: ((document @> '{ "_id" : { "$numberInt" : "19" } }'::bson) AND (document @<= '{ "_id" : { "$numberInt" : "24" } }'::bson))
+         Heap Fetches: xxx
+(4 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$gt": 19, "$lte": 24 } }, "hint": "idx_id_zone" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "5" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$in": [17, 18, 19] } }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                         run_explain_and_trim                                                         
+--------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Index Only Scan using idx_id_zone on documents_29501 collection (actual rows=3 loops=1)
+         Index Cond: (document @*= '{ "_id" : [ { "$numberInt" : "17" }, { "$numberInt" : "18" }, { "$numberInt" : "19" } ] }'::bson)
+         Heap Fetches: xxx
+(4 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$in": [17, 18, 19] } }, "hint": "idx_id_zone" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "3" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$regex": "^alpha$" } }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                    run_explain_and_trim                                                    
+----------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Index Only Scan using idx_id_zone on documents_29501 collection (actual rows=1 loops=1)
+         Index Cond: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^alpha$", "options" : "" } } }'::bson)
+         Heap Fetches: xxx
+(4 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$regex": "^alpha$" } }, "hint": "idx_id_zone" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- The rewritten equality must retain case-insensitive matching.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": "ALPHA" }, "hint": "idx_id_zone_ci", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                       run_explain_and_trim                                       
+--------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Index Only Scan using idx_id_zone_ci on documents_29501 collection (actual rows=2 loops=1)
+         Index Cond: (document @= '{ "_id" : "ALPHA", "collation" : "en-u-ks-level1" }'::bson)
+         Heap Fetches: xxx
+(4 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": "ALPHA" }, "hint": "idx_id_zone_ci", "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Neither an uncovered _id nor an uncovered additional filter may become index-only.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$gte": 20, "$lt": 25 }, "zone": "z0" }, "hint": "idx_zone_band" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                            run_explain_and_trim                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Index Scan using idx_zone_band on documents_29501 collection (actual rows=2 loops=1)
+         Index Cond: (document @= '{ "zone" : "z0" }'::bson)
+         Filter: ((document @>= '{ "_id" : { "$numberInt" : "20" } }'::bson) AND (document @< '{ "_id" : { "$numberInt" : "25" } }'::bson))
+         Rows Removed by Filter: 50
+(5 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$gte": 20, "$lt": 25 }, "zone": "z0" }, "hint": "idx_zone_band" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$gt": 189, "$lte": 199 }, "band": "b1" }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                               run_explain_and_trim                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Index Scan using idx_id_zone on documents_29501 collection (actual rows=4 loops=1)
+         Index Cond: ((document @> '{ "_id" : { "$numberInt" : "189" } }'::bson) AND (document @<= '{ "_id" : { "$numberInt" : "199" } }'::bson))
+         Filter: (document @= '{ "band" : "b1" }'::bson)
+         Rows Removed by Filter: 6
+(5 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$gt": 189, "$lte": 199 }, "band": "b1" }, "hint": "idx_id_zone" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "4" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Unhinted finds must choose covered paths without pruning competing scan alternatives.
+SET enable_seqscan TO on;
+SET enable_bitmapscan TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 } }, "projection": { "_id": 1, "zone": 1 }, "sort": { "_id": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                           run_explain_and_trim                                                           
+------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using idx_id_zone on documents_29501 collection (actual rows=5 loops=1)
+   Index Cond: ((document @>= '{ "_id" : { "$numberInt" : "20" } }'::bson) AND (document @< '{ "_id" : { "$numberInt" : "25" } }'::bson))
+   Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
+   Heap Fetches: xxx
+(4 rows)
+
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 } }, "projection": { "_id": 1, "zone": 1 }, "sort": { "_id": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "20" }, "zone" : "z0" }
+ { "_id" : { "$numberInt" : "21" }, "zone" : "z1" }
+ { "_id" : { "$numberInt" : "22" }, "zone" : "z2" }
+ { "_id" : { "$numberInt" : "23" }, "zone" : "z3" }
+ { "_id" : { "$numberInt" : "24" }, "zone" : "z0" }
+(5 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "zone": "z1", "band": "b1" }, "projection": { "zone": 1, "band": 1, "_id": 0 }, "limit": 2 }')
+$cmd$, p_ignore_heap_fetches => true);
+                                           run_explain_and_trim                                            
+-----------------------------------------------------------------------------------------------------------
+ Limit (actual rows=2 loops=1)
+   ->  Index Only Scan using idx_zone_band on documents_29501 collection (actual rows=2 loops=1)
+         Index Cond: ((document @= '{ "zone" : "z1" }'::bson) AND (document @= '{ "band" : "b1" }'::bson))
+         Heap Fetches: xxx
+(4 rows)
+
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "zone": "z1", "band": "b1" }, "projection": { "zone": 1, "band": 1, "_id": 0 }, "limit": 2 }');
+             document             
+----------------------------------
+ { "zone" : "z1", "band" : "b1" }
+ { "zone" : "z1", "band" : "b1" }
+(2 rows)
+
+-- Leaving _id implicit requires coverage of that field too.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "zone": "z1", "band": "b1" }, "projection": { "zone": 1, "band": 1 }, "sort": { "_id": 1 }, "limit": 2 }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                              run_explain_and_trim                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual rows=2 loops=1)
+   ->  Index Scan using idx_id_zone on documents_29501 collection (actual rows=2 loops=1)
+         Index Cond: ((document @= '{ "zone" : "z1" }'::bson) AND (document @<> '{ "_id" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+         Order By: (document |-<> '{ "_id" : { "$numberInt" : "1" } }'::bson)
+         Filter: (document @= '{ "band" : "b1" }'::bson)
+         Rows Removed by Filter: 2
+(6 rows)
+
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "zone": "z1", "band": "b1" }, "projection": { "zone": 1, "band": 1 }, "sort": { "_id": 1 }, "limit": 2 }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "zone" : "z1", "band" : "b1" }
+ { "_id" : { "$numberInt" : "13" }, "zone" : "z1", "band" : "b1" }
+(2 rows)
+
+-- An uncovered projected field or filter still requires the heap.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 } }, "projection": { "_id": 1, "band": 1 }, "sort": { "_id": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                            run_explain_and_trim                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual rows=5 loops=1)
+   Sort Key: (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Sort Method: quicksort  Memory: xxxkB
+   ->  Seq Scan on documents_29501 collection (actual rows=5 loops=1)
+         Filter: ((document @>= '{ "_id" : { "$numberInt" : "20" } }'::bson) AND (document @< '{ "_id" : { "$numberInt" : "25" } }'::bson))
+         Rows Removed by Filter: 198
+(6 rows)
+
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 } }, "projection": { "_id": 1, "band": 1 }, "sort": { "_id": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "20" }, "band" : "b2" }
+ { "_id" : { "$numberInt" : "21" }, "band" : "b0" }
+ { "_id" : { "$numberInt" : "22" }, "band" : "b1" }
+ { "_id" : { "$numberInt" : "23" }, "band" : "b2" }
+ { "_id" : { "$numberInt" : "24" }, "band" : "b0" }
+(5 rows)
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 }, "band": "b1" }, "projection": { "_id": 1, "zone": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                                                               run_explain_and_trim                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Seq Scan on documents_29501 collection (actual rows=1 loops=1)
+   Filter: ((document @>= '{ "_id" : { "$numberInt" : "20" } }'::bson) AND (document @< '{ "_id" : { "$numberInt" : "25" } }'::bson) AND (document @= '{ "band" : "b1" }'::bson))
+   Rows Removed by Filter: 202
+(3 rows)
+
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 }, "band": "b1" }, "projection": { "_id": 1, "zone": 1 } }');
+                      document                      
+----------------------------------------------------
+ { "_id" : { "$numberInt" : "22" }, "zone" : "z2" }
+(1 row)
+
+-- A collated index cannot reconstruct the original projected strings.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "_id": "ALPHA" }, "projection": { "zone": 1, "_id": 0 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                run_explain_and_trim                                 
+-------------------------------------------------------------------------------------
+ Seq Scan on documents_29501 collection (actual rows=2 loops=1)
+   Filter: (document @= '{ "_id" : "ALPHA", "collation" : "en-u-ks-level1" }'::bson)
+   Rows Removed by Filter: 201
+(3 rows)
+
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "_id": "ALPHA" }, "projection": { "zone": 1, "_id": 0 }, "collation": { "locale": "en", "strength": 1 } }');
+     document      
+-------------------
+ { "zone" : "z0" }
+ { "zone" : "z0" }
+(2 rows)
+
+-- Returning the full document still requires the heap for the unindexed band field.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "_id": 17 } }')
+$cmd$, p_ignore_heap_fetches => true);
+                                              run_explain_and_trim                                              
+----------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_29501 collection (actual rows=1 loops=1)
+   Index Cond: ((shard_key_value = '29501'::bigint) AND (object_id = '{ "" : { "$numberInt" : "17" } }'::bson))
+(2 rows)
+
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "_id": 17 } }');
+                             document                              
+-------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "17" }, "zone" : "z1", "band" : "b2" }
+(1 row)
+
+RESET documentdb.enable_support_function_id_pushdown;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb.enable_native_planner_index_only_scan;
+RESET documentdb.forceIndexOnlyScanIfAvailable;
+RESET documentdb.forceUseIndexIfAvailable;
+RESET documentdb.enableDynamicCursors;
+RESET max_parallel_workers_per_gather;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+-- An unbounded native IOS must retain sparse-hint inclusion semantics.
+SET documentdb.enable_native_planner_index_only_scan TO on;
+SET max_parallel_workers_per_gather TO 0;
+SELECT documentdb_api.insert_one('rumidxonly_db', 'sparse_records', '{ "_id": 1, "a": 10 }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rumidxonly_db', 'sparse_records', '{ "_id": 2, "a": null }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('rumidxonly_db', 'sparse_records', '{ "_id": 3 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumidxonly_db',
+    '{ "createIndexes": "sparse_records", "indexes": [ { "key": { "b": 1 }, "name": "idx_other" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumidxonly_db',
+    '{ "createIndexes": "sparse_records", "indexes": [ { "key": { "a": 1 }, "name": "idx_sparse", "sparse": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": "idx_sparse" }');
+                               QUERY PLAN                               
+------------------------------------------------------------------------
+ Aggregate
+   ->  Index Only Scan using idx_sparse on documents_29502 collection
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(3 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": "idx_sparse" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": { "a": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": { "a": 10 }, "hint": "idx_sparse" }');
+                                                              QUERY PLAN                                                              
+--------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Index Only Scan using idx_sparse on documents_29502 collection
+         Index Cond: ((document @= '{ "a" : { "$numberInt" : "10" } }'::bson) AND (document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
+(3 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": { "a": 10 }, "hint": "idx_sparse" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": { "a": null }, "hint": { "a": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {} }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "3" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET documentdb.enable_native_planner_index_only_scan TO off;
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": "idx_sparse" }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET documentdb.enable_native_planner_index_only_scan TO on;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumidxonly_db',
+    '{ "createIndexes": "sparse_records", "indexes": [ { "key": { "a": 1 }, "name": "idx_sparse_ci", "sparse": true, "collation": { "locale": "en", "strength": 1 } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": "idx_sparse_ci", "collation": { "locale": "en", "strength": 1 } }');
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Aggregate
+   ->  Index Only Scan using idx_sparse_ci on documents_29502 collection
+         Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(3 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": { "a": 10 }, "hint": "idx_sparse_ci", "collation": { "locale": "en", "strength": 1 } }');
+                                                                              QUERY PLAN                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Index Only Scan using idx_sparse_ci on documents_29502 collection
+         Index Cond: ((document @= '{ "a" : { "$numberInt" : "10" }, "collation" : "en-u-ks-level1" }'::bson) AND (document @>= '{ "a" : { "$minKey" : 1 } }'::bson))
+(3 rows)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": { "a": 10 }, "hint": "idx_sparse_ci", "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": "idx_sparse_ci", "collation": { "locale": "en", "strength": 1 } }');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "2" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET documentdb.enable_native_planner_index_only_scan;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET max_parallel_workers_per_gather;

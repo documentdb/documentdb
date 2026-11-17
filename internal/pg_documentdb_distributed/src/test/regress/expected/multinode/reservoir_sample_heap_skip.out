@@ -52,14 +52,14 @@ SET LOCAL enable_seqscan TO off;
 -- run_explain_and_trim strips the PG18-only "Disabled: true" line that appears
 -- when a scan node is produced while its enabling planner GUC is off.
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "heapskip_unsharded", "pipeline": [ { "$match": { "_id": { "$gt": 5 } } }, { "$sample": { "size": 5 } } ] }') $$);
-                                                                                                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                                                                                                     
+                                                                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_7201_72002 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND ((object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson)) AND (shard_key_value OPERATOR(pg_catalog.=) '7201'::bigint) AND documentdb_api_internal.bson_dollar_range(document, '{ "" : { "sample" : { "$numberLong" : "5" } } }'::documentdb_core.bson))
+         Query: SELECT document FROM documentdb_data.documents_7201_72002 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND ((object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson)) AND ((shard_key_value OPERATOR(pg_catalog.=) '7201'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)) AND documentdb_api_internal.bson_dollar_range(document, '{ "" : { "sample" : { "$numberLong" : "5" } } }'::documentdb_core.bson))
          Node: host=localhost port=58081 dbname=postgres
          ->  Custom Scan (DocumentDBApiReservoirSample)
                Output: document
@@ -98,14 +98,14 @@ SET LOCAL documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
 SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
 SET LOCAL enable_seqscan TO off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "heapskip_unsharded", "pipeline": [ { "$match": { "_id": { "$gt": 5 } } }, { "$sample": { "size": 5 } } ] }') $$);
-                                                                                                                                                                                                                                                                                                     run_explain_and_trim                                                                                                                                                                                                                                                                                                     
+                                                                                                                                                                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                                                                                                                                                                   
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_7201_72002 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND ((object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson)) AND (shard_key_value OPERATOR(pg_catalog.=) '7201'::bigint) AND documentdb_api_internal.bson_dollar_range(document, '{ "" : { "sample" : { "$numberLong" : "5" } } }'::documentdb_core.bson))
+         Query: SELECT document FROM documentdb_data.documents_7201_72002 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND ((object_id OPERATOR(documentdb_core.>) '{ "" : { "$numberInt" : "5" } }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<=) '{ "" : { "$numberDouble" : "Infinity" } }'::documentdb_core.bson)) AND ((shard_key_value OPERATOR(pg_catalog.=) '7201'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)) AND documentdb_api_internal.bson_dollar_range(document, '{ "" : { "sample" : { "$numberLong" : "5" } } }'::documentdb_core.bson))
          Node: host=localhost port=58081 dbname=postgres
          ->  Custom Scan (DocumentDBApiReservoirSample)
                Output: document
@@ -162,14 +162,14 @@ SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "heapskip_bmp", "pipeline": [ { "$match": { "value": { "$gte": 190 } } }, { "$sample": { "size": 5 } } ] }') $$);
-                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                             
+                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_7202_72004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "value" : { "$numberInt" : "190" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '7202'::bigint) AND documentdb_api_internal.bson_dollar_range(document, '{ "" : { "sample" : { "$numberLong" : "5" } } }'::documentdb_core.bson))
+         Query: SELECT document FROM documentdb_data.documents_7202_72004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "value" : { "$numberInt" : "190" } }'::documentdb_core.bsonquery) AND ((shard_key_value OPERATOR(pg_catalog.=) '7202'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)) AND documentdb_api_internal.bson_dollar_range(document, '{ "" : { "sample" : { "$numberLong" : "5" } } }'::documentdb_core.bson))
          Node: host=localhost port=58081 dbname=postgres
          ->  Custom Scan (DocumentDBApiReservoirSample)
                Output: document
@@ -204,14 +204,14 @@ SET LOCAL enable_indexscan TO off;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL documentdb.enableDollarSampleHeapSkipReservoirScan TO off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "heapskip_bmp", "pipeline": [ { "$match": { "value": { "$gte": 190 } } }, { "$sample": { "size": 5 } } ] }') $$);
-                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                             
+                                                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_7202_72004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "value" : { "$numberInt" : "190" } }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '7202'::bigint) AND documentdb_api_internal.bson_dollar_range(document, '{ "" : { "sample" : { "$numberLong" : "5" } } }'::documentdb_core.bson))
+         Query: SELECT document FROM documentdb_data.documents_7202_72004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>=) '{ "value" : { "$numberInt" : "190" } }'::documentdb_core.bsonquery) AND ((shard_key_value OPERATOR(pg_catalog.=) '7202'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)) AND documentdb_api_internal.bson_dollar_range(document, '{ "" : { "sample" : { "$numberLong" : "5" } } }'::documentdb_core.bson))
          Node: host=localhost port=58081 dbname=postgres
          ->  Custom Scan (DocumentDBApiReservoirSample)
                Output: document
@@ -256,14 +256,14 @@ SET LOCAL documentdb.enableDollarSampleHeapSkipReservoirScan TO on;
 SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
 SET LOCAL enable_seqscan TO off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('rsampledb', '{ "aggregate": "heapskip_sharded", "pipeline": [ { "$match": { "region": "east" } }, { "$sample": { "size": 5 } } ] }') $$);
-                                                                                                                                              run_explain_and_trim                                                                                                                                              
+                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                           
 ---------------------------------------------------------------------
  Custom Scan (Citus Adaptive)
    Output: remote_scan.document
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_7203_72009 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "region" : "east" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6499286302488289249'::bigint)) ORDER BY (random()) LIMIT '5'::bigint
+         Query: SELECT document FROM documentdb_data.documents_7203_72009 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "region" : "east" }'::documentdb_core.bsonquery) AND (shard_key_value OPERATOR(pg_catalog.=) '6499286302488289249'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)) ORDER BY (random()) LIMIT '5'::bigint
          Node: host=localhost port=58081 dbname=postgres
          ->  Limit
                Output: document, (random())

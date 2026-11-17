@@ -221,7 +221,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
                                  Task Count: 8
                                  Tasks Shown: One of 8
                                  ->  Task
-                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?", documentdb_api_catalog.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::documentdb_core.bson) AS worker_column_5 FROM documentdb_data.documents_19852_19850064 collection WHERE true
+                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?", documentdb_api_catalog.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::documentdb_core.bson) AS worker_column_5 FROM documentdb_data.documents_19852_19850064 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
                                        Node: host=localhost port=58070 dbname=regression
                                        ->  Seq Scan on documentdb_data.documents_19852_19850064 collection
                                              Output: document, document, document, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_catalog.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::documentdb_core.bson)
@@ -254,7 +254,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
                                  Task Count: 8
                                  Tasks Shown: One of 8
                                  ->  Task
-                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?" FROM documentdb_data.documents_19852_19850064 collection WHERE true
+                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?" FROM documentdb_data.documents_19852_19850064 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
                                        Node: host=localhost port=58070 dbname=regression
                                        ->  Seq Scan on documentdb_data.documents_19852_19850064 collection
                                              Output: document, document, document, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)

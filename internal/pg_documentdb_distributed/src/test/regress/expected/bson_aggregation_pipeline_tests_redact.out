@@ -495,7 +495,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_redact(document, '{ }'::documentdb_core.bson, '$$KEEP'::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_51502_5150036 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '51502'::bigint)
+         Query: SELECT documentdb_api_internal.bson_dollar_redact(document, '{ }'::documentdb_core.bson, '$$KEEP'::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_51502_5150036 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '51502'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document))
          Node: host=localhost port=58070 dbname=regression
          ->  Bitmap Heap Scan on documentdb_data.documents_51502_5150036 collection
                Output: documentdb_api_internal.bson_dollar_redact(document, '{ }'::documentdb_core.bson, '$$KEEP'::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -512,7 +512,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_redact(document, '{ "$cond" : { "if" : { "$eq" : [ "$level", { "$numberInt" : "1" } ] }, "then" : "$$KEEP", "else" : "$$PRUNE" } }'::documentdb_core.bson, ''::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_51502_5150036 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '51502'::bigint)
+         Query: SELECT documentdb_api_internal.bson_dollar_redact(document, '{ "$cond" : { "if" : { "$eq" : [ "$level", { "$numberInt" : "1" } ] }, "then" : "$$KEEP", "else" : "$$PRUNE" } }'::documentdb_core.bson, ''::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_51502_5150036 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '51502'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document))
          Node: host=localhost port=58070 dbname=regression
          ->  Bitmap Heap Scan on documentdb_data.documents_51502_5150036 collection
                Output: documentdb_api_internal.bson_dollar_redact(document, '{ "$cond" : { "if" : { "$eq" : [ "$level", { "$numberInt" : "1" } ] }, "then" : "$$KEEP", "else" : "$$PRUNE" } }'::documentdb_core.bson, ''::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -587,7 +587,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_redact(document, '{ }'::documentdb_core.bson, '$$KEEP'::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_51502_5150160 collection WHERE true
+         Query: SELECT documentdb_api_internal.bson_dollar_redact(document, '{ }'::documentdb_core.bson, '$$KEEP'::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_51502_5150160 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
          Node: host=localhost port=58070 dbname=regression
          ->  Seq Scan on documentdb_data.documents_51502_5150160 collection
                Output: documentdb_api_internal.bson_dollar_redact(document, '{ }'::documentdb_core.bson, '$$KEEP'::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -601,7 +601,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_redact(document, '{ "$cond" : { "if" : { "$eq" : [ "$level", { "$numberInt" : "1" } ] }, "then" : "$$KEEP", "else" : "$$PRUNE" } }'::documentdb_core.bson, ''::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_51502_5150160 collection WHERE true
+         Query: SELECT documentdb_api_internal.bson_dollar_redact(document, '{ "$cond" : { "if" : { "$eq" : [ "$level", { "$numberInt" : "1" } ] }, "then" : "$$KEEP", "else" : "$$PRUNE" } }'::documentdb_core.bson, ''::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_51502_5150160 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
          Node: host=localhost port=58070 dbname=regression
          ->  Seq Scan on documentdb_data.documents_51502_5150160 collection
                Output: documentdb_api_internal.bson_dollar_redact(document, '{ "$cond" : { "if" : { "$eq" : [ "$level", { "$numberInt" : "1" } ] }, "then" : "$$KEEP", "else" : "$$PRUNE" } }'::documentdb_core.bson, ''::text, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)

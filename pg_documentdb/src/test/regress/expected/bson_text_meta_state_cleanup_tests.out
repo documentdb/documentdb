@@ -117,11 +117,11 @@ SELECT documentdb_api_internal.bson_get_rewritten_sql(
         { "$match": { "$text": { "$search": "quick" } } },
         { "$sort": { "score": { "$meta": "textScore" } } }
     ], "cursor": {} }'::documentdb_core.bson);
-                                                  bson_get_rewritten_sql                                                   
----------------------------------------------------------------------------------------------------------------------------
-  SELECT document                                                                                                         +
-    FROM documentdb_data.documents_27120002 collection                                                                    +
-   WHERE (bson_dollar_text(document, '{ "" : { "$search" : "quick" } }'::bson) AND (shard_key_value = '27120002'::bigint))+
+                                                                    bson_get_rewritten_sql                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT document                                                                                                                                            +
+    FROM documentdb_data.documents_27120002 collection                                                                                                       +
+   WHERE (bson_dollar_text(document, '{ "" : { "$search" : "quick" } }'::bson) AND ((shard_key_value = '27120002'::bigint) AND bson_indexopt_scan(document)))+
    ORDER BY (bson_orderby_meta(document, NULL::bytea, NULL::tsquery)) DESC NULLS LAST
 (1 row)
 

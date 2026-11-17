@@ -123,6 +123,9 @@ SET documentdb.forceUseIndexIfAvailable TO on;
 -- PostgreSQL versions / row-count estimates.
 SET enable_bitmapscan TO off;
 
+-- Avoid parallel-worker GUC restoration failures while testing primary-key plans.
+SET max_parallel_workers_per_gather TO 0;
+
 -- A session-level SET is NOT propagated to Citus worker tasks, so any EXPLAIN whose plan is a
 -- remote 'Custom Scan (Citus Adaptive)' would otherwise be generated on the worker with the
 -- GUC defaults (i.e. as if the feature were off). Enable propagation of SET LOCAL commands so
@@ -145,6 +148,9 @@ ANALYZE documentdb_data.documents_18400;
 -- _id_) rather than a sequential scan when the GUC is enabled.
 SELECT document FROM bson_aggregation_pipeline('pkdb', '{ "aggregate": "pk_native", "pipeline": [ { "$count": "total" } ], "cursor": {} }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('pkdb', '{ "aggregate": "pk_native", "pipeline": [ { "$count": "total" } ], "cursor": {} }');
+
+-- A real document filter must not be discarded with the marker.
+SELECT document FROM bson_aggregation_pipeline('pkdb', '{ "aggregate": "pk_native", "pipeline": [ { "$match": { "a": 5 } }, { "$count": "total" } ], "cursor": {} }');
 
 -- (2) match (find) with an _id filter should use the primary key index. The shard key
 -- filter is re-added alongside the _id filter so the index cond covers (shard_key_value, object_id).
@@ -235,6 +241,7 @@ SELECT collection_id AS native_union_id FROM documentdb_api_catalog.collections 
 SELECT FORMAT('ANALYZE documentdb_data.documents_%s', :native_union_id) \gexec
 SELECT document FROM bson_aggregation_pipeline('pkdb', '{ "aggregate": "pk_native", "pipeline": [ { "$unionWith": { "coll": "pk_native_union" } }, { "$match": { "_id": 5 } } ], "cursor": {} }');
 BEGIN;
+set local max_parallel_workers_per_gather to 0;
 set local documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters to on;
 set local documentdb.enableGroupByCompoundIdIndexPushdown to on;
 set local documentdb.forceUseIndexIfAvailable to on;
@@ -382,6 +389,7 @@ SELECT collection_id AS nocolo_union_id FROM documentdb_api_catalog.collections 
 SELECT FORMAT('ANALYZE documentdb_data.documents_%s', :nocolo_union_id) \gexec
 SELECT document FROM bson_aggregation_pipeline('pkdb', '{ "aggregate": "pk_nocolo", "pipeline": [ { "$unionWith": { "coll": "pk_nocolo_union" } }, { "$match": { "_id": 5 } } ], "cursor": {} }');
 BEGIN;
+set local max_parallel_workers_per_gather to 0;
 set local documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters to on;
 set local documentdb.enableGroupByCompoundIdIndexPushdown to on;
 set local documentdb.forceUseIndexIfAvailable to on;
@@ -407,9 +415,56 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_distinct('pkdb', '{ "distinct": "pk_nocolo", "key": "_id", "query": { "_id": { "$gt": 0 } } }');
 ROLLBACK;
 
+----------------------------------------------------------------------------------------
+-- Scenario set 3: sharded counts must retain non-redundant restrictions.
+----------------------------------------------------------------------------------------
+SELECT documentdb_api.create_collection('pkdb', 'pk_sharded');
+SELECT COUNT(documentdb_api.insert_one('pkdb', 'pk_sharded',
+    bson_build_document('_id'::text, i, 'a'::text, i % 10,
+        'label'::text, CASE WHEN i % 2 = 0 THEN 'Alpha' ELSE 'Beta' END)))
+FROM generate_series(1, 1000) i;
+SELECT documentdb_api.shard_collection('pkdb', 'pk_sharded', '{ "a": "hashed" }', false);
+SELECT documentdb_api.compact('{ "compact": "pk_sharded", "$db": "pkdb", "mode": "updateStats" }');
+
+BEGIN;
+SET LOCAL documentdb.enable_native_planner_index_only_scan TO on;
+SET LOCAL documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+SET LOCAL documentdb.forceUseIndexIfAvailable TO on;
+SET LOCAL documentdb_core.enableCollation TO on;
+SET LOCAL citus.enable_local_execution TO off;
+SET LOCAL enable_seqscan TO off;
+SET LOCAL enable_bitmapscan TO off;
+SET LOCAL max_parallel_workers_per_gather TO 0;
+
+-- An unfiltered count can scan the primary-key index on every shard.
+SELECT document FROM bson_aggregation_pipeline('pkdb',
+    '{ "aggregate": "pk_sharded", "pipeline": [ { "$count": "total" } ], "cursor": {} }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('pkdb',
+    '{ "aggregate": "pk_sharded", "pipeline": [ { "$count": "total" } ], "cursor": {} }')
+$cmd$);
+
+-- A genuine shard-key restriction must not become an unbounded index scan.
+SELECT document FROM bson_aggregation_pipeline('pkdb',
+    '{ "aggregate": "pk_sharded", "pipeline": [ { "$match": { "a": 5 } }, { "$count": "total" } ], "cursor": {} }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('pkdb',
+    '{ "aggregate": "pk_sharded", "pipeline": [ { "$match": { "a": 5 } }, { "$count": "total" } ], "cursor": {} }')
+$cmd$);
+
+-- A collation-sensitive residual filter still needs the document on each shard.
+SELECT document FROM bson_aggregation_pipeline('pkdb',
+    '{ "aggregate": "pk_sharded", "pipeline": [ { "$match": { "label": "alpha" } }, { "$count": "total" } ], "cursor": {}, "collation": { "locale": "en", "strength": 2 } }');
+SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('pkdb',
+    '{ "aggregate": "pk_sharded", "pipeline": [ { "$match": { "label": "alpha" } }, { "$count": "total" } ], "cursor": {}, "collation": { "locale": "en", "strength": 2 } }')
+$cmd$);
+ROLLBACK;
+
 RESET documentdb.enableNativeColocation;
 RESET documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters;
 RESET documentdb.enableGroupByCompoundIdIndexPushdown;
 RESET enable_seqscan;
 RESET documentdb.forceUseIndexIfAvailable;
 RESET citus.propagate_set_commands;
+RESET max_parallel_workers_per_gather;

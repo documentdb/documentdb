@@ -683,7 +683,7 @@ psql:sql/bson_aggregation_stage_out_tests_2.sql:192: NOTICE:  creating collectio
          Task Count: 1
          Tasks Shown: All
          ->  Task
-               Query: SELECT document, target_shard_key_value, generated_object_id FROM (SELECT agg_stage_0.document, agg_stage_0.target_shard_key_value, agg_stage_0.generated_object_id FROM (SELECT collection.document, '9864'::bigint AS target_shard_key_value, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id FROM documentdb_data.documents_9863_9830125 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '9863'::bigint) OFFSET '0'::bigint) agg_stage_0 WHERE (agg_stage_0.document IS NOT NULL)) citus_insert_select_subquery
+               Query: SELECT document, target_shard_key_value, generated_object_id FROM (SELECT agg_stage_0.document, agg_stage_0.target_shard_key_value, agg_stage_0.generated_object_id FROM (SELECT collection.document, '9864'::bigint AS target_shard_key_value, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id FROM documentdb_data.documents_9863_9830125 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '9863'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document)) OFFSET '0'::bigint) agg_stage_0 WHERE (agg_stage_0.document IS NOT NULL)) citus_insert_select_subquery
                Node: host=localhost port=58070 dbname=regression
                ->  Subquery Scan on agg_stage_0
                      Output: agg_stage_0.document, agg_stage_0.target_shard_key_value, agg_stage_0.generated_object_id
@@ -712,7 +712,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
          Task Count: 1
          Tasks Shown: All
          ->  Task
-               Query: SELECT document, target_shard_key_value, generated_object_id FROM (SELECT agg_stage_0.document, agg_stage_0.target_shard_key_value, agg_stage_0.generated_object_id FROM (SELECT collection.document, '9864'::bigint AS target_shard_key_value, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id FROM documentdb_data.documents_9863_9830125 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '9863'::bigint) OFFSET '0'::bigint) agg_stage_0 WHERE (agg_stage_0.document IS NOT NULL)) citus_insert_select_subquery
+               Query: SELECT document, target_shard_key_value, generated_object_id FROM (SELECT agg_stage_0.document, agg_stage_0.target_shard_key_value, agg_stage_0.generated_object_id FROM (SELECT collection.document, '9864'::bigint AS target_shard_key_value, documentdb_api_internal.bson_dollar_merge_generate_object_id(collection.document) AS generated_object_id FROM documentdb_data.documents_9863_9830125 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '9863'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document)) OFFSET '0'::bigint) agg_stage_0 WHERE (agg_stage_0.document IS NOT NULL)) citus_insert_select_subquery
                Node: host=localhost port=58070 dbname=regression
                ->  Subquery Scan on agg_stage_0
                      Output: agg_stage_0.document, agg_stage_0.target_shard_key_value, agg_stage_0.generated_object_id

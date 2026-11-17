@@ -161,17 +161,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
    Output: bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" } }'::bson, '{ "country" : { "$gte" : "Brazil" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   indexName: country_1
-   indexKey: {"country": 1}
+   indexName: country_id_1
+   indexKey: {"country": 1,"_id": 1}
    isMultiKey: false
-   indexBounds: ["country": ["Brazil", { })]
-   innerScanLoops: 4 loops
+   indexBounds: ["country": ["Brazil", { }), "_id": (MinKey, MaxKey)]
+   innerScanLoops: 10 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
-   ->  Index Scan using country_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
+   ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
          Output: document
          Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-(12 rows)
+         Heap Fetches: xxx
+(13 rows)
 
 -- A3: find with inclusion of an UN-covered field (provider) + _id excluded
 -- Expected: no IOS because provider is not in country_1
@@ -180,17 +181,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
    Output: bson_dollar_project_find(document, '{ "provider" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "country" : { "$gte" : "Brazil" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   indexName: country_1
-   indexKey: {"country": 1}
+   indexName: country_provider_1
+   indexKey: {"country": 1,"provider": 1}
    isMultiKey: false
-   indexBounds: ["country": ["Brazil", { })]
-   innerScanLoops: 4 loops
+   indexBounds: ["country": ["Brazil", { }), "provider": (MinKey, MaxKey)]
+   innerScanLoops: 8 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
-   ->  Index Scan using country_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
+   ->  Index Only Scan using country_provider_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
          Output: document
          Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-(12 rows)
+         Heap Fetches: xxx
+(13 rows)
 
 -- A4: find with inclusion of one covered + one UN-covered field
 -- Expected: no IOS because provider is not covered by country_1
@@ -199,17 +201,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
    Output: bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" }, "provider" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "country" : { "$gte" : "Brazil" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   indexName: country_1
-   indexKey: {"country": 1}
+   indexName: country_provider_1
+   indexKey: {"country": 1,"provider": 1}
    isMultiKey: false
-   indexBounds: ["country": ["Brazil", { })]
-   innerScanLoops: 4 loops
+   indexBounds: ["country": ["Brazil", { }), "provider": (MinKey, MaxKey)]
+   innerScanLoops: 8 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
-   ->  Index Scan using country_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
+   ->  Index Only Scan using country_provider_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
          Output: document
          Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-(12 rows)
+         Heap Fetches: xxx
+(13 rows)
 
 -- A5: find with pure exclusion projection
 -- Expected: no IOS because we don't know what other fields exist (have to read full doc)
@@ -704,17 +707,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
    Output: bson_dollar_project(document, '{ "provider" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   indexName: country_1
-   indexKey: {"country": 1}
+   indexName: country_provider_1
+   indexKey: {"country": 1,"provider": 1}
    isMultiKey: false
-   indexBounds: ["country": ["Brazil", { })]
-   innerScanLoops: 4 loops
+   indexBounds: ["country": ["Brazil", { }), "provider": (MinKey, MaxKey)]
+   innerScanLoops: 8 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
-   ->  Index Scan using country_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
+   ->  Index Only Scan using country_provider_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
          Output: document
          Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-(12 rows)
+         Heap Fetches: xxx
+(13 rows)
 
 -- D3: $match + $project + $count using covered fields
 -- Expected: IOS using country_1

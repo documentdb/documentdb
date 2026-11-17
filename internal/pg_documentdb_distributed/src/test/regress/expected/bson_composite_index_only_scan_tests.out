@@ -641,9 +641,8 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
          ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=16 loops=1)
-               Index Cond: (collection.document @<> '{ "country" : { "fullScan" : true } }'::bson)
                Heap Fetches: xxx
-(14 rows)
+(13 rows)
 
 -- hint + no match + constant-group $sum: fullScan should use IOS
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "hint" : "country_1", "pipeline" : [{ "$group" : { "_id" : 1, "n" : { "$sum" : 1 } } }]}')$$, p_ignore_heap_fetches => true);
@@ -663,9 +662,8 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
          scanType: ordered
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 17)]
          ->  Index Only Scan using country_1 on documentdb_data.documents_69001_690002 collection (actual rows=16 loops=1)
-               Index Cond: (collection.document @<> '{ "country" : { "fullScan" : true } }'::bson)
                Heap Fetches: xxx
-(16 rows)
+(15 rows)
 
 -- hint + $match + uncovered accumulator (provider not in country_1 index): should NOT use IOS
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_pipeline('idx_only_scan_db', '{ "aggregate" : "idx_only_scan_coll", "hint" : "country_1", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}} }, { "$group" : { "_id" : 1, "maxProvider" : { "$max" : "$provider" } } }]}')$$, p_ignore_heap_fetches => true);
@@ -1176,7 +1174,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
    Tuple data received from nodes: 12 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build('c'::text, documentdb_api_internal.bsoncount(1)) AS document FROM (SELECT collection.document FROM documentdb_data.documents_69002_690012 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#=) '{ "shardKey" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint))) agg_stage_1
+         Query: SELECT documentdb_core.bson_repath_and_build('c'::text, documentdb_api_internal.bsoncount(1)) AS document FROM (SELECT collection.document FROM documentdb_data.documents_69002_690012 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#=) '{ "shardKey" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) agg_stage_1
          Tuple data received from node: 12 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate (actual rows=1 loops=1)
@@ -1198,7 +1196,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
    Tuple data received from nodes: 12 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build('c'::text, documentdb_api_internal.bsoncount(1)) AS document FROM (SELECT collection.document FROM documentdb_data.documents_69002_690012 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#=) '{ "shardKey" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint))) agg_stage_1
+         Query: SELECT documentdb_core.bson_repath_and_build('c'::text, documentdb_api_internal.bsoncount(1)) AS document FROM (SELECT collection.document FROM documentdb_data.documents_69002_690012 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#=) '{ "shardKey" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) agg_stage_1
          Tuple data received from node: 12 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate (actual rows=1 loops=1)

@@ -498,7 +498,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_lookup_unwind(document, '_'::text) AS document FROM (SELECT documentdb_api_internal.bson_densify_range(agg_stage_0_1.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : [ { "$numberInt" : "8" }, { "$numberInt" : "12" } ], "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (PARTITION BY (documentdb_api_internal.bson_expression_partition_by_fields_get(agg_stage_0_1.document, '{ "" : [ "a" ] }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(agg_stage_0_1.document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)) NULLS FIRST) AS document FROM (SELECT collection.document FROM documentdb_data.documents_4770_477002 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4770'::bigint) UNION ALL SELECT NULL::documentdb_core.bson AS document) agg_stage_0_1) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_lookup_unwind(document, '_'::text) AS document FROM (SELECT documentdb_api_internal.bson_densify_range(agg_stage_0_1.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : [ { "$numberInt" : "8" }, { "$numberInt" : "12" } ], "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (PARTITION BY (documentdb_api_internal.bson_expression_partition_by_fields_get(agg_stage_0_1.document, '{ "" : [ "a" ] }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(agg_stage_0_1.document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)) NULLS FIRST) AS document FROM (SELECT collection.document FROM documentdb_data.documents_4770_477002 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4770'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document)) UNION ALL SELECT NULL::documentdb_core.bson AS document) agg_stage_0_1) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  ProjectSet
                Output: documentdb_api_catalog.bson_lookup_unwind((documentdb_api_internal.bson_densify_range(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : [ { "$numberInt" : "8" }, { "$numberInt" : "12" } ], "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (?)), '_'::text)
@@ -528,7 +528,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_lookup_unwind(document, '_'::text) AS document FROM (SELECT documentdb_api_internal.bson_densify_partition(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : "partition", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (PARTITION BY (documentdb_api_internal.bson_expression_partition_by_fields_get(collection.document, '{ "" : [ "a" ] }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)) NULLS FIRST) AS document FROM documentdb_data.documents_4770_477002 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4770'::bigint)) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_lookup_unwind(document, '_'::text) AS document FROM (SELECT documentdb_api_internal.bson_densify_partition(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : "partition", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (PARTITION BY (documentdb_api_internal.bson_expression_partition_by_fields_get(collection.document, '{ "" : [ "a" ] }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)) NULLS FIRST) AS document FROM documentdb_data.documents_4770_477002 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4770'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  ProjectSet
                Output: documentdb_api_catalog.bson_lookup_unwind((documentdb_api_internal.bson_densify_partition(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : "partition", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (?)), '_'::text)
@@ -553,7 +553,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_lookup_unwind(document, '_'::text) AS document FROM (SELECT documentdb_api_internal.bson_densify_full(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : "full", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)) NULLS FIRST) AS document FROM documentdb_data.documents_4770_477002 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4770'::bigint)) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_lookup_unwind(document, '_'::text) AS document FROM (SELECT documentdb_api_internal.bson_densify_full(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : "full", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)) NULLS FIRST) AS document FROM documentdb_data.documents_4770_477002 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4770'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  ProjectSet
                Output: documentdb_api_catalog.bson_lookup_unwind((documentdb_api_internal.bson_densify_full(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : "full", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (?)), '_'::text)
@@ -693,7 +693,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Task Count: 8
                Tasks Shown: One of 8
                ->  Task
-                     Query: SELECT document FROM documentdb_data.documents_4770_477016 collection WHERE true
+                     Query: SELECT document FROM documentdb_data.documents_4770_477016 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
                      Node: host=localhost port=58070 dbname=regression
                      ->  Seq Scan on documentdb_data.documents_4770_477016 collection
                            Output: document
@@ -737,7 +737,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_lookup_unwind(worker_column_1, '_'::text) AS document FROM (SELECT agg_stage_0.document AS worker_column_1 FROM (SELECT documentdb_api_internal.bson_densify_partition(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : "partition", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (PARTITION BY collection.shard_key_value ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)) NULLS FIRST) AS document FROM documentdb_data.documents_4770_477016 collection) agg_stage_0) worker_subquery
+         Query: SELECT documentdb_api_catalog.bson_lookup_unwind(worker_column_1, '_'::text) AS document FROM (SELECT agg_stage_0.document AS worker_column_1 FROM (SELECT documentdb_api_internal.bson_densify_partition(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : "partition", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (PARTITION BY collection.shard_key_value ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)) NULLS FIRST) AS document FROM documentdb_data.documents_4770_477016 collection WHERE documentdb_api_internal.bson_indexopt_scan(collection.document)) agg_stage_0) worker_subquery
          Node: host=localhost port=58070 dbname=regression
          ->  ProjectSet
                Output: documentdb_api_catalog.bson_lookup_unwind((documentdb_api_internal.bson_densify_partition(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a" ], "range" : { "bounds" : "partition", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (?)), '_'::text)
@@ -767,7 +767,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT document, documentdb_api_catalog.bson_orderby(document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson) AS worker_column_2 FROM documentdb_data.documents_4770_477016 collection WHERE true
+                                 Query: SELECT document, documentdb_api_catalog.bson_orderby(document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson) AS worker_column_2 FROM documentdb_data.documents_4770_477016 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Seq Scan on documentdb_data.documents_4770_477016 collection
                                        Output: document, documentdb_api_catalog.bson_orderby(document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)
@@ -1041,7 +1041,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Task Count: 8
                Tasks Shown: One of 8
                ->  Task
-                     Query: SELECT document FROM documentdb_data.documents_4770_477024 collection WHERE true
+                     Query: SELECT document FROM documentdb_data.documents_4770_477024 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
                      Node: host=localhost port=58070 dbname=regression
                      ->  Seq Scan on documentdb_data.documents_4770_477024 collection
                            Output: document
@@ -1085,7 +1085,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_lookup_unwind(worker_column_1, '_'::text) AS document FROM (SELECT agg_stage_0.document AS worker_column_1 FROM (SELECT documentdb_api_internal.bson_densify_partition(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a", "quantity" ], "range" : { "bounds" : "partition", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (PARTITION BY collection.shard_key_value ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)) NULLS FIRST) AS document FROM documentdb_data.documents_4770_477024 collection) agg_stage_0) worker_subquery
+         Query: SELECT documentdb_api_catalog.bson_lookup_unwind(worker_column_1, '_'::text) AS document FROM (SELECT agg_stage_0.document AS worker_column_1 FROM (SELECT documentdb_api_internal.bson_densify_partition(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a", "quantity" ], "range" : { "bounds" : "partition", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (PARTITION BY collection.shard_key_value ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)) NULLS FIRST) AS document FROM documentdb_data.documents_4770_477024 collection WHERE documentdb_api_internal.bson_indexopt_scan(collection.document)) agg_stage_0) worker_subquery
          Node: host=localhost port=58070 dbname=regression
          ->  ProjectSet
                Output: documentdb_api_catalog.bson_lookup_unwind((documentdb_api_internal.bson_densify_partition(collection.document, '{ "field" : "cost", "partitionByFields" : [ "a", "quantity" ], "range" : { "bounds" : "partition", "step" : { "$numberInt" : "1" } } }'::documentdb_core.bson) OVER (?)), '_'::text)
@@ -1115,7 +1115,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT document, documentdb_api_catalog.bson_orderby(document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson) AS worker_column_2 FROM documentdb_data.documents_4770_477024 collection WHERE true
+                                 Query: SELECT document, documentdb_api_catalog.bson_orderby(document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson) AS worker_column_2 FROM documentdb_data.documents_4770_477024 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Seq Scan on documentdb_data.documents_4770_477024 collection
                                        Output: document, documentdb_api_catalog.bson_orderby(document, '{ "cost" : { "$numberLong" : "1" } }'::documentdb_core.bson)

@@ -460,16 +460,17 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          Heap Fetches: xxx
 (6 rows)
 
--- forceIndexOnlyScan + uncovered accumulator (provider not in country_1): should NOT use IOS
+-- A covered accumulator can use the compound index rather than country_1.
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$group" : { "_id" : 1, "maxProvider" : { "$max" : "$provider" } } }]}') $$, p_ignore_heap_fetches => true);
                                                                                                                                                       run_explain_and_trim                                                                                                                                                       
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'maxProvider'::text, documentdb_api_internal.bsonmaxwithexprinternal(document, '{ "" : "$provider" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), '{ "" : { "$numberInt" : "1" } }'::bson
-   ->  Index Scan using country_1 on documentdb_data.documents_9101 collection (actual rows=7 loops=1)
-         Output: shard_key_value, object_id, document
+   ->  Index Only Scan using country_provider_1 on documentdb_data.documents_9101 collection (actual rows=7 loops=1)
+         Output: document
          Index Cond: (collection.document @< '{ "country" : "Mexico" }'::bson)
-(5 rows)
+         Heap Fetches: xxx
+(6 rows)
 
 reset documentdb.forceIndexOnlyScanIfAvailable;
 -- Multi-key value should prevent index only scan
@@ -804,9 +805,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    Output: bson_repath_and_build('count'::text, documentdb_api_internal.bsoncount(1))
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
          Output: collection.document
-         Index Cond: (collection.document @<> '{ "city" : { "fullScan" : true } }'::bson)
          Heap Fetches: xxx
-(6 rows)
+(5 rows)
 
 -- hint + $match + covered sort + $count: should use IOS
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": {"$gte": "A"}} }, { "$sort": {"city": 1, "rent": 1} }, { "$count": "total" }]}') $$, p_ignore_heap_fetches => true);
@@ -858,9 +858,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'totalRent'::text, documentdb_api_internal.bsonsumwithexpr(document, '{ "" : "$rent" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), '{ "" : { "$numberInt" : "1" } }'::bson
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
          Output: document
-         Index Cond: (collection.document @<> '{ "city" : { "fullScan" : true } }'::bson)
          Heap Fetches: xxx
-(6 rows)
+(5 rows)
 
 -- hint + no match + constant-group $avg on covered field: fullScan should use IOS
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$group" : { "_id" : 1, "avgRent" : { "$avg" : "$rent" } } }]}') $$, p_ignore_heap_fetches => true);
@@ -870,9 +869,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'avgRent'::text, documentdb_api_internal.bsonaveragewithexpr(document, '{ "" : "$rent" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), '{ "" : { "$numberInt" : "1" } }'::bson
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
          Output: document
-         Index Cond: (collection.document @<> '{ "city" : { "fullScan" : true } }'::bson)
          Heap Fetches: xxx
-(6 rows)
+(5 rows)
 
 -- hint + no match + constant-group $count: fullScan should use IOS
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$group" : { "_id" : 1, "cnt" : { "$count" : {} } } }]}') $$, p_ignore_heap_fetches => true);
@@ -882,9 +880,8 @@ SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    Output: bson_repath_and_build('_id'::text, '{ "" : { "$numberInt" : "1" } }'::bson, 'cnt'::text, documentdb_api_internal.bsoncount(1)), '{ "" : { "$numberInt" : "1" } }'::bson
    ->  Index Only Scan using city_rent_1 on documentdb_data.documents_9103 collection (actual rows=20 loops=1)
          Output: document
-         Index Cond: (collection.document @<> '{ "city" : { "fullScan" : true } }'::bson)
          Heap Fetches: xxx
-(6 rows)
+(5 rows)
 
 -- hint + $match + uncovered accumulator (sqft): should NOT use IOS
 SELECT documentdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"} }}, { "$group" : { "_id" : 1, "avgSqft" : { "$avg" : "$sqft" } } }]}') $$, p_ignore_heap_fetches => true);

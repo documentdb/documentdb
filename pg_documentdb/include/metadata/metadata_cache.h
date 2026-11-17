@@ -102,6 +102,7 @@ Oid BsonLessThanEqualMatchIndexFunctionId(void);
 Oid BsonRangeMatchFunctionId(void);
 Oid BsonRangeMatchOperatorOid(void);
 Oid BsonFullScanFunctionOid(void);
+Oid BsonIndexOptScanFunctionOid(void);
 Oid BsonDollarDistinctExistsFunctionOid(void);
 Oid BsonIndexHintFunctionOid(void);
 Oid BsonInMatchFunctionId(void);

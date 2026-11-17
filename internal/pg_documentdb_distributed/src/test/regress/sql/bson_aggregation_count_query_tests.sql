@@ -27,6 +27,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_count('cou
 SELECT document FROM bson_aggregation_count('countdb', '{ "count": "countcoll", "query": { "$alwaysFalse": 1 } }');
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_count('countdb', '{ "count": "countcoll", "query": { "$alwaysFalse": 1 } }');
 
+-- Cache-resize diagnostics are normalized; suppress their query-position details.
+\set VERBOSITY terse
 BEGIN;
 set local client_min_messages to DEBUG1;
 set local documentdb.forceRunDiagnosticCommandInline to on;
@@ -43,6 +45,7 @@ SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate": "count
 SELECT document FROM bson_aggregation_pipeline('countdb', '{ "aggregate": "countcoll", "pipeline": [ { "$collStats": { "storageStats": {} }} ] }');
 
 ROLLBACK;
+\set VERBOSITY default
 
 
 SELECT document FROM bson_aggregation_count('countdb', '{ "count": "countcoll", "query": {"value": {"$gt": 20}, "value": {"$lt": 150} } }');

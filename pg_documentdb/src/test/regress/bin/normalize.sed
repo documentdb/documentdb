@@ -7,7 +7,7 @@
 # because we are running the tests in a different configuration.
 
 # ignore DEBUG1 messages that Postgres generates
-/^DEBUG:  rehashing catalog cache id .*$/d
+/^(psql:[^:]+:[0-9]+: )?(s[0-9]+: )?DEBUG:  rehashing catalog cache id .*$/d
 
 # Normalize the temporary database role used by local and pipeline test clusters.
 s/(via connection to "[^"]* user=)[^ ]+/\1REGRESSION_USER/g

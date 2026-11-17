@@ -359,7 +359,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT document, document AS total, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$cost" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?" FROM documentdb_data.documents_4552_455048 collection WHERE true
+                                 Query: SELECT document, document AS total, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$cost" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?" FROM documentdb_data.documents_4552_455048 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Seq Scan on documentdb_data.documents_4552_455048 collection
                                        Output: document, document, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$cost" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -391,7 +391,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(worker_column_1, documentdb_core.bson_repath_and_build('total'::text, worker_column_2), false) AS document FROM (SELECT agg_stage_0.document AS worker_column_1, agg_stage_0.total AS worker_column_2 FROM (SELECT collection.document, documentdb_api_internal.bsonsumwithexpr(collection.document, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text) OVER (PARTITION BY collection.shard_key_value ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS total FROM documentdb_data.documents_4552_455048 collection) agg_stage_0) worker_subquery
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(worker_column_1, documentdb_core.bson_repath_and_build('total'::text, worker_column_2), false) AS document FROM (SELECT agg_stage_0.document AS worker_column_1, agg_stage_0.total AS worker_column_2 FROM (SELECT collection.document, documentdb_api_internal.bsonsumwithexpr(collection.document, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text) OVER (PARTITION BY collection.shard_key_value ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS total FROM documentdb_data.documents_4552_455048 collection WHERE documentdb_api_internal.bson_indexopt_scan(collection.document)) agg_stage_0) worker_subquery
          Node: host=localhost port=58070 dbname=regression
          ->  Subquery Scan on agg_stage_0
                Output: documentdb_api_internal.bson_dollar_merge_documents(agg_stage_0.document, documentdb_core.bson_repath_and_build('total'::text, agg_stage_0.total), false)
@@ -417,7 +417,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('total'::text, total), false) AS document FROM (SELECT collection.document, documentdb_api_internal.bsonsumwithexpr(collection.document, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS total FROM documentdb_data.documents_4552_455051 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : "def" }'::documentdb_core.bsonquery) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '8022442720571987527'::bigint))) agg_stage_1
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents(document, documentdb_core.bson_repath_and_build('total'::text, total), false) AS document FROM (SELECT collection.document, documentdb_api_internal.bsonsumwithexpr(collection.document, '{ "" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS total FROM documentdb_data.documents_4552_455051 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#=) '{ "a" : "def" }'::documentdb_core.bsonquery) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '8022442720571987527'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) agg_stage_1
          Node: host=localhost port=58070 dbname=regression
          ->  Subquery Scan on agg_stage_1
                Output: documentdb_api_internal.bson_dollar_merge_documents(agg_stage_1.document, documentdb_core.bson_repath_and_build('total'::text, agg_stage_1.total), false)
@@ -452,7 +452,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM documentdb_api_catalog.bson
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT document, document AS total, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?" FROM documentdb_data.documents_4552_455056 collection WHERE true
+                                 Query: SELECT document, document AS total, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?" FROM documentdb_data.documents_4552_455056 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Seq Scan on documentdb_data.documents_4552_455056 collection
                                        Output: document, document, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$a" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)

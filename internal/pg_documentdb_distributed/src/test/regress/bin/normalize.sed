@@ -6,6 +6,8 @@
 # port number, or a different worker shard, or a different placement, etc.
 # because we are running the tests in a different configuration.
 
+# Ignore PostgreSQL catalog-cache diagnostics, including messages from included SQL.
+/^(psql:[^:]+:[0-9]+: )?(s[0-9]+: )?DEBUG:  rehashing catalog cache id .*$/d
 
 # Differing names can have differing table column widths
 s/^-[+-]{2,}$/---------------------------------------------------------------------/g

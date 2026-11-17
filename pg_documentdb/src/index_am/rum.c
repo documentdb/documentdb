@@ -293,13 +293,14 @@ extension_rumcostestimate_core(PlannerInfo *root, IndexPath *path, double loop_c
  * accounted for truncation from the tracked metadata, so it is not re-read here.
  */
 bool
-CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath, bool skipTruncationCheck)
+CompositeIndexSupportsIndexOnlyScan(const IndexOptInfo *indexInfo, bool
+									skipTruncationCheck)
 {
 	PGFunction getMultiKeyStatusFunc = NULL;
 	GetTruncationStatusFunc getTruncationStatusFunc = NULL;
 
-	bool supports = GetIndexAmSupportsIndexOnlyScan(indexPath->indexinfo->relam,
-													indexPath->indexinfo->opfamily[0],
+	bool supports = GetIndexAmSupportsIndexOnlyScan(indexInfo->relam,
+													indexInfo->opfamily[0],
 													&getMultiKeyStatusFunc,
 													&getTruncationStatusFunc,
 													NULL);
@@ -310,13 +311,13 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath, bool skipTruncat
 		return false;
 	}
 
-	if (indexPath->indexinfo->opclassoptions == NULL)
+	if (indexInfo->opclassoptions == NULL)
 	{
 		return false;
 	}
 
 	BsonGinIndexOptionsBase *options =
-		(BsonGinIndexOptionsBase *) indexPath->indexinfo->opclassoptions[0];
+		(BsonGinIndexOptionsBase *) indexInfo->opclassoptions[0];
 	if (options->type != IndexOptionsType_Composite)
 	{
 		return false;
@@ -344,7 +345,7 @@ CompositeIndexSupportsIndexOnlyScan(const IndexPath *indexPath, bool skipTruncat
 	 */
 	if (!skipTruncationCheck)
 	{
-		Relation indexRelation = index_open(indexPath->indexinfo->indexoid, NoLock);
+		Relation indexRelation = index_open(indexInfo->indexoid, NoLock);
 		bool hasTruncatedTerms = getTruncationStatusFunc(indexRelation);
 		index_close(indexRelation, NoLock);
 

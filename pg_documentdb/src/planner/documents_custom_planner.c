@@ -303,9 +303,10 @@ TraverseQualsAndExtract(List *quals, List **queryRuntimeClauses,
 				{
 					return false;
 				}
-				else if (funcExpr->funcid == BsonFullScanFunctionOid())
+				else if (funcExpr->funcid == BsonFullScanFunctionOid() ||
+						 funcExpr->funcid == BsonIndexOptScanFunctionOid())
 				{
-					/* Strip full scan */
+					/* Strip planner markers. */
 					continue;
 				}
 				else if (IsClusterVersionAtleast(DocDB_V0, 112, 1))

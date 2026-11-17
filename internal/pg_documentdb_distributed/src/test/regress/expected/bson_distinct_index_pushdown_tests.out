@@ -62,7 +62,7 @@ $cmd$);
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text) AS document FROM documentdb_data.documents_1984601_198460002 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '1984601'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(collection.document, '{ "a" : true }'::documentdb_core.bson))) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text) AS document FROM documentdb_data.documents_1984601_198460002 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '1984601'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(collection.document, '{ "a" : true }'::documentdb_core.bson))) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg((documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text)))
@@ -96,7 +96,7 @@ $cmd$);
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text) AS document FROM documentdb_data.documents_1984601_198460002 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#>=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '1984601'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(collection.document, '{ "a" : true }'::documentdb_core.bson))) agg_stage_1
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text) AS document FROM documentdb_data.documents_1984601_198460002 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#>=) '{ "a" : { "$numberInt" : "5" } }'::documentdb_core.bsonquery) AND ((collection.shard_key_value OPERATOR(pg_catalog.=) '1984601'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document)) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(collection.document, '{ "a" : true }'::documentdb_core.bson))) agg_stage_1
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg((documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text)))
@@ -165,7 +165,7 @@ $cmd$);
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text) AS document FROM documentdb_data.documents_1984601_198460002 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '1984601'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(collection.document, '{ "a" : true }'::documentdb_core.bson))) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text) AS document FROM documentdb_data.documents_1984601_198460002 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '1984601'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(collection.document, '{ "a" : true }'::documentdb_core.bson))) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg((documentdb_api_catalog.bson_distinct_unwind(collection.document, 'a'::text)))
@@ -241,7 +241,7 @@ $cmd$);
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(collection.document, 'arr'::text) AS document FROM documentdb_data.documents_1984602_198460004 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '1984602'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "arr" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(collection.document, '{ "arr" : true }'::documentdb_core.bson))) agg_stage_0
+         Query: SELECT documentdb_api_catalog.bson_distinct_agg(document) AS document FROM (SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(collection.document, 'arr'::text) AS document FROM documentdb_data.documents_1984602_198460004 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '1984602'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "arr" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(collection.document, '{ "arr" : true }'::documentdb_core.bson))) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_distinct_agg((documentdb_api_catalog.bson_distinct_unwind(collection.document, 'arr'::text)))
@@ -322,7 +322,7 @@ $cmd$);
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text) AS document FROM documentdb_data.documents_1984603_198460008 collection WHERE (documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "a" : true }'::documentdb_core.bson))
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text) AS document FROM documentdb_data.documents_1984603_198460008 collection WHERE (documentdb_api_internal.bson_indexopt_scan(document) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "a" : true }'::documentdb_core.bson))
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Unique
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text))
@@ -400,7 +400,7 @@ $cmd$);
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text) AS document FROM documentdb_data.documents_1984603_198460008 collection WHERE (documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "a" : true }'::documentdb_core.bson))
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text) AS document FROM documentdb_data.documents_1984603_198460008 collection WHERE (documentdb_api_internal.bson_indexopt_scan(document) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "a" : true }'::documentdb_core.bson))
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Unique
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'a'::text))
@@ -502,7 +502,7 @@ $cmd$);
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_1984604_198460018 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "category" : "group", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "value" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "value" : true }'::documentdb_core.bson))
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_1984604_198460018 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "category" : "group", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_indexopt_scan(document) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "value" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "value" : true }'::documentdb_core.bson))
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Unique
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text))
@@ -557,7 +557,7 @@ $cmd$);
                            Task Count: 8
                            Tasks Shown: One of 8
                            ->  Task
-                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_1984604_198460018 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "category" : "group", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "value" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "value" : true }'::documentdb_core.bson))
+                                 Query: SELECT DISTINCT documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text) AS document FROM documentdb_data.documents_1984604_198460018 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "category" : "group", "collation" : "en-u-ks-level1" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_indexopt_scan(document) AND documentdb_api_internal.bson_dollar_fullscan(document, '{ "value" : { "$numberInt" : "1" }, "collation" : "en-u-ks-level1" }'::documentdb_core.bson) AND documentdb_api_internal.bson_dollar_distinct_exists(document, '{ "value" : true }'::documentdb_core.bson))
                                  Node: host=localhost port=58070 dbname=regression
                                  ->  Unique
                                        Output: (documentdb_api_catalog.bson_distinct_unwind(document, 'value'::text, 'en-u-ks-level1'::text))

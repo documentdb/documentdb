@@ -537,6 +537,11 @@ bool EnableSubqueryPushdownForGroup = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_GROUP
 bool EnableRumIndexOnlyScanProjectionWrapper =
 	DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER;
 
+/* Added in v1.3, enabled in v1.3, remove after v1.6 */
+#define DEFAULT_ENABLE_NATIVE_PLANNER_INDEX_ONLY_SCAN true
+bool EnableNativePlannerIndexOnlyScan =
+	DEFAULT_ENABLE_NATIVE_PLANNER_INDEX_ONLY_SCAN;
+
 /* Added in v0.115, enabled in v1.1, remove after v1.3 */
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN true
 bool EnableDollarSampleHeapSkipReservoirScan =
@@ -1866,6 +1871,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableRumIndexOnlyScanProjectionWrapper,
 		DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_native_planner_index_only_scan", newGucPrefix),
+		gettext_noop(
+			"Whether to use native planner index-only scan path generation."),
+		NULL,
+		&EnableNativePlannerIndexOnlyScan,
+		DEFAULT_ENABLE_NATIVE_PLANNER_INDEX_ONLY_SCAN,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

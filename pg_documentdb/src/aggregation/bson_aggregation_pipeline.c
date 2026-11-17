@@ -36,6 +36,7 @@
 #include <catalog/pg_aggregate.h>
 #include <catalog/pg_operator.h>
 #include <catalog/pg_class.h>
+#include <optimizer/cost.h>
 #include <parser/parsetree.h>
 #include <utils/array.h>
 #include <utils/builtins.h>
@@ -51,6 +52,7 @@
 #include "io/bson_core.h"
 #include "types/decimal128.h"
 #include "metadata/metadata_cache.h"
+#include "opclass/bson_index_support.h"
 #include "query/query_operator.h"
 #include "planner/documentdb_planner.h"
 #include "planner/mongo_query_operator.h"
@@ -10079,6 +10081,19 @@ GenerateBaseTableQueryAndGetStages(text *databaseDatum, const
 		query->jointree->quals = (Node *) zeroShardKeyFilter;
 	}
 
+	if (collection != NULL &&
+		enable_indexonlyscan &&
+		IsNativePlannerIndexOnlyScanEnabled())
+	{
+		Oid indexOptScanFunctionOid = BsonIndexOptScanFunctionOid();
+		FuncExpr *indexOptScanExpr = makeFuncExpr(
+			indexOptScanFunctionOid, BOOLOID, list_make1(documentEntry),
+			InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+		List *quals = make_ands_implicit((Expr *) query->jointree->quals);
+		quals = lappend(quals, indexOptScanExpr);
+		query->jointree->quals = (Node *) make_ands_explicit(quals);
+	}
+
 	/* Before applying the view stages, apply the hint on the base table */
 	if (collection != NULL && indexHint != NULL &&
 		indexHint->value_type != BSON_TYPE_EOD)
@@ -10699,6 +10714,12 @@ IsSampleScanEligibleJoinTree(Node *node)
 		if (EnableSampleScanPushdownForDynamicCursor &&
 			IsA(qual, FuncExpr) &&
 			((FuncExpr *) qual)->funcid == ApiCursorTrackerFunctionId())
+		{
+			continue;
+		}
+
+		if (IsA(qual, FuncExpr) &&
+			((FuncExpr *) qual)->funcid == BsonIndexOptScanFunctionOid())
 		{
 			continue;
 		}
