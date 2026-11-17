@@ -7,6 +7,7 @@
 # run 2 among them).
 # 2026-11-03: added the idempotent-unhide indexStats counter case after a CI failure; local reproduction with MKP on and off showed delayed statistics visibility, not a counter reset. Count: 1900.
 # 2026-11-09: 4 more hidden-index indexStats cases failed once and passed on rerun in PR 820 CI (same delayed statistics visibility); 2 moved here from the failing list.
+# 2026-11-17: hidden-index unhide_resets_counter passed once and failed on rerun in the sync sha=3364276f95 CI (same delayed statistics visibility); moved here from the failing list.
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/aggregation/commands/aggregate/test_aggregate_hint_rejection.py::test_aggregate_hint_rejection[documentdb-hint_reject_nonexistent_index]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_expressions.py::test_collation_aggregate_expressions[documentdb-expr_max_affected]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/collation/command_level/stages/test_stages_expressions.py::test_collation_aggregate_expressions[documentdb-expr_maxn_affected]
@@ -197,6 +198,7 @@ docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/command
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_counter[documentdb-idempotent_unhide_no_reset]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_counter[documentdb-multiple_reset_cycle]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_counter[documentdb-reset_on_hide]
+docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_counter[documentdb-unhide_resets_counter]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_nonhidden_accesses_increment_nonzero[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/hidden/test_hidden_behavior.py::test_indexstats_reset_only_affects_toggled_index_b_unchanged[documentdb]
 docdb_functional_tests/documentdb_tests/compatibility/tests/core/indexes/properties/unique/test_unique_errors.py::test_unique_recreate_with_existing_duplicates_fails[documentdb]
