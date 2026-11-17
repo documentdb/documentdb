@@ -5,6 +5,7 @@
 * Add `bson_to_bson_external(bson)` for measuring dictionary-free Zstandard compression with `pg_column_size`, returning a `bson_external` value with BSON round-trip conversion and text/binary I/O. Readers also accept flag-0 uncompressed BSON payloads. Binary I/O preserves flag-prefixed encoded bytes without the PostgreSQL varlena header and validates them on receive; text I/O uses uncompressed BSON representations. The conversion UDF and text input always compress at the default Zstandard level; small documents can grow. Existing collection storage is unchanged. *[Feature]*
 * Reclaim dead postings during index insertion to avoid posting-list promotion and entry-page splits, controlled by the default-off `documentdb_rum.enable_insert_time_posting_list_reclaim` and `documentdb_rum.enable_insert_time_deletion` settings. *[Perf]*
 * Report a node that cannot accept a connection during `collStats`, `count` without a query, `dbStats`, `$indexStats`, and `currentOp` as a connection failure (SQLSTATE `08006`) instead of an internal error. *[Bugfix]*
+* Fix `getMore` failing with an internal error when an aggregation pipeline has `$match` after `$project` and dynamic cursors are enabled, but the query falls back to a streaming cursor (for example, on a sharded collection). *[Bugfix]*
 
 ### documentdb v1.3-0 (Unreleased) ###
 * Enable single-pass posting-tree vacuum by default. Set `documentdb_rum.enable_single_pass_posting_tree_vacuum = off` to retain the two-pass pruning path. *[Perf]*

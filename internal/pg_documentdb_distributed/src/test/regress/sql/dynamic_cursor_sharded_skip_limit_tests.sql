@@ -4,8 +4,8 @@
 
 -- Tier 3 regression guard: dynamic cursors on a SHARDED collection.
 --
--- Dynamic cursors apply to unsharded collections only; a sharded collection
--- uses the sharded persistent model even when skip/limit streaming is enabled.
+-- These sharded queries fall back from dynamic cursors to legacy streaming
+-- or persistent cursors, depending on the pipeline.
 -- The goal here is a thin guard proving that the enabled feature does not
 -- regress skip/limit pagination on a sharded collection: every window must
 -- return the correct number of documents across getMore boundaries.
@@ -187,6 +187,81 @@ SELECT sharded_window_report('T9 $skip+$limit',
     '{ "aggregate": "shard_coll", "pipeline": [ { "$skip": 4 }, { "$limit": 10 } ], "cursor": { "batchSize": 4 } }',
     '{ "getMore": { "$numberLong": "700" }, "collection": "shard_coll", "batchSize": 4 }',
     4, 10, true);
+
+-- ===========================================================================
+-- $match after projection: three cursor families, each with dynamic off/on.
+--
+-- 1. Pushdown off, no $sort: legacy streaming, directly with dynamic off or
+--    via fallback with dynamic on. getMore must reconstruct the same query.
+-- 2. Pushdown on, trailing $sort: persistent cursors drain saved execution
+--    state on getMore. Dynamic off permits the match-subquery rewrite;
+--    dynamic-on fallback suppresses it, but $sort still requires persistence.
+-- 3. Pushdown on, no $sort: must remain legacy streaming. The GUC must not
+--    introduce a subquery that forces persistence or breaks reconstruction
+--    on getMore, regardless of whether dynamic cursors are enabled.
+-- ===========================================================================
+SET documentdb.enable_subquery_pushdown_for_match_on_persisted_cursors TO off;
+
+-- T10: $project + $match -> 20 docs
+SELECT sharded_window_report('T10 $project+$match',
+    '{ "aggregate": "shard_coll", "pipeline": [ { "$project": { "val": 1 } }, { "$match": { "val": { "$gt": 5 } } } ], "cursor": { "batchSize": 4 } }',
+    '{ "getMore": { "$numberLong": "700" }, "collection": "shard_coll", "batchSize": 4 }',
+    4, 20, true);
+
+-- T11: same pipeline with dynamic cursors off -> both pages stream directly
+SET documentdb.enableDynamicCursors TO off;
+SELECT sharded_window_report('T11 $project+$match dynamic off',
+    '{ "aggregate": "shard_coll", "pipeline": [ { "$project": { "val": 1 } }, { "$match": { "val": { "$gt": 5 } } } ], "cursor": { "batchSize": 4 } }',
+    '{ "getMore": { "$numberLong": "700" }, "collection": "shard_coll", "batchSize": 4 }',
+    4, 20, true);
+SET documentdb.enableDynamicCursors TO on;
+
+-- T12: exercise persisted-match pushdown with dynamic cursors off
+SET documentdb.enableDynamicCursors TO off;
+SET documentdb.enable_subquery_pushdown_for_match_on_persisted_cursors TO on;
+SET documentdb_core.enableCollation TO on;
+SELECT sharded_window_report('T12 $project+$match persistent pushdown',
+    '{ "aggregate": "shard_coll", "pipeline": [
+        { "$project": { "val": 1, "label": { "$cond": [ { "$gt": [ "$val", 5 ] }, "MATCH", "other" ] } } },
+        { "$match": { "label": "match" } },
+        { "$sort": { "val": 1, "_id": 1 } }
+    ], "collation": { "locale": "en", "strength": 2 }, "cursor": { "batchSize": 4 } }',
+    '{ "getMore": { "$numberLong": "700" }, "collection": "shard_coll", "batchSize": 4 }',
+    4, 20, true);
+
+-- T13: same pipeline with dynamic cursors on and persisted-match pushdown still enabled
+SET documentdb.enableDynamicCursors TO on;
+SELECT sharded_window_report('T13 $project+$match persistent pushdown dynamic on',
+    '{ "aggregate": "shard_coll", "pipeline": [
+        { "$project": { "val": 1, "label": { "$cond": [ { "$gt": [ "$val", 5 ] }, "MATCH", "other" ] } } },
+        { "$match": { "label": "match" } },
+        { "$sort": { "val": 1, "_id": 1 } }
+    ], "collation": { "locale": "en", "strength": 2 }, "cursor": { "batchSize": 4 } }',
+    '{ "getMore": { "$numberLong": "700" }, "collection": "shard_coll", "batchSize": 4 }',
+    4, 20, true);
+
+-- T14: no $sort, persisted-match pushdown on, dynamic cursors off
+SET documentdb.enableDynamicCursors TO off;
+SELECT sharded_window_report('T14 $project+$match pushdown on dynamic off',
+    '{ "aggregate": "shard_coll", "pipeline": [
+        { "$project": { "val": 1, "label": { "$cond": [ { "$gt": [ "$val", 5 ] }, "MATCH", "other" ] } } },
+        { "$match": { "label": "match" } }
+    ], "collation": { "locale": "en", "strength": 2 }, "cursor": { "batchSize": 4 } }',
+    '{ "getMore": { "$numberLong": "700" }, "collection": "shard_coll", "batchSize": 4 }',
+    4, 20, true);
+
+-- T15: same streaming pipeline with dynamic cursors on
+SET documentdb.enableDynamicCursors TO on;
+SELECT sharded_window_report('T15 $project+$match pushdown on dynamic on',
+    '{ "aggregate": "shard_coll", "pipeline": [
+        { "$project": { "val": 1, "label": { "$cond": [ { "$gt": [ "$val", 5 ] }, "MATCH", "other" ] } } },
+        { "$match": { "label": "match" } }
+    ], "collation": { "locale": "en", "strength": 2 }, "cursor": { "batchSize": 4 } }',
+    '{ "getMore": { "$numberLong": "700" }, "collection": "shard_coll", "batchSize": 4 }',
+    4, 20, true);
+
+RESET documentdb.enable_subquery_pushdown_for_match_on_persisted_cursors;
+RESET documentdb_core.enableCollation;
 
 -- ===========================================================================
 -- Cleanup

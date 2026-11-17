@@ -2181,6 +2181,18 @@ ApplyAggregationStagesToBaseQuery(Query *baseQuery, CursorParamKind cursorParamK
 		/* If we couldn't add dynamic cursors then fall back to not allowing this */
 		context->joinStatus = JoinStageStatus_Unknown;
 	}
+	else if (cursorParamKind == CursorParamKind_Streaming &&
+			 context->joinStatus == JoinStageStatus_NoJoinsOrUnions &&
+			 ShouldEnableDynamicCursors())
+	{
+		/*
+		 * A streaming getMore must build the same query shape as its first page,
+		 * which only streams after falling back from a dynamic cursor above.
+		 * Streaming cursors cannot resume across the subqueries that
+		 * NoJoinsOrUnions allows.
+		 */
+		context->joinStatus = JoinStageStatus_Unknown;
+	}
 
 	query = MutateQueryWithPipeline(query, aggregationStages, context);
 
