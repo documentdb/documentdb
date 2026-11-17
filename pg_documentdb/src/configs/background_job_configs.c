@@ -29,13 +29,13 @@ bool EnableBackgroundWorker = DEFAULT_ENABLE_BG_WORKER;
 bool EnableBackgroundWorkerJobs = DEFAULT_ENABLE_BG_WORKER_JOBS;
 
 /* FeatureFlag */
-/* Added in v1.1, pending stabilization, enable in v1.3 */
+/* Added on v1.1, pending stabilization, enable on v1.5 */
 #define DEFAULT_ENABLE_BG_WORKER_JOBS_IN_RECOVERY false
 bool EnableBackgroundWorkerJobsInRecovery =
 	DEFAULT_ENABLE_BG_WORKER_JOBS_IN_RECOVERY;
 
 /* FeatureFlag */
-/* Added in v1.1, pending stabilization, enable in v1.3 */
+/* Added on v1.1, pending stabilization, enable on v1.5 */
 #define DEFAULT_START_BG_WORKER_IN_RECOVERY false
 bool StartBackgroundWorkerInRecovery = DEFAULT_START_BG_WORKER_IN_RECOVERY;
 
