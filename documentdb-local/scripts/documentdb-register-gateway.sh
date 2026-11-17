@@ -51,6 +51,8 @@ PG_PORT=""
 PG_OWNER=""           # OS user to run psql as (postgres for brownfield, documentdb-local for greenfield-via-wizard)
 ADMIN_USER=""
 ADMIN_PASSWORD_FILE=""
+# Validated --admin-password-stdin value, piped by builtin printf.
+ADMIN_PASSWORD=""
 # Which PostgreSQL database holds
 # the `documentdb` extension is configurable, but the script previously
 # hardcoded /postgres in the connection-URL file and in psql -d calls.
@@ -226,9 +228,11 @@ Options:
                         requires --admin-password-file or
                         --admin-password-stdin)
   --admin-password-file FILE  Password file for --admin-user
-  --admin-password-stdin  Read --admin-user password from stdin (one
-                        line). Use for piping a secret without
-                        materializing a file (pass --yes too, since stdin
+  --admin-password-stdin  Read --admin-user password from stdin: one
+                        line of UTF-8 text without control characters; one
+                        trailing newline (LF or CRLF) is removed. Use
+                        for piping a secret without materializing a
+                        file (pass --yes too, since stdin
                         is the password pipe, not a terminal):
                           printf '%s' "$PW" | sudo documentdb-register-gateway \
                             ... --admin-user admin --admin-password-stdin --yes
@@ -563,7 +567,7 @@ do_setup() {
         if [[ -n "${SECRET_DIR}" ]]; then
             log "Would write connection URL file to ${SECRET_FILE}."
         fi
-        if [[ -n "${ADMIN_USER}" && -n "${ADMIN_PASSWORD_FILE}" ]]; then
+        if [[ -n "${ADMIN_USER}" && -n "${ADMIN_PASSWORD_FILE}${ADMIN_PASSWORD}" ]]; then
             log "Would create admin user '${ADMIN_USER}' in database '${TARGET_DB}'."
         fi
         if [[ -n "${STATE_FILE}" ]]; then
@@ -747,7 +751,7 @@ do_setup() {
     # completion message below can branch on whether a working admin
     # login actually exists, rather than always printing a happy URI.
     local admin_bootstrap_succeeded=false
-    if [[ -n "${ADMIN_USER}" && -n "${ADMIN_PASSWORD_FILE}" ]]; then
+    if [[ -n "${ADMIN_USER}" && -n "${ADMIN_PASSWORD_FILE}${ADMIN_PASSWORD}" ]]; then
         if create_admin_user; then
             admin_bootstrap_succeeded=true
         fi
@@ -949,7 +953,7 @@ write_connection_secret() {
 }
 
 create_admin_user() {
-    if [[ ! -r "${ADMIN_PASSWORD_FILE}" ]]; then
+    if [[ -z "${ADMIN_PASSWORD}" && ! -r "${ADMIN_PASSWORD_FILE}" ]]; then
         die "Admin password file not readable: ${ADMIN_PASSWORD_FILE}"
     fi
 
@@ -968,10 +972,12 @@ create_admin_user() {
     # branch on success vs. Failure and print the right remediation.
     # Previously the wizard printed a happy connect URI even when the
     # bootstrap had warned-and-continued.
+    local pw_args=(--password-file "${ADMIN_PASSWORD_FILE}")
+    [[ -z "${ADMIN_PASSWORD}" ]] || pw_args=(--password-stdin)
     if command -v documentdb-gateway-admin >/dev/null 2>&1; then
-        if ! documentdb-gateway-admin create-user \
+        if ! printf '%s' "${ADMIN_PASSWORD}" | documentdb-gateway-admin create-user \
             --username "${ADMIN_USER}" \
-            --password-file "${ADMIN_PASSWORD_FILE}" \
+            "${pw_args[@]}" \
             --socket-dir "${SOCKET_DIR}" \
             --pg-port "${PG_PORT}" \
             --pg-owner "${PG_OWNER}" \
@@ -1549,6 +1555,7 @@ do_restore() {
 # ── Argument parsing ────────────────────────────────────────────────
 
 parse_arguments() {
+    local _stdin_pw=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --target-postgres-instance|--target-cluster)
@@ -1594,35 +1601,15 @@ parse_arguments() {
                 [[ $# -ge 2 ]] || die "--admin-user requires a value."
                 ADMIN_USER="$2"; shift 2 ;;
             --admin-password-file)
-                [[ $# -ge 2 ]] || die "--admin-password-file requires a value."
+                [[ $# -ge 2 && -n "$2" ]] || die "--admin-password-file requires a value."
                 ADMIN_PASSWORD_FILE="$2"; shift 2 ;;
             --admin-password-stdin)
-                # CLI-surface parity with documentdb-setup: read one line
-                # of password from stdin into a 0600 tempfile and reuse
-                # the existing --admin-password-file plumbing. Without
-                # this, operators following the design-doc pattern
-                # `printf '%s' "$PW" | sudo documentdb-register-gateway
-                # ... --admin-password-stdin` hit "Unknown argument" and
-                # have to materialize a file by hand.
+                # Piped to gateway-admin, so no file holds it.
                 if [[ -n "${ADMIN_PASSWORD_FILE}" ]]; then
                     die "--admin-password-stdin is mutually exclusive with --admin-password-file."
                 fi
-                # Parity with documentdb-gateway-admin --password-stdin: refuse
-                # a TTY so the secret is never read from (and echoed on) an
-                # interactive terminal. The documented form pipes the password:
-                #  printf '%s' "$PW" | sudo documentdb-register-gateway... --admin-password-stdin --yes
-                if [[ -t 0 ]]; then
-                    die "--admin-password-stdin requires the password on stdin (e.g. 'printf %s \"\$PW\" | documentdb-register-gateway ... --admin-password-stdin --yes'). Stdin is a TTY."
-                fi
-                local _stdin_pw_file
-                _stdin_pw_file="$(mktemp /tmp/documentdb-register-gateway.pwd.XXXXXX)"
-                chmod 600 "${_stdin_pw_file}"
-                IFS= read -r _stdin_pw_line || true
-                printf '%s' "${_stdin_pw_line}" > "${_stdin_pw_file}"
-                unset _stdin_pw_line
-                ADMIN_PASSWORD_FILE="${_stdin_pw_file}"
-                # Track so cleanup_temp_files wipes after use.
-                TEMP_FILES+=("${_stdin_pw_file}")
+                # Read after parsing, and only if the mode uses it (not --restore).
+                _stdin_pw=true
                 shift ;;
             --target-db)
                 # Which PostgreSQL database the documentdb extension was
@@ -1703,6 +1690,9 @@ parse_arguments() {
             *) die "Unknown argument: $1" ;;
         esac
     done
+    # Stdin-then-file order; the stdin branch catches file-then-stdin.
+    [[ "${_stdin_pw}" != "true" || -z "${ADMIN_PASSWORD_FILE}" ]] \
+        || die "--admin-password-stdin is mutually exclusive with --admin-password-file."
 
     # Parse target spec "V/C" into PG_VERSION + CLUSTER_NAME.
     # The slash is mandatory, as in documentdb-setup: for a no-slash value
@@ -1757,12 +1747,23 @@ parse_arguments() {
     fi
 
     if [[ "${RESTORE}" != "true" ]]; then
-        if [[ -n "${ADMIN_PASSWORD_FILE}" && -z "${ADMIN_USER}" ]]; then
-            die "--admin-user is required when --admin-password-file is set."
+        if [[ "${_stdin_pw}" == "true" ]]; then
+            # A terminal would echo the secret; the documented form pipes it:
+            #  printf '%s' "$PW" | sudo documentdb-register-gateway ... --admin-password-stdin --yes
+            [[ ! -t 0 ]] || die "--admin-password-stdin requires the password on stdin (e.g. 'printf %s \"\$PW\" | documentdb-register-gateway ... --admin-password-stdin --yes'). Stdin is a TTY."
+            # Same one-line contract as setup and gateway-admin, checked
+            # before any change so a refusal leaves nothing behind.
+            documentdb_read_password ADMIN_PASSWORD "The password on stdin" \
+                || die "Cannot use the password from --admin-password-stdin (see above)."
+            # An inherited export or allexport would hand it to every child.
+            export -n ADMIN_PASSWORD
+        fi
+        if [[ -n "${ADMIN_PASSWORD_FILE}${ADMIN_PASSWORD}" && -z "${ADMIN_USER}" ]]; then
+            die "--admin-user is required with --admin-password-file or --admin-password-stdin."
         fi
 
-        if [[ -n "${ADMIN_USER}" && -z "${ADMIN_PASSWORD_FILE}" ]]; then
-            die "--admin-password-file is required when --admin-user is set."
+        if [[ -n "${ADMIN_USER}" && -z "${ADMIN_PASSWORD_FILE}${ADMIN_PASSWORD}" ]]; then
+            die "--admin-password-file or --admin-password-stdin is required when --admin-user is set."
         fi
 
         if [[ -z "${ADMIN_USER}" && "${DRY_RUN}" != "true" ]]; then

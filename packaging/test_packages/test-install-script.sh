@@ -380,6 +380,18 @@ PORTS
         expect_success "--admin-user ${value}" \
             run_installer "${root}" --admin-user "${value}"
     done
+    # A configured host only reports status, so the name is never used.
+    local configured
+    configured="$(new_root ubuntu 24.04)"
+    write_state_file "${configured}" 18 setup.conf
+    installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES="${PACKAGES_18}"
+    expect_success "configured host ignores a reserved --admin-user" \
+        run_installer "${configured}" --admin-user root
+    installer_env
+    # --packages-only prints the name in its documentdb-setup next step.
+    expect_failure "--packages-only refuses a reserved --admin-user" \
+        "is reserved by PostgreSQL or DocumentDB" \
+        run_installer "${root}" --packages-only --admin-user root
 }
 
 test_release_selection() {
@@ -1164,7 +1176,8 @@ test_password_metadata() {
     ln "${secrets}/linked" "${secrets}/linked-alias"
     ln -s "${secrets}/good" "${secrets}/symlink"
     # documentdb-setup's password-file contract, checked before any package
-    # is installed: one line of printable ASCII, one trailing LF or CRLF.
+    # is installed: one line of UTF-8 text without control characters, one
+    # trailing LF or CRLF.
     local file content
     while IFS='|' read -r file content; do
         printf "${content}" > "${secrets}/${file}"
@@ -1184,6 +1197,13 @@ escape|sup3r\033secret
 nul|sup3r\000secret
 emoji|Valid\360\237\247\252Pass123!
 latin1|p\303\244ssword
+c1|Valid\302\205Pass
+bad-utf8|p\303ssword
+overlong|Valid\300\257Pass
+max-code-point|Valid\364\217\277\277Pass
+above-max|Valid\364\220\200\200Pass
+five-byte|Valid\370\210\200\200\200Pass
+six-byte|Valid\374\204\200\200\200\200Pass
 CONTENTS
 
     validation_run() {
@@ -1194,13 +1214,13 @@ CONTENTS
             DOCUMENTDB_INSTALLER_TEST_ROOT="${root}" \
             ${INSTALLER_ENV[@]+"${INSTALLER_ENV[@]}"} \
             sh "${INSTALLER}" --yes --accept-external-listen \
-            --admin-password-file "$1" 2>&1
+            --admin-password-file "$1" "${@:2}" 2>&1
     }
 
     expect_success "owner-only password file" validation_run "${secrets}/good"
     assert_lacks "password contents never reach the output" "sup3r-secret"
     assert_no_mutation "password validation"
-    for file in no-newline crlf spaces; do
+    for file in no-newline crlf spaces latin1 emoji max-code-point; do
         expect_success "password file '${file}'" validation_run "${secrets}/${file}"
     done
 
@@ -1223,8 +1243,12 @@ password file ending in CR CR LF|cr-cr-lf|one non-empty line
 password with a tab|tab|one non-empty line
 password with an escape|escape|one non-empty line
 password with a NUL byte|nul|one non-empty line
-password with an emoji|emoji|one non-empty line
-password with a non-ASCII letter|latin1|one non-empty line
+password with a C1 control|c1|one non-empty line
+password with invalid UTF-8|bad-utf8|one non-empty line
+password with an overlong UTF-8 form|overlong|one non-empty line
+password above U+10FFFF|above-max|one non-empty line
+password with a 5-byte UTF-8 form|five-byte|one non-empty line
+password with a 6-byte UTF-8 form|six-byte|one non-empty line
 PASSWORDS
 
     # A configured host only reports status and never reads the password.
@@ -1233,9 +1257,11 @@ PASSWORDS
     write_state_file "${root}" 18 setup.conf
     installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES="${PACKAGES_18}"
     expect_success "configured host skips the password content rule" \
-        validation_run "${secrets}/latin1"
+        validation_run "${secrets}/tab"
     installer_env
     root="${fresh_root}"
+    expect_success "--packages-only skips the password content rule" \
+        validation_run "${secrets}/tab" --packages-only
 
     # The staged copy lives in the installer's private directory and is removed.
     if compgen -G "${WORK_DIR}/documentdb-install.*" > /dev/null; then

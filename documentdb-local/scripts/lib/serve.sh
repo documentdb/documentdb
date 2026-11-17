@@ -171,14 +171,8 @@ if [ $attempt -eq $max_attempts ]; then
     exit 1
 fi
 
-# First-boot data-initialization markers.
-# Markers live inside the persistent data dir ($DATA_PATH) so they survive container
-# restarts, `docker compose down && up`, host reboots, and volume backups. They make data
-# initialization one-shot and prevent the restart loop caused by re-running non-idempotent
-# seed scripts against already-seeded data. Like common database container images,
-# initialization runs only on a fresh data directory; to re-initialize, start the container
-# with an empty/new data volume.
-INIT_MARKER_DIR="$DATA_PATH/.documentdb-local"
+# First-boot data-initialization markers; INIT_MARKER_DIR and the marker paths
+# are set by check_credentials (lib/cli.sh).
 
 # init_marker_present <marker-file>: succeeds when initialization already ran on this volume.
 init_marker_present() {
@@ -199,7 +193,6 @@ write_init_marker() {
 # not re-run on restart and cannot loop. User scripts should still be idempotent.
 # To re-run after fixing scripts, start with a fresh data volume.
 custom_data_initialized=false
-custom_attempt_marker="$INIT_MARKER_DIR/custom_data_attempted"
 custom_success_marker="$INIT_MARKER_DIR/custom_data_succeeded"
 if [ -d "$INIT_DATA_PATH" ] && [ "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)" ] && init_marker_present "$custom_attempt_marker"; then
     if init_marker_present "$custom_success_marker"; then
@@ -233,7 +226,6 @@ fi
 # Initialize database with built-in sample data if explicitly enabled.
 # Guarded by a one-shot marker (in $DATA_PATH) so a restart with a persistent volume does
 # not re-run the seed and crash with a duplicate-key error.
-sample_init_marker="$INIT_MARKER_DIR/sample_data_initialized"
 if [ "$INIT_DATA" = "true" ] && init_marker_present "$sample_init_marker"; then
     echo "Sample data already initialized (found $sample_init_marker); skipping. To re-run, start with a fresh data volume."
 elif [ "$INIT_DATA" = "true" ]; then

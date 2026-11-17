@@ -127,8 +127,9 @@ Options:
   --admin-user <USER>         Initial DocumentDB administrator (default: admin)
   --admin-password-file <FILE>
                               Read the initial administrator password from
-                              FILE: one line of printable ASCII, and one
-                              trailing newline (LF or CRLF) is removed.
+                              FILE: one line of UTF-8 text without control
+                              characters, and one trailing newline (LF or
+                              CRLF) is removed.
                               Required with --yes.
   --listen-port <PORT>        Gateway port, 1024-65535 (default: 10260)
   --packages-only             Configure repositories and install packages
@@ -221,8 +222,7 @@ strip_outer_quotes() {
 }
 
 # PostgreSQL role names: letters, digits, '_' and '-', starting with a letter
-# or '_', at most NAMEDATALEN-1 bytes, never a reserved name and never inside
-# a reserved prefix.
+# or '_', at most NAMEDATALEN-1 bytes, and never inside a reserved prefix.
 validate_admin_user() {
     admin_value="$1"
     admin_label="$2"
@@ -237,16 +237,22 @@ validate_admin_user() {
         die "${admin_label} must be at most 63 bytes."
 
     admin_value_lower="$(lowercase "${admin_value}")"
-    for reserved_name in ${RESERVED_ADMIN_NAMES}; do
-        [ "${admin_value}" != "${reserved_name}" ] ||
-            die "${admin_label} '${admin_value}' is reserved by PostgreSQL or DocumentDB."
-    done
     for blocked_prefix in ${BLOCKED_ADMIN_PREFIXES}; do
         case "${admin_value_lower}" in
             "${blocked_prefix}"*)
                 die "${admin_label} '${admin_value}' begins with reserved prefix '${blocked_prefix}'. Reserved prefixes: ${BLOCKED_ADMIN_PREFIXES}."
                 ;;
         esac
+    done
+}
+
+# Run after state detection: a configured host only reports status and never
+# uses the name.
+reject_reserved_admin_user() {
+    [ "${SETUP_CONFIGURED}" = "false" ] || return 0
+    for reserved_name in ${RESERVED_ADMIN_NAMES}; do
+        [ "${ADMIN_USER}" != "${reserved_name}" ] ||
+            die "--admin-user '${ADMIN_USER}' is reserved by PostgreSQL or DocumentDB."
     done
 }
 
@@ -353,11 +359,13 @@ validate_arguments() {
 }
 
 # The password-file contract documentdb-setup enforces, checked here so a bad
-# file fails before any package is installed. Clients prepare SCRAM passwords
-# with SASLprep, which rejects control characters and some non-ASCII, so such
-# a password would install fine and never log in. The ASCII-only rule is a
-# stopgap until the backend rejects SASLprep failures (documentdb/documentdb#765).
-PASSWORD_RULE="must hold one non-empty line of printable ASCII; one trailing newline (LF or CRLF) is allowed."
+# file fails before any package is installed. The backend refuses what
+# SASLprep refuses, except in pure ASCII, which it passes through unchecked
+# while clients still refuse ASCII controls. So this refuses controls (C0, DEL,
+# C1) and invalid UTF-8 and leaves the rest of SASLprep to the backend.
+# Non-ASCII needs iconv to prove it is UTF-8 (to UTF-16, as glibc's UTF-8 to
+# UTF-8 passes code points above U+10FFFF).
+PASSWORD_RULE="must hold one non-empty line of UTF-8 text without control characters; one trailing newline (LF or CRLF) is allowed."
 password_file_ok() {
     pw_file="$1"
     pw_size="$(wc -c < "${pw_file}")"
@@ -366,7 +374,15 @@ password_file_ok() {
         *0a) pw_size=$((pw_size - 1)) ;;
     esac
     [ "${pw_size}" -gt 0 ] &&
-        [ -z "$(head -c "${pw_size}" "${pw_file}" | LC_ALL=C tr -d '\040-\176' | od -An)" ]
+        [ -z "$(head -c "${pw_size}" "${pw_file}" | LC_ALL=C tr -d '\040-\176\200-\377' | od -An)" ] ||
+        return 1
+    [ -z "$(head -c "${pw_size}" "${pw_file}" | LC_ALL=C tr -d '\040-\176' | od -An)" ] && return 0
+    # Byte-aligned hex, so C2 80-9F (U+0080-U+009F) cannot match across bytes.
+    case " $(head -c "${pw_size}" "${pw_file}" | od -An -v -tx1 | tr -s ' \n' '  ') " in
+        *" c2 8"?" "* | *" c2 9"?" "*) return 1 ;;
+    esac
+    command -v iconv >/dev/null 2>&1 &&
+        head -c "${pw_size}" "${pw_file}" | iconv -f UTF-8 -t UTF-16 >/dev/null 2>&1
 }
 
 # The password never reaches argv, the environment, or the transcript: it is
@@ -397,8 +413,10 @@ stage_supplied_password_file() {
     staged_password_file="${TMP_DIR}/admin-password"
     cp "${ADMIN_PASSWORD_FILE}" "${staged_password_file}"
     chmod 0600 "${staged_password_file}"
-    # A configured host only reports status and never reads the password.
-    [ "${SETUP_CONFIGURED}" = "true" ] || password_file_ok "${staged_password_file}" ||
+    # A configured host only reports status, and --packages-only never runs
+    # setup; neither reads the password.
+    [ "${SETUP_CONFIGURED}" = "true" ] || [ "${PACKAGES_ONLY}" = "true" ] ||
+        password_file_ok "${staged_password_file}" ||
         die "Password file '${ADMIN_PASSWORD_FILE}' ${PASSWORD_RULE}"
     ADMIN_PASSWORD_FILE="${staged_password_file}"
 }
@@ -1627,6 +1645,7 @@ main() {
     determine_privilege_mode
     create_temp_dir
     detect_installation_state
+    reject_reserved_admin_user
     stage_supplied_password_file
 
     if [ "${TESTING}" = "true" ] && [ "${TEST_VALIDATION_ONLY}" = "true" ]; then
@@ -1653,6 +1672,7 @@ main() {
     # Another installer may have finished while this one waited for the lock,
     # so the derived state is recomputed before anything is changed.
     detect_installation_state
+    reject_reserved_admin_user
     if [ "${SETUP_CONFIGURED}" = "false" ]; then
         confirm_plan
         [ "${PACKAGES_ONLY}" = "true" ] || prompt_password_file

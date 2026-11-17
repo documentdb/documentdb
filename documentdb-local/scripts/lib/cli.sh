@@ -384,11 +384,35 @@ check_credentials() {
     echo "Using owner: $OWNER"
     echo "Using data path: $DATA_PATH"
 
+    # First-boot data-initialization markers.
+    # Markers live inside the persistent data dir ($DATA_PATH) so they survive container
+    # restarts, `docker compose down && up`, host reboots, and volume backups. They make data
+    # initialization one-shot and prevent the restart loop caused by re-running non-idempotent
+    # seed scripts against already-seeded data. Like common database container images,
+    # initialization runs only on a fresh data directory; to re-initialize, start the container
+    # with an empty/new data volume.
+    INIT_MARKER_DIR="$DATA_PATH/.documentdb-local"
+    custom_attempt_marker="$INIT_MARKER_DIR/custom_data_attempted"
+    sample_init_marker="$INIT_MARKER_DIR/sample_data_initialized"
+
     # Reject a username the gateway would refuse at authentication time (a
     # BlockedRolePrefix) before starting anything, so the container never reports
     # ready with a user that can never authenticate. Pass CONFIG_DIR explicitly:
     # the validator's own default resolves to the legacy layout, while the gateway
     # is started from $CONFIG_DIR/SetupConfiguration.json (see write_gateway_config).
-    bash "$entrypoint_dir/documentdb_validate_username.sh" \
+    USERNAME_IN_USE=false bash "$entrypoint_dir/documentdb_validate_username.sh" \
         "$USERNAME" "$CONFIG_DIR/SetupConfiguration.json" || exit 1
+}
+
+# PostgreSQL's own name rules apply only if the name is created or logged in
+# with: user creation, or a seed that will run (lib/serve.sh skips a seed whose
+# marker exists). Called once the data directory is readable.
+check_username_in_use() {
+    if [ "$CREATE_USER" != "false" ] \
+            || { [ "$INIT_DATA" = "true" ] && [ ! -f "$sample_init_marker" ]; } \
+            || { [ -n "$(ls -A "$INIT_DATA_PATH"/*.js 2>/dev/null)" ] \
+                && [ ! -f "$custom_attempt_marker" ]; }; then
+        USERNAME_IN_USE=true bash "$entrypoint_dir/documentdb_validate_username.sh" \
+            "$USERNAME" "$CONFIG_DIR/SetupConfiguration.json" || exit 1
+    fi
 }

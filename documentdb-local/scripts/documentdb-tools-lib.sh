@@ -1138,17 +1138,23 @@ documentdb_validate_username() {
     documentdb_validate_gateway_username "$@"
 }
 
-DOCUMENTDB_PASSWORD_RULE="must be one non-empty line of printable ASCII; one trailing newline (LF or CRLF) is allowed."
+DOCUMENTDB_PASSWORD_RULE="must be one non-empty line of UTF-8 text without control characters; one trailing newline (LF or CRLF) is allowed."
 
 # documentdb_check_password <password> <label>
 #
-# Clients SASLprep a password before SCRAM and refuse control characters and
-# some non-ASCII, while the server stores the raw bytes, so such a password
-# never logs in. ASCII-only is a stopgap until the backend refuses SASLprep
-# failures (documentdb/documentdb#765).
+# The backend refuses what SASLprep refuses, except in pure ASCII, which it
+# passes through unchecked; clients still refuse ASCII controls. So this
+# refuses controls (C0, DEL, C1) and invalid UTF-8, and leaves the rest of
+# SASLprep to the backend. Non-ASCII needs iconv to prove it is UTF-8 (to
+# UTF-16, as glibc's UTF-8 to UTF-8 passes code points above U+10FFFF); it
+# starts with an empty environment, as an exported or allexport-marked
+# variable may hold the password.
 documentdb_check_password() {
     local LC_ALL=C
-    [[ -n "$1" && "$1" != *[![:print:]]* ]] && return 0
+    if [[ -n "$1" && "$1" != *[[:cntrl:]]* && "$1" != *$'\xc2'[$'\x80'-$'\x9f']* ]]; then
+        [[ "$1" != *[![:print:]]* ]] && return 0
+        printf '%s' "$1" | (exec -c iconv -f UTF-8 -t UTF-16) >/dev/null 2>&1 && return 0
+    fi
     echo "Error: $2 ${DOCUMENTDB_PASSWORD_RULE}" >&2
     return 1
 }
