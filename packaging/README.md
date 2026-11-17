@@ -308,14 +308,15 @@ when it upgrades:
    `--no-enable`, restart `documentdb-postgresql@18.service` instead so the
    gateway stays down), or the PostgreSQL service DocumentDB is attached to
    (Workflows A and B, or an adopted instance).
-2. Update the extensions: re-run `sudo documentdb-setup --pg-version 18
-   --admin-user ADMIN_USER` (replace ADMIN_USER with your admin user), plus
-   any `--data-dir` / `--pg-port` / `--no-enable` it was set up with
-   (Workflow C with its private instance; it sets that user's password
-   again), or run
+2. Update the extensions: re-run `sudo documentdb-setup --pg-version 18`,
+   plus any `--data-dir` / `--pg-port` / `--no-enable` it was set up with
+   (Workflow C with its private instance). Without `--admin-user` it needs no
+   password and keeps the admin users and their passwords; if PostgreSQL
+   still runs the old build it restarts it first. Otherwise (Workflows A
+   and B, or an adopted instance) run
    `ALTER EXTENSION documentdb_core UPDATE;` then
    `ALTER EXTENSION documentdb UPDATE;` (and `documentdb_extended_rum`, if
-   installed) in the `postgres` database.
+   installed) in the `postgres` database, in one transaction.
 
 If you edited a packaged configuration file such as
 `/etc/documentdb/gateway/SetupConfiguration.json`, dpkg asks what to do with
@@ -331,6 +332,19 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
 The packaged default is then left beside it as `.dpkg-dist`. To recover an
 upgrade that already stopped there, run
 `sudo dpkg --force-confold --configure -a`.
+
+For the documentdb-local image, start the newer image on the same data
+volume, for example `docker compose pull && docker compose up -d`. At start
+the container updates the extensions on the volume and logs
+`Updating the DocumentDB extensions on this data volume: ...`. If the update
+fails, it is rolled back, the volume is left unchanged, and the container
+exits.
+
+Downgrading is not supported, for the packages or the image. An older
+release starts on a newer catalog, but some commands then fail with
+`InternalError`. Images from this release on warn about this at start;
+earlier ones do not. To be able to go back,
+back up the data directory or volume before upgrading.
 
 ## After removing or purging
 

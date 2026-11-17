@@ -51,7 +51,7 @@ if [ "$1" -ge 2 ] && [ -f "${state_dir}/setup.conf" ]; then
         restart_step="sudo -u documentdb-local /usr/pgsql-%{pg_version}/bin/pg_ctl -D '${data_dir}' -l '${data_dir}/pglog.log' restart"
     fi
     # Setup does not read these back from setup.conf, so name them.
-    update_step="sudo documentdb-setup --pg-version %{pg_version}${data_dir:+ --data-dir '${data_dir}'}${pg_port:+ --pg-port ${pg_port}} --admin-user ADMIN_USER  # replace ADMIN_USER with your admin user, add --no-enable if you used it; runs ALTER EXTENSION ... UPDATE and sets that user's password again"
+    update_step="sudo documentdb-setup --pg-version %{pg_version}${data_dir:+ --data-dir '${data_dir}'}${pg_port:+ --pg-port ${pg_port}}  # add --no-enable if you used it; runs ALTER EXTENSION ... UPDATE and keeps the admin users and their passwords"
 elif [ "$1" -ge 2 ] && [ -f "${state_dir}/brownfield.conf" ]; then
     restart_step="Restart the PostgreSQL %{pg_version} server DocumentDB is attached to."
     update_step="In its postgres database: ALTER EXTENSION documentdb_core UPDATE; ALTER EXTENSION documentdb UPDATE; (and documentdb_extended_rum, if installed)"

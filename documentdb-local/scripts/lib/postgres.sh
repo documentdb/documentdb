@@ -197,7 +197,46 @@ wait_until_accepting_connections() {
     fi
 }
 
+# A newer image on an older data volume runs the new libraries against the old
+# extension catalog, where some commands fail with InternalError. Update the
+# catalog before the gateway starts, in one transaction so a failure leaves it
+# as it was.
+update_documentdb_extensions() {
+    local pending name installed default updates="" sql=""
+    if ! pending="$(psql -p "$POSTGRESQL_PORT" -U "$OWNER" -d postgres -X -tA -v ON_ERROR_STOP=1 <<'SQL'
+SELECT e.extname, e.extversion, a.default_version
+FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname
+WHERE e.extname IN ('documentdb_core', 'documentdb', 'documentdb_extended_rum')
+  AND e.extversion <> a.default_version
+ORDER BY array_position(ARRAY['documentdb_core', 'documentdb', 'documentdb_extended_rum'], e.extname::text);
+SQL
+    )"; then
+        echo "Error: could not read the DocumentDB extension versions on this data volume; see $DATA_PATH/pglog.log." >&2
+        exit 1
+    fi
+    while IFS='|' read -r name installed default; do
+        [ -n "$name" ] || continue
+        if printf '%s\n%s\n' "$default" "$installed" | sort -V -C; then
+            echo "Warning: $name on this data volume is at version $installed, newer than this image's $default. Downgrading is not supported and some commands will fail; use an image of DocumentDB $installed or newer." >&2
+            continue
+        fi
+        updates="${updates:+$updates, }$name $installed -> $default"
+        sql="${sql}ALTER EXTENSION $name UPDATE;"$'\n'
+    done <<< "$pending"
+    [ -n "$sql" ] || return 0
+
+    echo "Updating the DocumentDB extensions on this data volume: $updates"
+    if ! printf 'BEGIN;\n%sCOMMIT;\n' "$sql" \
+            | psql -p "$POSTGRESQL_PORT" -U "$OWNER" -d postgres -X -q -v ON_ERROR_STOP=1; then
+        echo "Error: updating the DocumentDB extensions failed and was rolled back; the data volume is unchanged. See $DATA_PATH/pglog.log." >&2
+        exit 1
+    fi
+    echo "DocumentDB extensions updated."
+}
+
 configure_running_postgresql() {
+    update_documentdb_extensions
+
     # Advisory only, so no cleanup on failure; see the script for the wording.
     bash "$entrypoint_dir/documentdb_report_extended_rum.sh" "$POSTGRESQL_PORT" "$OWNER" "$toast_pg_accepting"
 
