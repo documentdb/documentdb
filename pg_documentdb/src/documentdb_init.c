@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/documentdb_init.c
  *
@@ -233,7 +234,7 @@ InitializeBackgroundWorkerJobAllowedCommands(void)
 	RegisterBackgroundWorkerJobAllowedCommand(buildIndexConcurrently);
 
 	BackgroundWorkerJobCommand cursorDirectoryCleanup = {
-		.name = "cursor_directory_cleanup", .schema = ApiInternalSchemaNameV2
+		.name = "cursor_directory_cleanup_background", .schema = ApiInternalSchemaNameV2
 	};
 	RegisterBackgroundWorkerJobAllowedCommand(cursorDirectoryCleanup);
 }

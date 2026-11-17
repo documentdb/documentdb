@@ -52,6 +52,7 @@
 #include "background_worker/background_worker_job.h"
 #include "infrastructure/cursor_store.h"
 #include "infrastructure/job_management.h"
+#include "utils/version_utils.h"
 
 extern char *ApiGucPrefix;
 extern bool EnableBackgroundWorker;
@@ -177,11 +178,6 @@ cursor_directory_cleanup(PG_FUNCTION_ARGS)
 									 DefaultCursorExpiryTimeLimitSeconds :
 									 PG_GETARG_INT64(0);
 
-	if (RecoveryInProgress() && !EnableCursorCleanupInRecovery)
-	{
-		PG_RETURN_VOID();
-	}
-
 	CursorDirectoryCleanupCore(expiryTimeLimitSeconds);
 	PG_RETURN_VOID();
 }
@@ -272,11 +268,6 @@ CursorDirectoryCleanupCore(int64_t expiryTimeLimitSeconds)
 
 /*
  * Registers recovery-only cursor cleanup with the background worker.
- * Use the existing UDF to remain compatible with the previous schema version.
- *
- * XXX: Migrate this job to the background-specific UDF once its schema is
- * the minimum supported version. Retain the existing UDF until its pg_cron
- * job is also migrated.
  */
 void
 RegisterCursorCleanupBackgroundWorkerJob(void)
@@ -292,12 +283,12 @@ RegisterCursorCleanupBackgroundWorkerJob(void)
 		.roleExecutionProfile = BackgroundWorkerJobRoleExecutionProfile_RecoveryOnly,
 		.command = {
 			.schema = ApiInternalSchemaNameV2,
-			.name = "cursor_directory_cleanup"
+			.name = "cursor_directory_cleanup_background"
 		},
 		.get_schedule_interval_in_seconds_hook = NULL,
 		.argument = {
-			.argType = INT8OID,
-			.argValue = NULL,
+			.argType = VOIDOID,
+			.argValue = "0",
 			.isNull = true
 		},
 		.timeoutInSeconds = 300,
@@ -312,7 +303,8 @@ RegisterCursorCleanupBackgroundWorkerJob(void)
 static bool
 ShouldScheduleCursorCleanupInRecovery(void)
 {
-	return EnableCursorCleanupInRecovery;
+	return EnableCursorCleanupInRecovery &&
+		   IsClusterVersionAtleast(DocDB_V1, 1, 0);
 }
 
 

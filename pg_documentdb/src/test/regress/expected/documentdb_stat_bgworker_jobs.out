@@ -206,11 +206,11 @@ SELECT job_id, job_name, command, schedule_interval_seconds, timeout_seconds, en
        job_options
     FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
     ORDER BY job_id;
- job_id |                 job_name                 |                     command                      | schedule_interval_seconds | timeout_seconds | enabled |                                job_options                                 
---------+------------------------------------------+--------------------------------------------------+---------------------------+-----------------+---------+----------------------------------------------------------------------------
-     90 | documentdb_index_build_background_job_1  | documentdb_api_internal.build_index_background   |                        17 |             300 | t       | { "roleExecutionProfile" : "primaryOnly", "execCoordinatorOnly" : true }
-     91 | documentdb_index_build_background_job_2  | documentdb_api_internal.build_index_background   |                        17 |             300 | t       | { "roleExecutionProfile" : "primaryOnly", "execCoordinatorOnly" : true }
-     92 | documentdb_cursor_cleanup_background_job | documentdb_api_internal.cursor_directory_cleanup |                        60 |             300 | t       | { "roleExecutionProfile" : "recoveryOnly", "execCoordinatorOnly" : false }
+ job_id |                 job_name                 |                           command                           | schedule_interval_seconds | timeout_seconds | enabled |                                job_options
+--------+------------------------------------------+-------------------------------------------------------------+---------------------------+-----------------+---------+----------------------------------------------------------------------------
+     90 | documentdb_index_build_background_job_1  | documentdb_api_internal.build_index_background              |                        17 |             300 | t       | { "roleExecutionProfile" : "primaryOnly", "execCoordinatorOnly" : true }
+     91 | documentdb_index_build_background_job_2  | documentdb_api_internal.build_index_background              |                        17 |             300 | t       | { "roleExecutionProfile" : "primaryOnly", "execCoordinatorOnly" : true }
+     92 | documentdb_cursor_cleanup_background_job | documentdb_api_internal.cursor_directory_cleanup_background |                        60 |             300 | t       | { "roleExecutionProfile" : "recoveryOnly", "execCoordinatorOnly" : false }
 (3 rows)
 
 -- The two hook-resolved columns are point-in-time lookups, not cached values: changing

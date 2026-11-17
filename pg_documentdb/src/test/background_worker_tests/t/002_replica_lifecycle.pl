@@ -155,8 +155,7 @@ $primary->safe_psql(
 CREATE EXTENSION IF NOT EXISTS documentdb_core CASCADE;
 CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;
 
-CREATE OR REPLACE FUNCTION documentdb_api_internal.cursor_directory_cleanup(
-	expiry_time_seconds bigint DEFAULT NULL)
+CREATE OR REPLACE FUNCTION documentdb_api_internal.cursor_directory_cleanup_background()
 RETURNS void
 LANGUAGE plpgsql
 AS $function$

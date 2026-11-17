@@ -103,7 +103,7 @@ WHERE job_id = 92;
 });
 like(
 	$result,
-	qr/^92\|documentdb_cursor_cleanup_background_job\|t\|documentdb_api_internal\.cursor_directory_cleanup\|.*"roleExecutionProfile" : "recoveryOnly".*$/,
+	qr/^92\|documentdb_cursor_cleanup_background_job\|t\|documentdb_api_internal\.cursor_directory_cleanup_background\|.*"roleExecutionProfile" : "recoveryOnly".*$/,
 	'cursor cleanup job is enabled and registered as recovery-only');
 
 my $recovery_cursor_file =
@@ -114,5 +114,25 @@ WaitForFileRemoval(
 	$recovery_cursor_file,
 	90,
 	'recovery leader dispatches cursor cleanup automatically');
+
+$node->stop;
+$node->append_conf('postgresql.conf',
+	"documentdb.enable_cursor_cleanup_in_recovery = off\n");
+$node->start;
+
+my $manual_cursor_file =
+	CreateExpiredCursorFile($node, 'manual_cleanup_tap_test');
+$node->safe_psql('postgres', q{
+SELECT documentdb_api_internal.cursor_directory_cleanup_background();
+});
+ok(-e $manual_cursor_file,
+	'background cleanup respects the disabled recovery cleanup flag');
+$node->safe_psql('postgres', q{
+SELECT documentdb_api_internal.cursor_directory_cleanup(NULL::bigint);
+});
+ok(!-e $manual_cursor_file,
+	'legacy cleanup remains callable in recovery with background cleanup disabled');
+
+$node->stop;
 
 done_testing();
