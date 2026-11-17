@@ -31,20 +31,39 @@ docker compose ps
 # NAME                        ...   STATUS
 # docker-compose-documentdb-1 ...   Up 45 seconds (healthy)
 
-# 4. Connect (from the host), using the credentials generated in step 1
+# 4. Connect (from the host), using the credentials generated in step 1.
+#    mongosh asks for the password; `echo "$DOCUMENTDB_PASSWORD"` prints it.
 mongosh "mongodb://localhost:10260/?tls=true&tlsAllowInvalidCertificates=true" \
     --username "$DOCUMENTDB_USERNAME"
 ```
 
-On Windows, run the same steps from PowerShell with:
+On Windows, after the `cd`, replace steps 1 and 2 with the block below in
+PowerShell (5.1 or 7). It stops at the first error instead of starting the
+stack with a bad password.
 
 ```powershell
-$bytes = [byte[]]::new(24)
-[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-$env:DOCUMENTDB_USERNAME = 'appuser'
-$env:DOCUMENTDB_PASSWORD = [Convert]::ToBase64String($bytes)
-docker compose pull
-docker compose up -d
+& {
+    $ErrorActionPreference = 'Stop'
+    # A missing docker sets no exit code, so the checks below would not see it.
+    $null = Get-Command docker
+    $bytes = [byte[]]::new(24)
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $env:DOCUMENTDB_USERNAME = 'appuser'
+    $env:DOCUMENTDB_PASSWORD = [Convert]::ToBase64String($bytes)
+    # docker prints progress on stderr, which some hosts (ISE) turn into errors.
+    $ErrorActionPreference = 'Continue'
+    docker compose pull
+    if ($LASTEXITCODE -ne 0) { throw 'docker compose pull failed' }
+    docker compose up -d
+    if ($LASTEXITCODE -ne 0) { throw 'docker compose up failed' }
+}
+```
+
+Step 3 is the same. For step 4, connect with the line below; `mongosh` asks
+for the password, and `$env:DOCUMENTDB_PASSWORD` prints it:
+
+```powershell
+mongosh "mongodb://localhost:10260/?tls=true&tlsAllowInvalidCertificates=true" --username $env:DOCUMENTDB_USERNAME
 ```
 
 `docker compose` reads both variables from your environment and aborts with a
@@ -56,6 +75,16 @@ placeholders (they are not used for anything):
 
 ```bash
 DOCUMENTDB_USERNAME=x DOCUMENTDB_PASSWORD=x docker compose down -v
+```
+
+In a PowerShell window where the variables are gone, set the placeholders
+and remove them afterwards, so a later `up` cannot start on them:
+
+```powershell
+$env:DOCUMENTDB_USERNAME = $env:DOCUMENTDB_PASSWORD = 'x'
+try { docker compose down -v } finally {
+    Remove-Item Env:DOCUMENTDB_USERNAME, Env:DOCUMENTDB_PASSWORD
+}
 ```
 
 Pick any username that does not start with a reserved role prefix —

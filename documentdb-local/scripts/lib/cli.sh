@@ -93,8 +93,10 @@ Optional arguments:
                         Turn off the usage telemetry above. Equivalent to --usage-telemetry false.
                         Setting NO_ANALYTICS=1 or DO_NOT_TRACK=1 also turns it off and wins
                         over any enable.
-  --log-level           The verbosity of logs that will be emitted.
-                        Overrides LOG_LEVEL environment variable.
+  --log-level           The verbosity of the gateway's logs; quiet still shows errors.
+                        Overrides LOG_LEVEL environment variable. DOCUMENTDB_LOG_LEVEL, then
+                        RUST_LOG, override both when set (each takes a tracing filter such
+                        as documentdb_gateway=debug).
                           $(documentdb_local_setting_allowed LOG_LEVEL)
                         Defaults to ${d_log}.
   --username            Specify the username for the DocumentDB.
@@ -350,6 +352,18 @@ validate_settings() {
         export SKIP_INIT_DATA=false
     else
         export SKIP_INIT_DATA=true
+    fi
+
+    # The gateway reads DOCUMENTDB_LOG_LEVEL, then RUST_LOG, never LOG_LEVEL.
+    # Either one the operator set wins, unless blank (the gateway ignores a blank one);
+    # "quiet" is "error" so runtime failures still show.
+    local operator_filter="${DOCUMENTDB_LOG_LEVEL:-}${RUST_LOG:-}"
+    if [ -z "${operator_filter//[[:space:]]/}" ]; then
+        if [ "$LOG_LEVEL" = "quiet" ]; then
+            export DOCUMENTDB_LOG_LEVEL=error
+        else
+            export DOCUMENTDB_LOG_LEVEL="$LOG_LEVEL"
+        fi
     fi
 
     # Still accepted so existing invocations start; nothing reads it any more.
