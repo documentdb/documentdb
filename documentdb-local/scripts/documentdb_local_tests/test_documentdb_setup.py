@@ -7367,6 +7367,7 @@ class SetupReportsTrueStateTests(unittest.TestCase):
             '  case "${sql}" in *"SELECT 1 FROM pg_roles"*) [[ "${EXISTS}" == 1 ]] && echo 1; true ;;\n'
             '  *documentdb_admin_role*) [[ -z "${OTHERS}" ]] || printf "%s\\n" ${OTHERS} ;; esac; }\n'
             'USERNAME=alice PG_OWNER=documentdb PSQL=psql PG_SOCKET_DIR=/tmp PG_PORT=9718 HAS_EXTENDED_RUM=false\n'
+            + self._shell_function("admin_users_sql") + "\n"
             + self._shell_function("create_required_extensions_and_users")
             + '\ncreate_required_extensions_and_users\n'
         )
@@ -7383,7 +7384,8 @@ class SetupReportsTrueStateTests(unittest.TestCase):
         self.assertIn("APPLY: Reset password for existing admin user 'alice'", out)
 
     def test_new_admin_name_warns_about_existing_admins(self):
-        out = self._create_admin(exists=False, others="admin ops")
+        # The query lists every admin; the name being added is left out of the warning.
+        out = self._create_admin(exists=False, others="admin alice ops")
         self.assertRegex(out, r"WARN: Adding admin user 'alice' alongside .*: admin ops\.")
         self.assertIn("documentdb-gateway-admin drop-user", out)
         self.assertIn("APPLY: Bootstrap first admin user 'alice'", out)
@@ -7392,8 +7394,8 @@ class SetupReportsTrueStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             fake_psql = Path(td) / "psql"
             fake_psql.write_text(
-                '#!/bin/bash\ncase "${FAKE_MODE}" in\n'
-                '  down) exit 2 ;;\n  none) echo ;;\n  ok) echo "admin ops" ;;\nesac\n',
+                '#!/bin/bash\ncase "$*" in *pg_auth_members*) ;; *) exit 3 ;; esac\ncase "${FAKE_MODE}" in\n'
+                '  down) exit 2 ;;\n  none) echo ;;\n  ok) printf "admin\\nops\\n" ;;\nesac\n',
                 encoding="utf-8")
             fake_psql.chmod(0o755)
             url_file = Path(td) / "pg-url"
@@ -7403,6 +7405,7 @@ class SetupReportsTrueStateTests(unittest.TestCase):
                 f'id() {{ echo {uid}; }}\n'
                 f'documentdb_pg_bindir_candidates() {{ echo {shlex.quote(td)}; }}\n'
                 'run_as_user() { shift; "$@"; }\n'
+                + self._shell_function("admin_users_sql") + "\n"
                 + self._shell_function("status_database_check")
                 + f'\nstatus_database_check 18 {shlex.quote(str(url_file))}\n'
             )
@@ -7415,6 +7418,10 @@ class SetupReportsTrueStateTests(unittest.TestCase):
         # --status said healthy with the admin user dropped or PostgreSQL
         # down, because it only asked systemd whether the units were active.
         self.assertEqual(self._database_check("ok"), "ok (admin users: admin ops)")
+        # psql is faked, so only the text can show that indirect members count and creators do not.
+        sql = self._shell_function("admin_users_sql")
+        self.assertIn("WITH RECURSIVE", sql)
+        self.assertIn("WHERE m.inherit_option OR m.set_option", sql)
         self.assertTrue(self._database_check("none").startswith("no DocumentDB admin user"))
         self.assertTrue(self._database_check("down").startswith("not answering"))
         self.assertTrue(self._database_check("ok", uid="1000").startswith("unknown"))
@@ -11889,7 +11896,8 @@ class UpgradeFinishStepsTests(unittest.TestCase):
                      for l in r.stdout.splitlines() if l.startswith(("  1. ", "  2. "))}
             update = lines["2"]
             self.assertEqual(update[:3], ["documentdb-setup", "--pg-version", "18"])
-            self.assertEqual(update[update.index("--admin-user") + 1], "ADMIN_USER")
+            # Without --admin-user setup keeps the admins and their passwords.
+            self.assertNotIn("--admin-user", update)
             self.assertEqual(update[update.index("--data-dir") + 1], self.ODD_DIR)
             self.assertEqual(update[update.index("--pg-port") + 1], "9800")
             if not systemd:
@@ -12257,3 +12265,277 @@ class SetupRequiresTheMajorPackageTests(unittest.TestCase):
         preflight = _shell_function(self, SETUP_SCRIPT, "preflight_validation")
         self.assertLess(preflight.index("require_major_package"),
                         preflight.index("\n    resolve_runtime_paths\n"))
+
+
+class PackageUpgradeRestartTests(unittest.TestCase):
+    """After a package upgrade the running postmaster still has the old
+    DocumentDB libraries loaded, and ALTER EXTENSION documentdb UPDATE fails
+    until PostgreSQL restarts."""
+
+    def _detect(self, mapped_name, deleted, root_blocked=False):
+        shell = shutil.which("bash")
+        if not shell or not os.path.isdir("/proc/self/map_files"):
+            self.skipTest("needs bash and Linux /proc")
+        func = _shell_function(self, SETUP_SCRIPT, "postmaster_runs_replaced_documentdb_library")
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp) / mapped_name
+            lib.write_bytes(b"\0" * 4096)
+            ready = Path(tmp) / "ready"
+            holder = subprocess.Popen(
+                ["python3", "-c",
+                 "import mmap, os, sys, time\n"
+                 "f = open(sys.argv[1], 'rb'); m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ)\n"
+                 "open(sys.argv[2], 'w').close(); time.sleep(30)\n",
+                 str(lib), str(ready)])
+            self.addCleanup(holder.wait)
+            self.addCleanup(holder.kill)
+            for _ in range(100):
+                if ready.exists():
+                    break
+                time.sleep(0.05)
+            if deleted:
+                lib.unlink()
+            (Path(tmp) / "postmaster.pid").write_text(f"{holder.pid}\n{tmp}\n")
+            # A root without CAP_SYS_PTRACE (a container) gets EACCES on the maps; the owner does not.
+            as_owner = Path(tmp) / "as-owner"
+            prelude = (f'run_as_user() {{ echo "$1" > {shlex.quote(str(as_owner))}; shift; command "$@"; }}\n'
+                       + ('grep() { return 2; }\n' if root_blocked else ""))
+            r = subprocess.run(
+                [shell, "-c", f"set -euo pipefail\nDATA_DIR={shlex.quote(tmp)}; PG_OWNER=pgowner\n{prelude}{func}\n"
+                 "if postmaster_runs_replaced_documentdb_library; then echo REPLACED; else echo CURRENT; fi\n"],
+                capture_output=True, text=True, timeout=10)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            if root_blocked:
+                self.assertEqual(as_owner.read_text().strip(), "pgowner")
+            return r.stdout.strip()
+
+    def test_a_deleted_documentdb_library_mapping_means_replaced(self):
+        self.assertEqual(self._detect("pg_documentdb.so", deleted=True), "REPLACED")
+        self.assertEqual(self._detect("pg_documentdb_core.so", deleted=True), "REPLACED")
+
+    def test_a_current_or_unrelated_mapping_is_not_replaced(self):
+        self.assertEqual(self._detect("pg_documentdb.so", deleted=False), "CURRENT")
+        self.assertEqual(self._detect("vector.so", deleted=True), "CURRENT")
+
+    def test_the_postgres_owner_reads_the_maps_when_root_cannot(self):
+        self.assertEqual(self._detect("pg_documentdb.so", deleted=True, root_blocked=True), "REPLACED")
+        self.assertEqual(self._detect("pg_documentdb.so", deleted=False, root_blocked=True), "CURRENT")
+
+    def _restart(self, target_cluster="", systemd=True, replaced=True):
+        shell = shutil.which("bash")
+        if not shell:
+            self.skipTest("bash not available")
+        func = _shell_function(self, SETUP_SCRIPT, "start_or_restart_postgres")
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = Path(tmp) / "calls"
+            script = (
+                "set -euo pipefail\n"
+                'log_info() { echo "INFO: $*"; }; log_warn() { echo "WARN: $*"; }\n'
+                "ensure_socket_dir_writable() { :; }; wait_for_postgres() { :; }\n"
+                "has_systemd_unit_file() { return 0; }\n"
+                f'systemctl() {{ echo "systemctl $*" >> {shlex.quote(str(calls))}; }}\n'
+                f'run_as_user() {{ shift; echo "$*" >> {shlex.quote(str(calls))}; }}\n'
+                f'confirm_or_apply() {{ echo "confirm: $1" >> {shlex.quote(str(calls))}; shift; "$@"; }}\n'
+                f"postmaster_runs_replaced_documentdb_library() {{ return {0 if replaced else 1}; }}\n"
+                "resolve_brownfield_pg_service_unit() { echo postgresql@17-main.service; }\n"
+                "build_rerun_suffix() { echo ' --yes'; }; build_rerun_env_prefix() { :; }\n"
+                f"TARGET_CLUSTER={shlex.quote(target_cluster)}; HAS_WORKING_SYSTEMD={str(systemd).lower()}\n"
+                "PG_CTL=pg_ctl\n"
+                "PG_CONFIG_CHANGED=false; PG_RELOAD_CHANGED=false\n"
+                f"PASSWORD_FROM_STDIN=false; PG_VERSION=17; DATA_DIR={shlex.quote(tmp)}\n"
+                + func + "\nstart_or_restart_postgres\necho CONTINUED\n"
+            )
+            r = subprocess.run([shell, "-c", script], stdin=subprocess.DEVNULL,
+                               capture_output=True, text=True, timeout=10)
+            recorded = calls.read_text() if calls.exists() else ""
+            return r, recorded
+
+    def test_self_managed_postgres_restarts_to_load_the_upgraded_libraries(self):
+        r, calls = self._restart()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("systemctl restart documentdb-postgresql@17.service", calls)
+        self.assertIn("CONTINUED", r.stdout)
+
+    def test_current_libraries_mean_no_restart(self):
+        for target, systemd in (("", True), ("", False), ("17/main", True)):
+            with self.subTest(target=target, systemd=systemd):
+                r, calls = self._restart(target_cluster=target, systemd=systemd, replaced=False)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertNotIn("restart", calls)
+                self.assertIn("CONTINUED", r.stdout)
+
+    def test_without_systemd_the_restart_is_confirmed_like_with_it(self):
+        r, calls = self._restart(systemd=False)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        lines = calls.splitlines()
+        i = lines.index("confirm: Restart PostgreSQL to load the upgraded DocumentDB libraries")
+        self.assertTrue(lines[i + 1].endswith("-w restart"), calls)
+        self.assertIn("CONTINUED", r.stdout)
+
+    def test_adopted_postgres_is_not_restarted_and_the_operator_is_told_how(self):
+        r, calls = self._restart(target_cluster="17/main")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("restart", calls)
+        self.assertNotIn("CONTINUED", r.stdout)
+        self.assertIn("load the upgraded DocumentDB libraries", r.stdout)
+        self.assertIn("exiting BEFORE updating the extensions", r.stdout)
+        self.assertNotIn("admin bootstrap", r.stdout)
+        self.assertIn("sudo systemctl restart postgresql@17-main.service", r.stdout)
+        self.assertIn("documentdb-setup --target-postgres-instance 17/main --yes", r.stdout)
+
+
+class RerunKeepsAdminUsersTests(unittest.TestCase):
+    """Finishing a package upgrade is a re-run of setup; it must not need the
+    admin credentials or replace an admin's password."""
+
+    def _bash(self, script, env=None):
+        shell = shutil.which("bash")
+        if not shell:
+            self.skipTest("bash not available")
+        return subprocess.run([shell, "-c", script], capture_output=True, text=True,
+                              timeout=30, env=dict(os.environ, **(env or {})))
+
+    def test_only_a_named_major_with_setup_state_counts_as_an_existing_install(self):
+        func = _shell_function(self, SETUP_SCRIPT, "existing_install_named")
+        with tempfile.TemporaryDirectory() as tmp:
+            func = func.replace("/etc/documentdb/local", tmp)
+            (Path(tmp) / "17").mkdir()
+            (Path(tmp) / "17" / "setup.conf").write_text("PG_VERSION=17\n")
+            (Path(tmp) / "16").mkdir()
+            (Path(tmp) / "16" / "brownfield.conf").write_text("PG_VERSION=16\nTARGET_CLUSTER=16/main\n")
+            # As documentdb-register-gateway alone leaves it: no cluster recorded.
+            (Path(tmp) / "15").mkdir()
+            (Path(tmp) / "15" / "brownfield.conf").write_text("CLUSTER_NAME=main\n")
+            (Path(tmp) / "14").mkdir()
+            (Path(tmp) / "14" / "brownfield.conf").write_text("TARGET_CLUSTER=14/\n")
+            cases = (
+                ("true", "17", "", "yes"),
+                ("false", "17", "", "no"),     # major not named: auto-detect may pick another
+                ("true", "18", "", "no"),
+                ("true", "16", "", "no"),      # a brownfield major is not a greenfield re-run
+                ("false", "", "16/main", "yes"),
+                ("false", "", "16/", "yes"),   # "N/" means N/main
+                ("false", "", "16/other", "no"),  # another cluster of the major has its own admins
+                ("false", "", "16/mai", "no"),
+                ("false", "", "15/main", "no"),
+                ("false", "", "14/main", "yes"),
+                ("false", "", "17/main", "no"),
+            )
+            for explicit, version, target, expected in cases:
+                with self.subTest(explicit=explicit, version=version, target=target):
+                    r = self._bash(
+                        f"set -euo pipefail\nPG_VERSION_EXPLICIT={explicit}; PG_VERSION={version}; "
+                        f"TARGET_CLUSTER={target}\n{func}\n"
+                        "if existing_install_named; then echo yes; else echo no; fi\n")
+                    self.assertEqual(r.stdout.strip(), expected, r.stderr)
+
+    def test_a_rerun_that_misses_the_recorded_data_is_refused(self):
+        # e.g. --data-dir left out: initdb there would make an instance with no admin user.
+        func = _shell_function(self, SETUP_SCRIPT, "refuse_missing_install_data")
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "data").mkdir()
+            (Path(tmp) / "data" / "PG_VERSION").write_text("17\n")
+            cases = (
+                ("true", "", "empty", 1),
+                ("true", "", "data", 0),
+                ("false", "", "empty", 0),      # --admin-user given: a new instance is intended
+                ("true", "17/main", "empty", 0),  # adopted: the data directory is the server's
+            )
+            for keep, target, data_dir, rc in cases:
+                with self.subTest(keep=keep, target=target, data_dir=data_dir):
+                    r = self._bash(
+                        'set -euo pipefail\ndie() { echo "DIE: $*"; exit 1; }\n'
+                        f"KEEP_ADMIN_USERS={keep}; TARGET_CLUSTER={target}; PG_VERSION=17; "
+                        f"DATA_DIR={shlex.quote(tmp)}/{data_dir}\n{func}\nrefuse_missing_install_data\n")
+                    self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+                    if rc:
+                        self.assertIn("holds no PostgreSQL data", r.stdout)
+        preflight = _shell_function(self, SETUP_SCRIPT, "preflight_validation")
+        self.assertLess(preflight.index("\n    resolve_runtime_paths\n"),
+                        preflight.index("refuse_missing_install_data"))
+        self.assertLess(preflight.index("refuse_missing_install_data"),
+                        preflight.rindex("ensure_documentdb_runtime_user"))
+
+    def _keep(self, admins, installed="1"):
+        script = (
+            "set -euo pipefail\n"
+            'log_info() { echo "INFO: $*"; }\nlog_warn() { echo "WARN: $*"; }\n'
+            'die() { echo "DIE: $*"; exit 1; }\n'
+            'confirm_or_apply() { echo "APPLY: $1"; }\n'
+            'run_as_user() { local sql; sql="$(cat)";\n'
+            '  case "${sql}" in *pg_auth_members*) printf "%s\\n" ${ADMINS} ;; *pg_extension*) echo "${INSTALLED}" ;;\n'
+            '    *) echo "UNEXPECTED: ${sql}" ;; esac; }\n'
+            'KEEP_ADMIN_USERS=true USERNAME="" PG_OWNER=documentdb PSQL=psql PG_SOCKET_DIR=/tmp PG_PORT=9718 HAS_EXTENDED_RUM=false\n'
+            + _shell_function(self, SETUP_SCRIPT, "admin_users_sql") + "\n"
+            + _shell_function(self, SETUP_SCRIPT, "create_required_extensions_and_users")
+            + "\ncreate_required_extensions_and_users\n"
+        )
+        return self._bash(script, {"ADMINS": admins, "INSTALLED": installed})
+
+    def test_rerun_without_admin_user_keeps_admins_and_passwords(self):
+        r = self._keep("admin ops")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("INFO: Keeping the existing admin users: admin ops.", r.stdout)
+        self.assertIn("APPLY: Run CREATE EXTENSION documentdb CASCADE", r.stdout)
+        self.assertNotIn("UNEXPECTED", r.stdout)
+        self.assertNotIn("Reset password", r.stdout)
+        self.assertNotIn("Bootstrap", r.stdout)
+
+    def test_rerun_without_admin_user_is_refused_before_a_first_setup_finished(self):
+        # The state file is written before a first run ends, e.g. at the adopted-instance restart exit.
+        r = self._keep("", installed="")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("DIE: DocumentDB is not set up on this PostgreSQL instance yet", r.stdout)
+        self.assertNotIn("APPLY", r.stdout)
+
+    def test_rerun_without_admin_user_warns_when_no_admin_is_found(self):
+        # PostgreSQL and the extensions were already changed, so failing here
+        # would only leave the gateway down.
+        r = self._keep("")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("WARN: Found no DocumentDB admin user. Create one with:", r.stdout)
+
+    def test_rerun_without_admin_user_reads_no_password(self):
+        func = _shell_function(self, SETUP_SCRIPT, "validate_required_arguments")
+        base = (
+            "set -euo pipefail\n"
+            'die() { echo "DIE: $*"; exit 1; }\nresolve_password() { echo "PASSWORD READ"; }\n'
+            'KEEP_ADMIN_USERS=true USERNAME="" TLS_CERT_FILE="" TLS_KEY_FILE="" NO_ENABLE=false\n'
+        )
+        no_pw = 'PASSWORD_FILE="" PASSWORD_FROM_STDIN=false\n'
+        r = self._bash(base + no_pw + f"LOAD_SAMPLE_DATA=false\n{func}\nvalidate_required_arguments\necho OK\n",
+                       {"DOCUMENTDB_PASSWORD": ""})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.strip(), "OK")
+        r = self._bash(base + no_pw + f"LOAD_SAMPLE_DATA=true\n{func}\nvalidate_required_arguments\necho OK\n",
+                       {"DOCUMENTDB_PASSWORD": ""})
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("--load-sample-data signs in as an admin user", r.stdout)
+
+    def test_a_password_source_without_admin_user_is_refused(self):
+        # Ignoring it would keep the old password; one on stdin would answer a [y/N] prompt.
+        func = _shell_function(self, SETUP_SCRIPT, "validate_required_arguments")
+        base = (
+            "set -euo pipefail\n"
+            'die() { echo "DIE: $*"; exit 1; }\nresolve_password() { echo "PASSWORD READ"; }\n'
+            'KEEP_ADMIN_USERS=true USERNAME="" TLS_CERT_FILE="" TLS_KEY_FILE="" NO_ENABLE=false LOAD_SAMPLE_DATA=false\n'
+        )
+        cases = (
+            ('PASSWORD_FILE=/root/pw PASSWORD_FROM_STDIN=false', ""),
+            ('PASSWORD_FILE="" PASSWORD_FROM_STDIN=true', ""),
+            ('PASSWORD_FILE="" PASSWORD_FROM_STDIN=false', "secret"),
+        )
+        for flags, env_pw in cases:
+            with self.subTest(flags=flags, env=bool(env_pw)):
+                r = self._bash(base + flags + f"\n{func}\nvalidate_required_arguments\necho OK\n",
+                               {"DOCUMENTDB_PASSWORD": env_pw})
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertIn("DIE: A password source needs --admin-user", r.stdout)
+                self.assertNotIn("PASSWORD READ", r.stdout)
+
+    def test_the_decision_comes_before_the_admin_user_prompt(self):
+        main = _shell_function(self, SETUP_SCRIPT, "main")
+        self.assertLess(main.index("existing_install_named; then"),
+                        main.index("Admin username ["))
+        # --admin-user on an existing install still sets that user's password.
+        self.assertIn('if [[ -z "${USERNAME}" && "${RESTORE}" != "true" ]] && existing_install_named; then', main)

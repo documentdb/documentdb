@@ -172,6 +172,8 @@ LIVE_PRELOAD_LIBRARIES=""
 PG_CONFIG_CHANGED=false
 PG_RELOAD_CHANGED=false
 GATEWAY_WAS_ACTIVE=false
+# A re-run of an existing install without --admin-user leaves its admins alone.
+KEEP_ADMIN_USERS=false
 
 error() {
     local line_number="$1"
@@ -195,6 +197,10 @@ Required:
   --admin-user <USER>    Admin username to create (also: --username).
                          When omitted on an interactive terminal the
                          wizard prompts (default: "admin").
+                         Optional when re-running an existing install
+                         named by --pg-version or --target-postgres-instance
+                         (e.g. after a package upgrade): its admin users and
+                         their passwords are kept.
 
 Authentication (one of the following; interactive prompt is the default):
   --admin-password-file <FILE>  Read the admin password from a file
@@ -1954,9 +1960,17 @@ refuse_home_tls_path() {
 }
 
 validate_required_arguments() {
-    [[ -n "${USERNAME}" ]] || die "--username is required."
-    # Before the TLS ownership repair below, so a refused password changes nothing.
-    resolve_password
+    if [[ "${KEEP_ADMIN_USERS:-}" == "true" ]]; then
+        [[ "${LOAD_SAMPLE_DATA}" != "true" ]] \
+            || die "--load-sample-data signs in as an admin user; pass --admin-user and its password source."
+        # A password given without a user would be ignored, and one on stdin read as a [y/N] answer.
+        [[ -z "${PASSWORD_FILE:-}" && "${PASSWORD_FROM_STDIN:-}" != "true" && -z "${DOCUMENTDB_PASSWORD:-}" ]] \
+            || die "A password source needs --admin-user: pass --admin-user NAME to set that user's password, or drop the password source to keep the existing admin users."
+    else
+        [[ -n "${USERNAME}" ]] || die "--username is required."
+        # Before the TLS ownership repair below, so a refused password changes nothing.
+        resolve_password
+    fi
 
     # TLS triple: --tls-cert / --tls-key must come together; combining
     # either with --tls-auto-generate true is a contradiction (the
@@ -2152,6 +2166,8 @@ preflight_validation() {
         fi
     fi
 
+    refuse_missing_install_data
+
     refresh_extension_state
     validate_documentdb_extension_installation
     [[ -x "${GATEWAY_BINARY}" ]] || die "The gateway binary was not found at ${GATEWAY_BINARY}."
@@ -2320,6 +2336,37 @@ persisted_listen_addr() {
         [[ "${_val}" =~ ^[[:space:]]*(.*[^[:space:]])?[[:space:]]*$ ]] && _val="${BASH_REMATCH[1]}"
     done < "${_env}"
     printf '%s' "${_val}"
+}
+
+# existing_install_named: --pg-version N or --target-postgres-instance N/C
+# names an install that a previous run already set up.
+existing_install_named() {
+    local major="" state="setup.conf"
+    if [[ -n "${TARGET_CLUSTER}" ]]; then
+        major="${TARGET_CLUSTER%%/*}"
+        state="brownfield.conf"
+    elif [[ "${PG_VERSION_EXPLICIT}" == "true" ]]; then
+        major="${PG_VERSION}"
+    fi
+    state="/etc/documentdb/local/${major}/${state}"
+    [[ "${major}" =~ ^[0-9]+$ && -f "${state}" ]] || return 1
+    # brownfield.conf is per major and may record another cluster of it. Root
+    # can always read it; a non-root --dry-run cannot and only previews.
+    if [[ -n "${TARGET_CLUSTER}" && -r "${state}" ]]; then
+        local recorded="" wanted="${TARGET_CLUSTER}"
+        recorded="$(grep -E '^TARGET_CLUSTER=' "${state}" | head -1 | cut -d= -f2- || true)"
+        # "N/" means N/main.
+        [[ "${wanted}" != */ ]] || wanted+="main"
+        [[ "${recorded}" != */ ]] || recorded+="main"
+        [[ "${recorded}" == "${wanted}" ]] || return 1
+    fi
+}
+
+# refuse_missing_install_data: setup.conf records an install, but DATA_DIR is
+# not where its data is. A new instance there would have no admin user.
+refuse_missing_install_data() {
+    [[ "${KEEP_ADMIN_USERS:-}" == "true" && -z "${TARGET_CLUSTER}" && ! -f "${DATA_DIR}/PG_VERSION" ]] || return 0
+    die "${DATA_DIR} holds no PostgreSQL data, but /etc/documentdb/local/${PG_VERSION}/setup.conf records an install. Pass the --data-dir it was set up with, or --admin-user NAME and a password source to create a new instance."
 }
 
 # persisted_gateway_port <major> — the GATEWAY_PORT a previous run recorded in
@@ -3082,7 +3129,27 @@ build_rerun_suffix() {
     printf '%s' "${suffix}"
 }
 
+# A package upgrade replaces the DocumentDB libraries on disk, but the running
+# postmaster keeps the ones it preloaded, and ALTER EXTENSION documentdb UPDATE
+# then fails on functions only the new library has. The replaced files show up
+# as "(deleted)" mappings of the postmaster.
+postmaster_runs_replaced_documentdb_library() {
+    local pid=""
+    pid="$(head -n 1 "${DATA_DIR}/postmaster.pid" 2>/dev/null | tr -dc '0-9')" || true
+    [[ -n "${pid}" ]] || return 1
+    local pattern='/pg_documentdb[^/ ]*\.so \(deleted\)$'
+    # Root needs CAP_SYS_PTRACE to read another user's maps, which containers drop.
+    grep -qE "${pattern}" "/proc/${pid}/maps" 2>/dev/null \
+        || run_as_user "${PG_OWNER}" grep -qE "${pattern}" "/proc/${pid}/maps" 2>/dev/null
+}
+
 start_or_restart_postgres() {
+    local library_replaced=false
+    if postmaster_runs_replaced_documentdb_library; then
+        library_replaced=true
+        log_info "PostgreSQL still runs the DocumentDB libraries it loaded before a package upgrade; it must restart before the extensions can be updated."
+    fi
+
     # Brownfield: never touch the system PostgreSQL service. We print the
     # required reload/restart command and rely on the operator to execute
     # it once they've inspected the config block we wrote.
@@ -3092,7 +3159,7 @@ start_or_restart_postgres() {
         # broken postgresql@18-.service; Debian vs RHEL layout is handled there.
         local reload_hint=""
         reload_hint="sudo systemctl reload $(resolve_brownfield_pg_service_unit)"
-        if [[ "${PG_CONFIG_CHANGED}" == "true" ]]; then
+        if [[ "${PG_CONFIG_CHANGED}" == "true" || "${library_replaced}" == "true" ]]; then
             # pg_documentdb is a
             # shared_preload_libraries extension — it won't load until the
             # postmaster restarts. We wrote shared_preload_libraries via
@@ -3103,14 +3170,24 @@ start_or_restart_postgres() {
             # (managed blocks in hba/ident/conf, gateway role, drop-in)
             # but no extension, no admin user, and no working gateway.
             # Stop here and tell the operator to restart PG + re-run.
-            log_warn "Brownfield mode: PostgreSQL must be restarted to pick up shared_preload_libraries changes."
+            if [[ "${PG_CONFIG_CHANGED}" == "true" ]]; then
+                log_warn "Brownfield mode: PostgreSQL must be restarted to pick up shared_preload_libraries changes."
+            else
+                log_warn "Brownfield mode: PostgreSQL must be restarted to load the upgraded DocumentDB libraries."
+            fi
             log_warn "    Run: ${reload_hint/reload/restart}"
             log_warn ""
-            log_warn "documentdb-setup is exiting BEFORE running CREATE EXTENSION because"
-            log_warn "pg_documentdb is a preload library and will not load until the"
-            log_warn "postmaster has restarted. Re-run this command after PostgreSQL has"
-            log_warn "been restarted; the second run will detect that the managed blocks"
-            log_warn "are already in place and proceed to CREATE EXTENSION + admin bootstrap."
+            if [[ "${PG_CONFIG_CHANGED}" == "true" ]]; then
+                log_warn "documentdb-setup is exiting BEFORE running CREATE EXTENSION because"
+                log_warn "pg_documentdb is a preload library and will not load until the"
+                log_warn "postmaster has restarted. Re-run this command after PostgreSQL has"
+                log_warn "been restarted; the second run will detect that the managed blocks"
+                log_warn "are already in place and proceed to CREATE EXTENSION + admin bootstrap."
+            else
+                log_warn "documentdb-setup is exiting BEFORE updating the extensions, which fails"
+                log_warn "until PostgreSQL runs the upgraded libraries. The extensions are still"
+                log_warn "at their old version: re-run this command after PostgreSQL has been restarted."
+            fi
             log_warn ""
             log_warn "Steps:"
             log_warn "  1. ${reload_hint/reload/restart}"
@@ -3193,6 +3270,9 @@ start_or_restart_postgres() {
             if [[ "${PG_CONFIG_CHANGED}" == "true" ]]; then
                 confirm_or_apply "Restart ${pg_unit} to apply shared_preload_libraries changes" \
                     systemctl restart "${pg_unit}"
+            elif [[ "${library_replaced}" == "true" ]]; then
+                confirm_or_apply "Restart ${pg_unit} to load the upgraded DocumentDB libraries" \
+                    systemctl restart "${pg_unit}"
             elif [[ "${PG_RELOAD_CHANGED}" == "true" ]]; then
                 confirm_or_apply "Reload ${pg_unit} to apply hba/ident changes" \
                     systemctl reload-or-restart "${pg_unit}"
@@ -3211,6 +3291,9 @@ start_or_restart_postgres() {
                 # -l as on start: without it the new postmaster inherits our
                 # stdout and a piped caller (| tee, $(...)) never sees EOF.
                 run_as_user documentdb-local "${PG_CTL}" -D "${DATA_DIR}" -l "${DATA_DIR}/pglog.log" -w restart
+            elif [[ "${library_replaced}" == "true" ]]; then
+                confirm_or_apply "Restart PostgreSQL to load the upgraded DocumentDB libraries" \
+                    run_as_user documentdb-local "${PG_CTL}" -D "${DATA_DIR}" -l "${DATA_DIR}/pglog.log" -w restart
             elif [[ "${PG_RELOAD_CHANGED}" == "true" ]]; then
                 log_info "Authentication mapping changed; reloading PostgreSQL configuration."
                 run_as_user documentdb-local "${PG_CTL}" -D "${DATA_DIR}" reload
@@ -3238,8 +3321,37 @@ reload_self_managed_postgres_auth_mapping() {
     PG_RELOAD_CHANGED=false
 }
 
+# admin_users_sql: the login roles that hold documentdb_admin_role, one per
+# row, without the names the gateway refuses. Members through other roles count
+# (root and custom roles reach the admin role that way); a role's creator holds
+# it with ADMIN OPTION only and is not a member in effect.
+admin_users_sql() {
+    cat <<'SQL'
+WITH RECURSIVE members(oid) AS (
+    SELECT oid FROM pg_roles WHERE rolname = 'documentdb_admin_role'
+    UNION
+    SELECT m.member FROM pg_auth_members m JOIN members ON m.roleid = members.oid
+    WHERE m.inherit_option OR m.set_option
+)
+SELECT r.rolname FROM pg_roles r JOIN members ON members.oid = r.oid
+WHERE r.rolcanlogin AND r.rolname !~* '^(documentdb|citus|pg|internal_role)'
+ORDER BY 1;
+SQL
+}
+
 create_required_extensions_and_users() {
     log_info "Creating required extensions and roles."
+
+    # The state file is written before a first run ends, so it can name an install that never got this far.
+    if [[ "${KEEP_ADMIN_USERS:-}" == "true" ]]; then
+        local installed=""
+        installed="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v ON_ERROR_STOP=1 <<'SQL'
+SELECT 1 FROM pg_extension WHERE extname = 'documentdb';
+SQL
+        )" || die "Could not check for the documentdb extension."
+        [[ -n "${installed}" ]] \
+            || die "DocumentDB is not set up on this PostgreSQL instance yet, so there are no admin users to keep. Re-run with --admin-user NAME and a password source."
+    fi
 
     confirm_or_apply "Run CREATE EXTENSION documentdb CASCADE in the postgres database" \
         _create_documentdb_extension_inline
@@ -3251,6 +3363,20 @@ create_required_extensions_and_users() {
 
     confirm_or_apply "Install temporary getParameter rejection stub if the backend function is missing" \
         _install_getparameter_stub
+
+    if [[ "${KEEP_ADMIN_USERS:-}" == "true" ]]; then
+        local admins=""
+        admins="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v ON_ERROR_STOP=1 \
+            <<<"$(admin_users_sql)")" || die "Could not list the DocumentDB admin users."
+        admins="${admins//$'\n'/ }"
+        # A warning, not a refusal: PostgreSQL and the extensions were already changed above.
+        if [[ -z "${admins}" ]]; then
+            log_warn "Found no DocumentDB admin user. Create one with: sudo documentdb-gateway-admin create-user --username <name> --password-file <file>"
+        else
+            log_info "Keeping the existing admin users: ${admins}. Pass --admin-user to add one or to reset its password."
+        fi
+        return 0
+    fi
 
     if run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v ON_ERROR_STOP=1 -v role_name="${USERNAME}" <<'SQL' | grep -q '^1$'; then
 SELECT 1 FROM pg_roles WHERE rolname = :'role_name';
@@ -3273,15 +3399,8 @@ SQL
 
     # A different --admin-user on a rerun adds an admin; it never replaces one.
     local other_admins=""
-    other_admins="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA -v role_name="${USERNAME}" 2>/dev/null <<'SQL' | paste -sd ' ' - || true
-SELECT r.rolname FROM pg_roles r
-JOIN pg_auth_members m ON m.member = r.oid
-JOIN pg_roles g ON g.oid = m.roleid
-WHERE g.rolname = 'documentdb_admin_role' AND r.rolcanlogin
-  AND r.rolname <> :'role_name' AND r.rolname !~* '^(documentdb|citus|pg|internal_role)'
-ORDER BY 1;
-SQL
-    )"
+    other_admins="$(run_as_user "${PG_OWNER}" "${PSQL}" -h "${PG_SOCKET_DIR}" -p "${PG_PORT}" -d postgres -X -tA 2>/dev/null \
+        <<<"$(admin_users_sql)" | grep -vxF -- "${USERNAME}" | paste -sd ' ' - || true)"
     if [[ -n "${other_admins}" ]]; then
         log_warn "Adding admin user '${USERNAME}' alongside the existing DocumentDB admin(s): ${other_admins}. They keep full access; remove one with: sudo documentdb-gateway-admin drop-user --username <name>"
     fi
@@ -3945,14 +4064,20 @@ print_completion_message() {
     # and pointing out how to switch DBs.
     # URI-encode, and encode ' too (jq 1.6's @uri keeps it) so nothing can
     # close the single quotes.
-    local encoded_user
-    encoded_user="$(jq -rn --arg u "${USERNAME}" '$u | @uri' | sed "s/'/%27/g")"
+    local encoded_user="<admin-user>"
+    if [[ -n "${USERNAME}" ]]; then
+        encoded_user="$(jq -rn --arg u "${USERNAME}" '$u | @uri' | sed "s/'/%27/g")"
+    fi
     connect_uri="mongosh 'mongodb://"
     connect_uri+="${encoded_user}:<your-password>@${connect_host}/mydb?${connect_opts}'"
     log_success "DocumentDB is ready."
     echo "Connect with:"
     echo "  ${connect_uri}"
-    echo "  Replace <your-password> with the password you provided."
+    if [[ -n "${USERNAME}" ]]; then
+        echo "  Replace <your-password> with the password you provided."
+    else
+        echo "  Replace <admin-user> and <your-password> with an existing admin user's credentials."
+    fi
     echo "  Replace mydb with any DB name; a fresh DB is created on the first insert."
     if ! command_exists mongosh; then
         echo "  Note: mongosh is not installed on this host; install it to run the command above."
@@ -4094,11 +4219,13 @@ print_completion_message() {
             # creates or resets that account, so following a plain "re-run
             # documentdb-setup" hint can silently mint a second
             # full-privilege admin.
-            echo "  Restart:    re-run sudo documentdb-setup with the SAME --admin-user"
-            echo "              and --admin-password-file you used for this install"
-            echo "              (restarts any non-systemd component; a bare re-run"
-            echo "               would prompt for an admin name and could create"
-            echo "               another account)"
+            local _rerun="--pg-version ${PG_VERSION}"
+            [[ -z "${TARGET_CLUSTER}" ]] || _rerun="--target-postgres-instance ${TARGET_CLUSTER}"
+            echo "  Restart:    re-run sudo documentdb-setup ${_rerun}, plus any"
+            echo "              --data-dir / --pg-port used for this install"
+            echo "              (restarts any non-systemd component and keeps the admin"
+            echo "               users; a bare re-run would prompt for an admin name and"
+            echo "               could create another account)"
         fi
     fi
     echo "  Health:     sudo documentdb-setup --status"
@@ -4612,11 +4739,12 @@ status_database_check() {
     # -w and the timeouts: a status probe must never prompt or hang.
     if ! admins="$(run_as_user documentdb-gateway env PGCONNECT_TIMEOUT=5 PGOPTIONS='-c statement_timeout=5000' \
             "${psql_bin}" -X -w -A -t -q -d "${url}" -c \
-            "SELECT coalesce(string_agg(r.rolname, ' ' ORDER BY r.rolname), '') FROM pg_roles r JOIN pg_auth_members m ON m.member = r.oid JOIN pg_roles g ON g.oid = m.roleid WHERE g.rolname = 'documentdb_admin_role' AND r.rolcanlogin AND r.rolname !~* '^(documentdb|citus|pg|internal_role)'" \
+            "$(admin_users_sql)" \
             2>/dev/null)"; then
         printf 'not answering (PostgreSQL refused or did not answer the gateway connection in %s)' "${url_file}"
         return 0
     fi
+    admins="${admins//$'\n'/ }"
     if [[ -z "${admins}" ]]; then
         printf 'no DocumentDB admin user (create one with: sudo documentdb-gateway-admin create-user --username <name> --password-file <file>)'
         return 0
@@ -4749,7 +4877,10 @@ main() {
     # run `sudo documentdb-setup` and answer two prompts (user, password)
     # rather than reading the help to discover the flag is required.
     # Non-TTY callers (CI, unattended) still hit the usage+exit branch.
-    if [[ -z "${USERNAME}" && "${RESTORE}" != "true" ]]; then
+    if [[ -z "${USERNAME}" && "${RESTORE}" != "true" ]] && existing_install_named; then
+        KEEP_ADMIN_USERS=true
+    fi
+    if [[ -z "${USERNAME}" && "${RESTORE}" != "true" && "${KEEP_ADMIN_USERS}" != "true" ]]; then
         # --dry-run needs no real username — it only appears in the preview
         # text — so default it instead of prompting or erroring. This used
         # to fall into the non-interactive error branch below, which told an
@@ -4779,7 +4910,7 @@ main() {
 
     # Before the dry-run preview and any mutation: a name PostgreSQL or the
     # gateway refuses used to install fully and leave an admin that can't log in.
-    if [[ "${RESTORE}" != "true" ]]; then
+    if [[ "${RESTORE}" != "true" && "${KEEP_ADMIN_USERS}" != "true" ]]; then
         documentdb_validate_username "${USERNAME}" \
             || die "Admin username '${USERNAME}' is not allowed (see above). Choose a different --admin-user."
     fi
@@ -5385,7 +5516,11 @@ main() {
             log_info "[dry-run]   data dir: ${DATA_DIR}"
             log_info "[dry-run]   PG port: ${PG_PORT}, gateway port: ${GATEWAY_PORT}"
         fi
-        log_info "[dry-run]   admin user: ${USERNAME}"
+        if [[ "${KEEP_ADMIN_USERS}" == "true" ]]; then
+            log_info "[dry-run]   admin user: none given; the install's existing admin users are kept"
+        else
+            log_info "[dry-run]   admin user: ${USERNAME}"
+        fi
         log_info "[dry-run]   side-effect steps that would run (each gated by [y/N/dry-run] when --yes is not set):"
         if [[ -z "${TARGET_CLUSTER}" ]]; then
             log_info "[dry-run]     - Create ${DATA_DIR} owned by documentdb-local:documentdb-local${_datadir_note}"
@@ -5399,9 +5534,12 @@ main() {
             log_info "[dry-run]     - documentdb-register-gateway --yes --pg-owner postgres  (writes pg_hba.conf, pg_ident.conf, gateway role, ${_gw_url_file})"
             log_info "[dry-run]     - Print 'systemctl reload postgresql@${preview_pg_version}-${preview_cluster_name}' for the operator to run"
         fi
-        log_info "[dry-run]     - psql: CREATE EXTENSION documentdb CASCADE${_ext_note}"
+        log_info "[dry-run]     - restart PostgreSQL if it still runs DocumentDB libraries a package upgrade replaced (an adopted instance: print the restart and exit)"
+        log_info "[dry-run]     - psql: CREATE EXTENSION documentdb CASCADE${_ext_note}, then ALTER EXTENSION ... UPDATE to the installed version"
         log_info "[dry-run]     - psql: install temporary getParameter rejection stub if the backend function is missing"
-        log_info "[dry-run]     - psql: bootstrap admin user '${USERNAME}' via documentdb_api.create_user()${_admin_note}"
+        if [[ "${KEEP_ADMIN_USERS}" != "true" ]]; then
+            log_info "[dry-run]     - psql: bootstrap admin user '${USERNAME}' via documentdb_api.create_user()${_admin_note}"
+        fi
         log_info "[dry-run]     - systemctl enable documentdb-gateway-local@${preview_pg_version}.service"
         log_info "[dry-run]     - systemctl start  documentdb-gateway-local@${preview_pg_version}.service"
         # Enable per-major
