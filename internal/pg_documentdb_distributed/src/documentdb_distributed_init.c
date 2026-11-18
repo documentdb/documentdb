@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/documentdb_distributed_init.c
  *
@@ -11,6 +12,7 @@
 #include <utils/guc.h>
 
 #include "documentdb_distributed_init.h"
+#include "metadata/documentdb_distributed_extension_version.h"
 
 
 /* --------------------------------------------------------- */
@@ -57,6 +59,13 @@ bool AddNodePortToNodeName = DEFAULT_ADD_NODE_PORT_TO_NODE_NAME;
 /* --------------------------------------------------------- */
 /* Top level exports */
 /* --------------------------------------------------------- */
+
+const char *
+GetDocumentDBDistributedBinaryVersion(void)
+{
+	return EXTENSION_VERSION_STR;
+}
+
 
 /*
  * Initializes core configurations pertaining to documentdb distributed.

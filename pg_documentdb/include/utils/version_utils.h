@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * include/utils/version_utils.h
  *
@@ -21,6 +22,8 @@ typedef enum DocumentsMajorVersion
 	DocDB_V3 = 3,
 	DocDB_V4 = 4,
 } MajorVersion;
+
+PGDLLEXPORT const char * GetDocumentDBBinaryVersion(void);
 
 bool IsClusterVersionAtleast(MajorVersion major, int minor, int patch);
 bool IsClusterVersionAtLeastPatch(MajorVersion major, int minor, int patch);

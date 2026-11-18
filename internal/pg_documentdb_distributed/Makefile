@@ -2,6 +2,7 @@ EXTENSION = documentdb_distributed
 
 # compilation configuration
 MODULE_big = pg_$(EXTENSION)
+EXTENSION_VERSION_HEADER = documentdb_distributed_extension_version.h
 
 SQL_DEPDIR=.deps/sql
 SQL_BUILDDIR=build/sql
@@ -10,6 +11,7 @@ template_sql_files = $(wildcard sql/*.sql)
 generated_sql_files = $(patsubst %,build/%,$(template_sql_files))
 DATA_built = $(generated_sql_files)
 sql_file_inputs = $(wildcard sql/**/*.sql)
+version_file_inputs = documentdb_distributed.control $(OSS_SRC_DIR)/scripts/generate_extension_version.sh
 
 BUILD_SCRIPT_DIR = ../../
 OSS_SRC_DIR = ../../
@@ -125,4 +127,4 @@ $(generated_sql_files): build/%: %
 
 include $(OSS_SRC_DIR)/Makefile.versions
 
-src/documentdb_extension_version.o : build/include/metadata/documentdb_extension_version.h
+src/documentdb_distributed_init.o: build/include/metadata/$(EXTENSION_VERSION_HEADER)

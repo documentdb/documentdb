@@ -1,6 +1,7 @@
 .PHONY: all clean install check check-minimal check-regress build-sql generate_errors_file clean-sql trim_installed_data_files citus-indent analysis
 EXTENSION = documentdb_core
 MODULE_big = pg_$(EXTENSION)
+EXTENSION_VERSION_HEADER = documentdb_core_extension_version.h
 
 SQL_DEPDIR=.deps/sql
 SQL_BUILDDIR=build/sql
@@ -9,6 +10,7 @@ template_sql_files = $(wildcard sql/*.sql)
 generated_sql_files = $(patsubst %,build/%,$(template_sql_files))
 DATA_built = $(generated_sql_files)
 sql_file_inputs = $(wildcard sql/**/*.sql)
+version_file_inputs = documentdb_core.control $(OSS_SRC_DIR)/scripts/generate_extension_version.sh
 
 DOCDB_CORE_DIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
 BUILD_SCRIPT_DIR = ../
@@ -95,3 +97,7 @@ $(generated_sql_files): build/%: %
 	@# -imacros is used to specify a file that defines macros for the global context but its output is thrown away.
 	@# `man cpp` for further information
 	cpp -undef -w $(SQL_DEFINES) -imacros $(OSS_COMMON_SQL_HEADER) -P -MMD -MP -MF$(SQL_DEPDIR)/$(*F).Po -MT$@ $< > $@
+
+include $(OSS_SRC_DIR)/Makefile.versions
+
+src/pg_documentdb_core.o: build/include/metadata/$(EXTENSION_VERSION_HEADER)
