@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- * SPDX-License-Identifier: MIT
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/configs/feature_flag_configs.c
  *
@@ -1590,7 +1590,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 	DefineCustomBoolVariable(
 		psprintf("%s.enable_cursor_cleanup_background", newGucPrefix),
 		gettext_noop(
-			"Reserved for future role-neutral cursor cleanup through the background worker."),
+			"Transfer primary cursor cleanup to the background worker when the promotion barrier is enabled."),
 		NULL, &EnableCursorCleanupBackground,
 		DEFAULT_ENABLE_CURSOR_CLEANUP_BACKGROUND,
 		PGC_USERSET, 0, NULL, NULL, NULL);

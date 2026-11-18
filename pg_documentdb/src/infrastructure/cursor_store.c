@@ -56,6 +56,7 @@
 
 extern char *ApiGucPrefix;
 extern bool EnableBackgroundWorker;
+extern bool EnableCursorCleanupBackground;
 extern bool EnableCursorCleanupInRecovery;
 extern bool CleanupCursorFiles;
 extern int MaxAllowedCursorIntermediateFileSizeMB;
@@ -151,7 +152,8 @@ static void TryCleanUpAndReserveCursor(void);
 static CursorFileSize TryDeleteCursorFile(struct dirent *de,
 										  int64_t expiryTimeLimitSeconds);
 static void CursorDirectoryCleanupCore(int64_t expiryTimeLimitSeconds);
-static bool ShouldScheduleCursorCleanupInRecovery(void);
+static bool BackgroundWorkerOwnsPrimaryCursorCleanup(void);
+static bool ShouldScheduleCursorCleanupOnBackgroundWorker(void);
 
 
 static CursorStoreSharedData *CursorStoreSharedState = NULL;
@@ -174,6 +176,11 @@ static const char *cursor_directory = "pg_documentdb_cursor_files";
 Datum
 cursor_directory_cleanup(PG_FUNCTION_ARGS)
 {
+	if (!RecoveryInProgress() && BackgroundWorkerOwnsPrimaryCursorCleanup())
+	{
+		PG_RETURN_VOID();
+	}
+
 	int64_t expiryTimeLimitSeconds = PG_ARGISNULL(0) ?
 									 DefaultCursorExpiryTimeLimitSeconds :
 									 PG_GETARG_INT64(0);
@@ -184,12 +191,14 @@ cursor_directory_cleanup(PG_FUNCTION_ARGS)
 
 
 /*
- * Runs cursor cleanup only while the server is in recovery.
+ * Runs cursor cleanup when the background worker owns the current role.
  */
 Datum
 cursor_directory_cleanup_background(PG_FUNCTION_ARGS)
 {
-	if (!EnableCursorCleanupInRecovery || !RecoveryInProgress())
+	bool inRecovery = RecoveryInProgress();
+	if (inRecovery ? !EnableCursorCleanupInRecovery :
+		!BackgroundWorkerOwnsPrimaryCursorCleanup())
 	{
 		PG_RETURN_VOID();
 	}
@@ -267,7 +276,7 @@ CursorDirectoryCleanupCore(int64_t expiryTimeLimitSeconds)
 
 
 /*
- * Registers recovery-only cursor cleanup with the background worker.
+ * Registers node-local cursor cleanup for both server roles.
  */
 void
 RegisterCursorCleanupBackgroundWorkerJob(void)
@@ -280,7 +289,7 @@ RegisterCursorCleanupBackgroundWorkerJob(void)
 	BackgroundWorkerJob cursorCleanupJob = {
 		.jobId = DOCUMENTDB_CURSOR_CLEANUP_JOBID,
 		.jobName = "documentdb_cursor_cleanup_background_job",
-		.roleExecutionProfile = BackgroundWorkerJobRoleExecutionProfile_RecoveryOnly,
+		.roleExecutionProfile = BackgroundWorkerJobRoleExecutionProfile_RecoveryEligible,
 		.command = {
 			.schema = ApiInternalSchemaNameV2,
 			.name = "cursor_directory_cleanup_background"
@@ -293,7 +302,7 @@ RegisterCursorCleanupBackgroundWorkerJob(void)
 		},
 		.timeoutInSeconds = 300,
 		.toBeExecutedOnMetadataCoordinatorOnly = false,
-		.is_job_enabled_hook = ShouldScheduleCursorCleanupInRecovery
+		.is_job_enabled_hook = ShouldScheduleCursorCleanupOnBackgroundWorker
 	};
 
 	RegisterBackgroundWorkerJob(cursorCleanupJob);
@@ -301,10 +310,24 @@ RegisterCursorCleanupBackgroundWorkerJob(void)
 
 
 static bool
-ShouldScheduleCursorCleanupInRecovery(void)
+BackgroundWorkerOwnsPrimaryCursorCleanup(void)
 {
-	return EnableCursorCleanupInRecovery &&
+	return EnableBackgroundWorker && EnableBackgroundWorkerJobs &&
+		   EnableBgWorkerPromotionBarrier && EnableCursorCleanupBackground &&
 		   IsClusterVersionAtleast(DocDB_V1, 1, 0);
+}
+
+
+static bool
+ShouldScheduleCursorCleanupOnBackgroundWorker(void)
+{
+	if (!IsClusterVersionAtleast(DocDB_V1, 1, 0))
+	{
+		return false;
+	}
+
+	return RecoveryInProgress() ? EnableCursorCleanupInRecovery :
+		   BackgroundWorkerOwnsPrimaryCursorCleanup();
 }
 
 

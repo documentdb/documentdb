@@ -197,6 +197,26 @@ SELECT job_id, enabled
 
 RESET documentdb.enable_cursor_cleanup_in_recovery;
 
+SET documentdb.enable_cursor_cleanup_background TO true;
+SET documentdb.enable_bgworker_promotion_barrier TO false;
+SELECT job_id, enabled
+    FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
+    WHERE job_id = 92;
+
+SET documentdb.enable_bgworker_promotion_barrier TO true;
+SELECT job_id, enabled
+    FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
+    WHERE job_id = 92;
+
+SET documentdb.enableBackgroundWorkerJobs TO false;
+SELECT job_id, enabled
+    FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
+    WHERE job_id = 92;
+
+RESET documentdb.enableBackgroundWorkerJobs;
+RESET documentdb.enable_bgworker_promotion_barrier;
+RESET documentdb.enable_cursor_cleanup_background;
+
 -- The reset entry point is C-backed so the later shared-state implementation can land
 -- without requiring another SQL definition.
 SELECT l.lanname AS language,
