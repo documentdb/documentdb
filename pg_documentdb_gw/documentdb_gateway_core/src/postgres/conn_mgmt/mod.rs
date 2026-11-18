@@ -18,6 +18,7 @@ pub use connection::{
     Connection, QueryOptions, QueryOptionsBuilder, RequestOptions, StatementError,
 };
 pub use connection_pool::{command_deadline_for, ConnectionPool, PoolConnection};
+pub(crate) use pool_manager::UserPoolKey;
 pub use pool_manager::{
     clean_unused_pools, create_connection_pool_manager, get_fe_system_connection_budget,
     get_max_auth_connections, get_max_system_connections, sample_pool_metrics, PoolManager,

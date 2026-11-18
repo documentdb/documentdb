@@ -6,7 +6,7 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{hash::Hash, sync::Arc};
+use std::sync::Arc;
 
 use dashmap::{mapref::entry::Entry, DashMap};
 use tokio::time::{interval, Duration, MissedTickBehavior};
@@ -29,7 +29,7 @@ use crate::{
     telemetry::event_id::EventId,
 };
 
-type ClientKey = (String, PgPoolSettings);
+pub type UserPoolKey = (String, PgPoolSettings);
 
 const DEFAULT_SYSTEM_CONNECTIONS: usize = 2;
 const AUTH_CONNECTIONS_PER_CORE: usize = 2;
@@ -98,7 +98,7 @@ pub struct PoolManager<T = NoTls> {
 
     // Maps user credentials to their respective connection pools
     // We need Arc on the ConnectionPool to allow sharing across threads from different connections
-    user_data_pools: DashMap<ClientKey, Arc<ConnectionPool>>,
+    user_data_pools: DashMap<Arc<UserPoolKey>, Arc<ConnectionPool>>,
     shared_data_pools: DashMap<PgPoolSettings, Arc<ConnectionPool>>,
 
     /// Transport security applied to every pool this manager builds. Defaults to
@@ -176,6 +176,7 @@ where
     ) -> Result<()> {
         let settings = PgPoolSettings::from_configuration(dynamic_configuration);
         self.allocate_data_pool_with_settings(username, password, settings)
+            .map(drop)
     }
 
     pub(crate) fn allocate_data_pool_with_settings(
@@ -183,8 +184,8 @@ where
         username: &str,
         password: &str,
         settings: PgPoolSettings,
-    ) -> Result<()> {
-        let key = (username.to_owned(), settings);
+    ) -> Result<Arc<UserPoolKey>> {
+        let key = Arc::new((username.to_owned(), settings));
 
         // Holding the entry serialises concurrent authentications for the same user.
         match self.user_data_pools.entry(key) {
@@ -195,13 +196,13 @@ where
                 } else {
                     pool_entry.insert(self.new_data_pool(username, password, settings)?);
                 }
+                Ok(Arc::clone(pool_entry.key()))
             }
             Entry::Vacant(pool_entry) => {
-                pool_entry.insert(self.new_data_pool(username, password, settings)?);
+                let entry = pool_entry.insert(self.new_data_pool(username, password, settings)?);
+                Ok(Arc::clone(entry.key()))
             }
         }
-
-        Ok(())
     }
 
     fn new_data_pool(
@@ -232,15 +233,11 @@ where
         dynamic_configuration: &dyn DynamicConfiguration,
     ) -> Result<Arc<ConnectionPool>> {
         let settings = PgPoolSettings::from_configuration(dynamic_configuration);
-        self.get_data_pool_with_settings(username, settings)
+        self.get_data_pool_for_key(&(username.to_owned(), settings))
     }
 
-    pub(crate) fn get_data_pool_with_settings(
-        &self,
-        username: &str,
-        settings: PgPoolSettings,
-    ) -> Result<Arc<ConnectionPool>> {
-        match self.user_data_pools.get(&(username.to_owned(), settings)) {
+    pub(crate) fn get_data_pool_for_key(&self, key: &UserPoolKey) -> Result<Arc<ConnectionPool>> {
+        match self.user_data_pools.get(key) {
             None => Err(DocumentDBError::internal_error(
                 "Connection pool missing for user.".to_owned(),
             )),
@@ -309,25 +306,16 @@ where
     }
 
     pub fn clean_unused_pools(&self, max_age: Duration) {
-        fn clean<K>(map: &DashMap<K, Arc<ConnectionPool>>, max_age: Duration)
-        where
-            K: Clone + Eq + Hash,
-        {
-            // Snapshot the keys first: `remove_if` takes the shard lock, so
-            // holding an iterator across the call would deadlock.
-            let keys: Vec<K> = map.iter().map(|entry| entry.key().clone()).collect();
+        let still_in_use = |pool: &ConnectionPool| {
+            pool.last_used().elapsed() <= max_age || pool.has_checked_out_connections()
+        };
 
-            for key in keys {
-                // Re-check under the shard lock so a pool touched since the
-                // snapshot survives.
-                map.remove_if(&key, |_, pool| {
-                    pool.last_used().elapsed() > max_age && !pool.has_checked_out_connections()
-                });
-            }
-        }
-
-        clean(&self.user_data_pools, max_age);
-        clean(&self.shared_data_pools, max_age);
+        // Each authenticated connection holds the map key until its authentication
+        // ends. Keeping the key also lets existing sessions follow credential rotation
+        // when it replaces the pool. Check ownership under the same lock as allocation.
+        self.user_data_pools
+            .retain(|key, pool| Arc::strong_count(key) > 1 || still_in_use(pool));
+        self.shared_data_pools.retain(|_, pool| still_in_use(pool));
     }
 
     /// Visits every pool this manager owns. Pool-wide reports go through this
@@ -964,18 +952,18 @@ mod tests {
 
         let dynamic_configuration = MaxConnectionConfig::new(100);
         let pool_manager = test_pool_manager();
-        let pool_for = |password: &str| {
+        let settings = PgPoolSettings::from_configuration(&dynamic_configuration);
+        let authenticate = |password: &str| {
             pool_manager
-                .allocate_data_pool("user", password, &dynamic_configuration)
-                .unwrap();
-            pool_manager
-                .get_data_pool("user", &dynamic_configuration)
+                .allocate_data_pool_with_settings("user", password, settings)
                 .unwrap()
         };
-
-        let first = pool_for("first-token");
-        let reused = pool_for("first-token");
-        let rotated = pool_for("second-token");
+        let first_key = authenticate("first-token");
+        let first = pool_manager.get_data_pool_for_key(&first_key).unwrap();
+        let reused_key = authenticate("first-token");
+        let reused = pool_manager.get_data_pool_for_key(&reused_key).unwrap();
+        let rotated_key = authenticate("second-token");
+        let rotated = pool_manager.get_data_pool_for_key(&rotated_key).unwrap();
 
         assert!(
             Arc::ptr_eq(&first, &reused),
@@ -985,6 +973,21 @@ mod tests {
             !Arc::ptr_eq(&reused, &rotated),
             "a changed credential must replace the pool"
         );
+
+        drop(rotated_key);
+        drop(reused_key);
+        pool_manager.clean_unused_pools(Duration::ZERO);
+        let current = pool_manager.get_data_pool_for_key(&first_key).unwrap();
+        assert!(
+            Arc::ptr_eq(&rotated, &current),
+            "an older session must keep the entry for the rotated pool alive"
+        );
+
+        drop(first_key);
+        pool_manager.clean_unused_pools(Duration::ZERO);
+        pool_manager
+            .get_data_pool("user", &dynamic_configuration)
+            .expect_err("the pool can be disposed after the last session drops its key");
     }
 
     #[tokio::test]
@@ -1043,20 +1046,15 @@ mod tests {
 
         let dynamic_configuration = MaxConnectionConfig::new(100);
         let pool_manager = test_pool_manager();
-        let cached_settings = PgPoolSettings::from_configuration(&dynamic_configuration);
-
-        pool_manager
-            .allocate_data_pool("user", "password", &dynamic_configuration)
+        let settings = PgPoolSettings::from_configuration(&dynamic_configuration);
+        let cached_key = pool_manager
+            .allocate_data_pool_with_settings("user", "password", settings)
             .unwrap();
-        let initial_pool = pool_manager
-            .get_data_pool_with_settings("user", cached_settings)
-            .unwrap();
+        let initial_pool = pool_manager.get_data_pool_for_key(&cached_key).unwrap();
 
         dynamic_configuration.set_max_request_timeout_sec(30);
 
-        let existing_pool = pool_manager
-            .get_data_pool_with_settings("user", cached_settings)
-            .unwrap();
+        let existing_pool = pool_manager.get_data_pool_for_key(&cached_key).unwrap();
         assert!(
             Arc::ptr_eq(&initial_pool, &existing_pool),
             "an authenticated session must retain the pool settings captured during authentication"

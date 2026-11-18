@@ -11,11 +11,15 @@
  */
 use std::time::Duration;
 
+use bson::doc;
 use documentdb_gateway_core::configuration::SetupConfiguration;
 use documentdb_tests::test_setup::{
     config::setup_configuration,
+    initialize,
     pools::{build_shared_pool_manager, TestConfiguration},
+    postgres::get_pool_manager,
 };
+use mongodb::error::Error;
 use tokio::time::sleep;
 
 /// Retention the sweeps under test are given. Long enough that a pool used
@@ -24,6 +28,43 @@ use tokio::time::sleep;
 const RETENTION: Duration = Duration::from_millis(500);
 /// Idle time applied to a pool the sweep is expected to dispose.
 const BEYOND_RETENTION: Duration = Duration::from_millis(750);
+
+#[tokio::test]
+async fn authenticated_connection_can_find_after_idle_pool_sweep() -> Result<(), Error> {
+    let client = initialize::initialize().await?;
+    let status = client
+        .database("admin")
+        .run_command(doc! { "serverStatus": 1 })
+        .await?;
+    assert_eq!(
+        status.get_i64("pid").unwrap(),
+        i64::from(std::process::id()),
+        "the client must be connected to the gateway whose pools this test sweeps"
+    );
+
+    let db = client.database("pool_retention");
+    let hello = doc! { "hello": 1 };
+    let find = doc! { "find": "items", "singleBatch": true };
+    let before = db
+        .run_command(hello.clone())
+        .await?
+        .get_i32("connectionId")
+        .unwrap();
+    db.run_command(find.clone()).await?;
+
+    // No request is using the pool. Make it eligible for idle cleanup now
+    // instead of waiting for the production retention interval.
+    get_pool_manager().clean_unused_pools(Duration::ZERO);
+
+    db.run_command(find).await?;
+    let after = db
+        .run_command(hello)
+        .await?
+        .get_i32("connectionId")
+        .unwrap();
+    assert_eq!(before, after, "the read must succeed without reconnecting");
+    Ok(())
+}
 
 /// The reported symptom was pools being disposed while they were serving
 /// requests. Both directions belong in one lifecycle: recorded activity has to
@@ -158,10 +199,8 @@ async fn handing_out_a_pool_refreshes_retention_without_acquiring_a_connection()
     );
 }
 
-/// A pool handed out between the retention snapshot and the removal must
-/// survive: the disposal predicate is re-checked while the entry is locked.
-/// Only the predicate is asserted here -- the interleaving itself needs the
-/// entry replaced mid-sweep, which has no deterministic hook.
+/// A sweep must evaluate each pool's last use independently, even when both
+/// pools were allocated together.
 #[tokio::test]
 async fn sweep_disposes_only_pools_still_idle_at_removal_time() {
     let dynamic_configuration = TestConfiguration::default();

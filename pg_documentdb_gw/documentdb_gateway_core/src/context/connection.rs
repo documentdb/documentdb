@@ -280,11 +280,12 @@ impl ConnectionContext {
         )
         .without_min_pool_size();
 
-        self.service_context
+        let key = self
+            .service_context
             .connection_pool_manager()
             .allocate_data_pool_with_settings(username, password, settings)?;
 
-        user.set_data_pool_settings(settings);
+        user.set_data_pool_key(key);
         self.user = user;
 
         Ok(())

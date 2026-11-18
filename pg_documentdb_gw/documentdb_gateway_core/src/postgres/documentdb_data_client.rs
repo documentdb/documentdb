@@ -151,13 +151,11 @@ impl PgDataClient for DocumentDBDataClient {
         service_context: &ServiceContext,
         authorization: &UserAuthState,
     ) -> Result<Self> {
-        let name = authorization.principal()?.name();
-        let data_pool_settings = authorization.data_pool_settings()?;
-
+        authorization.principal()?;
         let connection_pool = Some(
             service_context
                 .connection_pool_manager()
-                .get_data_pool_with_settings(name, data_pool_settings)?,
+                .get_data_pool_for_key(authorization.data_pool_key()?)?,
         );
 
         Ok(Self {

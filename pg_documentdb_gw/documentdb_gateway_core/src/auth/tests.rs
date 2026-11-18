@@ -8,9 +8,12 @@
  *-------------------------------------------------------------------------
  */
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -175,7 +178,7 @@ fn authentication_success_debug_redacts_pool_secret() {
 }
 
 #[tokio::test]
-async fn sasl_start_clears_authenticated_user_and_pool_settings() {
+async fn sasl_start_clears_authenticated_user_and_pool_key() {
     let dynamic_configuration = Arc::new(TestDynamicConfiguration::default());
     let mut connection_context = test_connection_context(false, dynamic_configuration, None).await;
     connection_context
@@ -216,8 +219,8 @@ async fn sasl_start_clears_authenticated_user_and_pool_settings() {
         .expect_err("starting authentication should clear the prior principal");
     connection_context
         .user()
-        .data_pool_settings()
-        .expect_err("starting authentication should clear prior pool settings");
+        .data_pool_key()
+        .expect_err("starting authentication should clear the prior pool key");
 }
 
 #[tokio::test]
@@ -238,16 +241,15 @@ async fn authentication_keeps_per_user_pool_lazy_when_shared_pool_has_minimum() 
         )
         .expect("authenticated user and data pool should be installed");
 
-    let settings = connection_context
+    let key = connection_context
         .user()
-        .data_pool_settings()
-        .expect("authenticated user should retain its pool settings");
-    assert_eq!(settings.data_pool_min_connections(), 0);
+        .data_pool_key()
+        .expect("authenticated user should retain its pool key");
 
     let pool = connection_context
         .service_context
         .connection_pool_manager()
-        .get_data_pool_with_settings("external-user", settings)
+        .get_data_pool_for_key(key)
         .expect("per-user pool should be available");
     assert_eq!(pool.get_min_pool_size(), 0);
     assert_eq!(pool.status().status().size, 0);
@@ -284,14 +286,15 @@ async fn authentication_can_switch_principal() {
             "existing-secret",
         )
         .expect("initial authenticated user and data pool should be installed");
-    let existing_settings = connection_context
+    let existing_key = connection_context
         .user()
-        .data_pool_settings()
-        .expect("existing user should retain its pool settings");
+        .data_pool_key()
+        .expect("existing user should retain its pool key")
+        .clone();
     let existing_pool = connection_context
         .service_context
         .connection_pool_manager()
-        .get_data_pool_with_settings("existing-user", existing_settings)
+        .get_data_pool_for_key(&existing_key)
         .expect("existing user pool should be available");
 
     let request = authentication_request();
@@ -315,19 +318,30 @@ async fn authentication_can_switch_principal() {
             .expect("new principal should be authenticated"),
         &new_principal
     );
-    let new_settings = connection_context
+    let new_key = connection_context
         .user()
-        .data_pool_settings()
-        .expect("new user should retain its pool settings");
-    let new_pool = connection_context
-        .service_context
-        .connection_pool_manager()
-        .get_data_pool_with_settings(new_principal.name(), new_settings)
+        .data_pool_key()
+        .expect("new user should retain its pool key")
+        .clone();
+    let service = Arc::clone(&connection_context.service_context);
+    let manager = service.connection_pool_manager();
+    manager.clean_unused_pools(Duration::ZERO);
+    manager
+        .get_data_pool_for_key(&existing_key)
+        .expect_err("switching users should release the previous user's pool key");
+    let new_pool = manager
+        .get_data_pool_for_key(&new_key)
         .expect("new user pool should be available");
     assert!(
         !Arc::ptr_eq(&existing_pool, &new_pool),
         "switching users must not reuse the previous user's connection pool"
     );
+
+    drop(connection_context);
+    manager.clean_unused_pools(Duration::ZERO);
+    manager
+        .get_data_pool_for_key(&new_key)
+        .expect_err("disconnecting should release the new user's pool key");
 }
 
 #[tokio::test]
@@ -663,15 +677,18 @@ fn failed_initial_authentication_clears_transient_state() {
 }
 
 #[test]
-fn expiration_clears_data_pool_settings() {
+fn expiration_clears_data_pool_key() {
     let mut user =
         UserAuthState::authenticated("TEST", Principal::new("external-user", 1), None, Some(0));
-    user.set_data_pool_settings(PgPoolSettings::system_pool_settings(1));
+    user.set_data_pool_key(Arc::new((
+        "external-user".to_owned(),
+        PgPoolSettings::system_pool_settings(1),
+    )));
 
     assert!(user.update_expiration_status());
     assert!(user.is_expired());
-    user.data_pool_settings()
-        .expect_err("expired authentication must not retain data pool settings");
+    user.data_pool_key()
+        .expect_err("expired authentication must not retain a data pool key");
 }
 
 async fn authenticate_and_capture_audit_events(

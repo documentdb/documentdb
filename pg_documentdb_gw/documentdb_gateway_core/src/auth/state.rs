@@ -8,11 +8,13 @@
  *-------------------------------------------------------------------------
  */
 
+use std::sync::Arc;
+
 use serde_json::Value;
 
 use crate::{
     error::{DocumentDBError, Result},
-    postgres::conn_mgmt::PgPoolSettings,
+    postgres::conn_mgmt::UserPoolKey,
     security::principal::Principal,
     time::EpochClock,
 };
@@ -34,7 +36,7 @@ pub struct UserAuthState {
     reauthentication_principal: Option<Principal>,
     metadata: Option<Value>,
     expires_at: Option<u64>,
-    data_pool_settings: Option<PgPoolSettings>,
+    data_pool_key: Option<Arc<UserPoolKey>>,
 }
 
 impl UserAuthState {
@@ -49,7 +51,7 @@ impl UserAuthState {
             reauthentication_principal,
             metadata: None,
             expires_at: None,
-            data_pool_settings: None,
+            data_pool_key: None,
         }
     }
 
@@ -69,7 +71,7 @@ impl UserAuthState {
             reauthentication_principal: None,
             metadata,
             expires_at,
-            data_pool_settings: None,
+            data_pool_key: None,
         }
     }
 
@@ -133,13 +135,14 @@ impl UserAuthState {
         Ok(())
     }
 
-    pub(crate) const fn set_data_pool_settings(&mut self, settings: PgPoolSettings) {
-        self.data_pool_settings = Some(settings);
+    pub(crate) fn set_data_pool_key(&mut self, key: Arc<UserPoolKey>) {
+        self.data_pool_key = Some(key);
     }
 
-    pub(crate) fn data_pool_settings(&self) -> Result<PgPoolSettings> {
-        self.data_pool_settings
-            .ok_or_else(|| DocumentDBError::internal_error("Data pool settings missing".to_owned()))
+    pub(crate) fn data_pool_key(&self) -> Result<&UserPoolKey> {
+        self.data_pool_key
+            .as_deref()
+            .ok_or_else(|| DocumentDBError::internal_error("Data pool key missing".to_owned()))
     }
 
     #[must_use]
@@ -187,7 +190,7 @@ impl UserAuthState {
         {
             self.status = AuthStatus::Expired;
             self.metadata = None;
-            self.data_pool_settings = None;
+            self.data_pool_key = None;
             return true;
         }
 
