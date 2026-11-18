@@ -1,3 +1,9 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ *-------------------------------------------------------------------------
+ */
 SET search_path TO documentdb_api, documentdb_api_catalog,documentdb_core;
 SET documentdb.next_collection_id TO 15000;
 SET documentdb.next_collection_index_id TO 15000;
@@ -51,6 +57,11 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIn
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+-- Background index-drop procedures are not implemented yet; both calls must error.
+CALL documentdb_api.drop_indexes_background('db', '{"dropIndexes": "collection_3", "index": "my_idx_1"}', NULL, NULL, NULL);
+ERROR:  Background index drop is not implemented
+CALL documentdb_api_internal.drop_indexes_background_internal('db', '{"dropIndexes": "collection_3", "index": "my_idx_1"}', NULL);
+ERROR:  Background index drop is not implemented
 CALL documentdb_api.drop_indexes('db', '{"dropIndexes": "collection_3", "index": ["my_idx_1", "does_not_exist"]}');
 ERROR:  index not found with name [does_not_exist]
 CALL documentdb_api.drop_indexes('db', '{"dropIndexes": "collection_3", "index": ["does_not_exist", "my_idx_1"]}');

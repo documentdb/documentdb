@@ -306,6 +306,12 @@ pub trait PgDataClient: Send + Sync {
         connection_context: &ConnectionContext,
     ) -> Result<PgResponse>;
 
+    async fn execute_drop_indexes_background(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &ConnectionContext,
+    ) -> Result<PgResponse>;
+
     async fn execute_shard_collection(
         &self,
         request_context: &RequestContext<'_>,

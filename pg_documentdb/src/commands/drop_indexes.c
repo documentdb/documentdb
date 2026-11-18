@@ -1,5 +1,7 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
  *
  * src/commands/drop_indexes.c
  *
@@ -86,6 +88,8 @@ typedef struct
 PG_FUNCTION_INFO_V1(command_drop_indexes);
 PG_FUNCTION_INFO_V1(command_drop_indexes_concurrently);
 PG_FUNCTION_INFO_V1(command_drop_indexes_concurrently_internal);
+PG_FUNCTION_INFO_V1(command_drop_indexes_background);
+PG_FUNCTION_INFO_V1(command_drop_indexes_background_internal);
 
 static DropIndexesArg ParseDropIndexesArg(pgbson *options, Datum *databaseNameDatum);
 static void DropIndexesArgExpandIndexNameList(uint64 collectionId,
@@ -105,6 +109,25 @@ static void HandleDropIndexConcurrently(uint64 collectionId, int indexId, bool u
 										bool missingOk, DropIndexesResult *result,
 										MemoryContext oldMemContext);
 static void CancelIndexBuildRequest(int indexId);
+
+/*
+ * Reserve the background-drop contract without performing index operations.
+ */
+Datum
+command_drop_indexes_background(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("Background index drop is not implemented")));
+}
+
+
+Datum
+command_drop_indexes_background_internal(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("Background index drop is not implemented")));
+}
+
 
 /*
  * command_drop_indexes is the implementation of the internal logic for

@@ -104,6 +104,7 @@ pub struct QueryCatalog {
     pub check_build_search_index_status: String,
     pub re_index: String,
     pub drop_indexes: String,
+    pub drop_indexes_background: String,
     pub list_indexes_cursor_first_page: String,
 
     // user.rs
@@ -350,6 +351,11 @@ impl QueryCatalog {
     #[must_use]
     pub fn drop_indexes(&self) -> &str {
         &self.drop_indexes
+    }
+
+    #[must_use]
+    pub fn drop_indexes_background(&self) -> &str {
+        &self.drop_indexes_background
     }
 
     #[must_use]
@@ -707,6 +713,7 @@ pub fn create_query_catalog() -> QueryCatalog {
             create_indexes_background: "SELECT * FROM documentdb_api.create_indexes_background($1, $2)".to_owned(),
             check_build_index_status: "SELECT * FROM documentdb_api_internal.check_build_index_status($1)".to_owned(),
             drop_indexes: "CALL documentdb_api.drop_indexes($1, $2)".to_owned(),
+            drop_indexes_background: "CALL documentdb_api.drop_indexes_background($1, $2, NULL, NULL, NULL)".to_owned(),
             list_indexes_cursor_first_page: "SELECT cursorPage, continuation, persistConnection, cursorId FROM documentdb_api.list_indexes_cursor_first_page($1, $2)".to_owned(),
 
             // user.rs
