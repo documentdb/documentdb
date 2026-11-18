@@ -2971,6 +2971,75 @@ exec /bin/chmod "$@"
         args = args_capture.read_text(encoding="utf-8").splitlines()
         self.assertNotIn("-c", args)
 
+    def test_data_path_with_whitespace_is_rejected_before_touching_data(self):
+        """Whitespace or a glob character in the data path used to wipe a populated /data volume."""
+        sentinel = self.data_dir / "PG_VERSION"
+        sentinel.write_text("17\n", encoding="utf-8")
+        args_capture = self._configure_toast_stubs()
+
+        cases = (
+            ("env-trailing-space", (), {"DATA_PATH": f"{self.data_dir} "}),
+            ("flag-inner-space", ("--data-path", f"{self.data_dir} backup"), {}),
+            ("env-tab", (), {"DATA_PATH": f"{self.data_dir}\t"}),
+            ("env-newline", (), {"DATA_PATH": f"{self.data_dir}\n"}),
+            # START_POSTGRESQL is true by default and by flag, not only by environment.
+            ("start-pg-defaulted", (),
+             {"START_POSTGRESQL": None, "DATA_PATH": f"{self.data_dir} "}),
+            ("start-pg-flag", ("--start-pg", "true"),
+             {"START_POSTGRESQL": "false", "DATA_PATH": f"{self.data_dir} "}),
+            # The launcher also globs the path, and each of these matches the populated directory.
+            ("glob-star", (), {"DATA_PATH": f"{self.data_dir}*"}),
+            ("glob-question-mark", ("--data-path", f"{self.root}/dat?"), {}),
+            ("glob-bracket", (), {"DATA_PATH": f"{self.root}/[d]ata"}),
+            ("glob-backslash", (), {"DATA_PATH": f"{self.root}/dat\\a"}),
+        )
+        state_file = self.data_dir / "runtime.env"
+        log_dir = self.data_dir / "logs"
+        root_entries = sorted(p.name for p in self.root.iterdir())
+        for name, args, env in cases:
+            with self.subTest(name):
+                state_file.write_text("keep\n", encoding="utf-8")
+                result = self._run_entrypoint(
+                    *args, extra_env={"START_POSTGRESQL": "true",
+                                      "DOCUMENTDB_RUNTIME_STATE_FILE": str(state_file),
+                                      "DOCUMENTDB_LOG_DIR": str(log_dir), **env}
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                expected = "would expand" if name.startswith("glob-") else "contains whitespace"
+                self.assertIn(expected, result.stderr)
+                self.assertFalse(args_capture.exists(), "start_oss_server.sh must not run")
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "17\n")
+                self.assertEqual(state_file.read_text(encoding="utf-8"), "keep\n",
+                                 "nothing may be written before the refusal")
+                self.assertFalse(log_dir.exists(), "nothing may be written before the refusal")
+                self.assertEqual(
+                    sorted(p.name for p in self.root.iterdir()),
+                    root_entries,
+                    "no sibling directory may be created",
+                )
+
+        # Only the blanks a shell splits on are refused: this run reaches the
+        # (failing) launcher.
+        self._write_exec(self.gateway_scripts / "start_oss_server.sh", "#!/bin/sh\nexit 1\n")
+        result = self._run_entrypoint(
+            extra_env={"START_POSTGRESQL": "true", "DATA_PATH": f"{self.data_dir}\v"}
+        )
+        self.assertNotIn("contains whitespace", result.stderr)
+        self.assertIn("start_oss_server.sh failed", result.stderr)
+
+        # Without a local PostgreSQL the data path is not handed to the launcher, so it is not refused.
+        result = self._run_entrypoint(
+            extra_env={"START_POSTGRESQL": "false", "DATA_PATH": f"{self.data_dir} backup"}
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("contains whitespace", result.stderr)
+
+    def test_usage_documents_the_data_path_restriction(self):
+        result = self._run_entrypoint("--help")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("backslashes or any of * ? [", result.stdout)
+
     def test_get_parameter_stub_returns_command_not_supported(self):
         sql_capture = self._configure_postgres_stubs()
 

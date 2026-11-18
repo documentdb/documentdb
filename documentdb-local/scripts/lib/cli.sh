@@ -35,6 +35,8 @@ Optional arguments:
                         (e.g. if DATA_PATH=/usr/documentdb/data, you'd add an option like the following to your
                         docker run: --mount type=bind,source=./.local/data,target=/usr/documentdb/data)
                         Defaults to ${d_data}
+                        When the image starts PostgreSQL, must not contain
+                        spaces, tabs, newlines, backslashes or any of * ? [
                         Overrides DATA_PATH environment variable.
                         Fast first boot: the image ships a pre-initialized
                         data directory that Docker copies into fresh NAMED or
@@ -283,6 +285,19 @@ EOF
 
     # The one computed default: the user this process runs as.
     export OWNER=${OWNER:-$(whoami)}
+
+    # The shared launcher expands the data path unquoted, so "/data " or "/data*" empties the /data volume.
+    # Refused here, before reset_runtime_state makes the first write.
+    if [ "$START_POSTGRESQL" = "true" ]; then
+        case "$DATA_PATH" in
+            *[$' \t\n']*)
+                echo "Error: data path '$DATA_PATH' contains whitespace. Check --data-path / DATA_PATH for a stray space, for example at the end of an env-file line." >&2
+                exit 1 ;;
+            *\**|*\?*|*\[*|*\\*)
+                echo "Error: data path '$DATA_PATH' contains *, ?, [ or a backslash, which the shell would expand to another directory. Use a path without them." >&2
+                exit 1 ;;
+        esac
+    fi
 }
 
 validate_settings() {
