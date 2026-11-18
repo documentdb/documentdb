@@ -144,8 +144,7 @@ stage_rpm_package() {
 if [[ "${PACKAGE_TYPE}" == "deb" ]]; then
     DEB_ARCH="${ARCH}"
     POOL_DIR="${REPOSITORY_DIR}/deb/pool"
-    INDEX_DIR="${REPOSITORY_DIR}/deb/dists/stable/ubuntu24/binary-${DEB_ARCH}"
-    mkdir -p "${POOL_DIR}" "${INDEX_DIR}"
+    mkdir -p "${POOL_DIR}"
 
     for package in "postgresql-${PG_MAJOR}-documentdb" documentdb-gateway \
         documentdb-postgresql-tools documentdb-common "documentdb-${PG_MAJOR}"; do
@@ -153,24 +152,28 @@ if [[ "${PACKAGE_TYPE}" == "deb" ]]; then
             { echo "Required DEB package is missing: ${package}" >&2; exit 1; }
     done
 
-    (
-        cd "${REPOSITORY_DIR}/deb"
-        dpkg-scanpackages pool /dev/null > "dists/stable/ubuntu24/binary-${DEB_ARCH}/Packages"
-        gzip -9c "dists/stable/ubuntu24/binary-${DEB_ARCH}/Packages" \
-            > "dists/stable/ubuntu24/binary-${DEB_ARCH}/Packages.gz"
-        apt-ftparchive \
-            -o APT::FTPArchive::Release::Origin=DocumentDB \
-            -o APT::FTPArchive::Release::Label=DocumentDB \
-            -o APT::FTPArchive::Release::Suite=stable \
-            -o APT::FTPArchive::Release::Codename=stable \
-            -o APT::FTPArchive::Release::Architectures="${DEB_ARCH} all" \
-            -o APT::FTPArchive::Release::Components=ubuntu24 \
-            release dists/stable > dists/stable/Release
-        GNUPGHOME="${GNUPG_HOME}" gpg --batch --yes --local-user "${KEY_FINGERPRINT}" \
-            --clearsign --output dists/stable/InRelease dists/stable/Release
-        GNUPGHOME="${GNUPG_HOME}" gpg --batch --yes --local-user "${KEY_FINGERPRINT}" \
-            --armor --detach-sign --output dists/stable/Release.gpg dists/stable/Release
-    )
+    # Both channels serve the same pool, so each run can pick either suite.
+    for SUITE in latest stable; do
+        (
+            cd "${REPOSITORY_DIR}/deb"
+            mkdir -p "dists/${SUITE}/ubuntu24/binary-${DEB_ARCH}"
+            dpkg-scanpackages pool /dev/null > "dists/${SUITE}/ubuntu24/binary-${DEB_ARCH}/Packages"
+            gzip -9c "dists/${SUITE}/ubuntu24/binary-${DEB_ARCH}/Packages" \
+                > "dists/${SUITE}/ubuntu24/binary-${DEB_ARCH}/Packages.gz"
+            apt-ftparchive \
+                -o APT::FTPArchive::Release::Origin=DocumentDB \
+                -o APT::FTPArchive::Release::Label=DocumentDB \
+                -o APT::FTPArchive::Release::Suite="${SUITE}" \
+                -o APT::FTPArchive::Release::Codename="${SUITE}" \
+                -o APT::FTPArchive::Release::Architectures="${DEB_ARCH} all" \
+                -o APT::FTPArchive::Release::Components=ubuntu24 \
+                release "dists/${SUITE}" > "dists/${SUITE}/Release"
+            GNUPGHOME="${GNUPG_HOME}" gpg --batch --yes --local-user "${KEY_FINGERPRINT}" \
+                --clearsign --output "dists/${SUITE}/InRelease" "dists/${SUITE}/Release"
+            GNUPGHOME="${GNUPG_HOME}" gpg --batch --yes --local-user "${KEY_FINGERPRINT}" \
+                --armor --detach-sign --output "dists/${SUITE}/Release.gpg" "dists/${SUITE}/Release"
+        )
+    done
     BASE_IMAGE="ubuntu:24.04"
 else
     RPM_DIR="${REPOSITORY_DIR}/rpm/rhel9"
@@ -188,11 +191,17 @@ else
             --define "__gpg /usr/bin/gpg" \
             --addsign "${package}"
     done
-    createrepo_c "${RPM_DIR}"
-    GNUPGHOME="${GNUPG_HOME}" gpg --batch --yes --local-user "${KEY_FINGERPRINT}" \
-        --armor --detach-sign \
-        --output "${RPM_DIR}/repodata/repomd.xml.asc" \
-        "${RPM_DIR}/repodata/repomd.xml"
+    # rpm/rhel9 is the stable channel; latest sits beside it, as on documentdb.io.
+    LATEST_RPM_DIR="${REPOSITORY_DIR}/rpm/latest/rhel9"
+    mkdir -p "${LATEST_RPM_DIR}"
+    cp "${RPM_DIR}"/*.rpm "${LATEST_RPM_DIR}/"
+    for CHANNEL_DIR in "${RPM_DIR}" "${LATEST_RPM_DIR}"; do
+        createrepo_c "${CHANNEL_DIR}"
+        GNUPGHOME="${GNUPG_HOME}" gpg --batch --yes --local-user "${KEY_FINGERPRINT}" \
+            --armor --detach-sign \
+            --output "${CHANNEL_DIR}/repodata/repomd.xml.asc" \
+            "${CHANNEL_DIR}/repodata/repomd.xml"
+    done
     BASE_IMAGE="rockylinux/rockylinux:9"
 fi
 

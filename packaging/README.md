@@ -22,7 +22,7 @@ validation runs.
 ## Clean-host installer
 
 `packaging/install.sh` bootstraps a new installation from the signed package
-repositories on these hosts:
+repositories, or from one verified GitHub release, on these hosts:
 
 | Distribution | Architectures | PostgreSQL |
 |---|---|---|
@@ -58,23 +58,55 @@ PostgreSQL 18 is the default. An interactive PostgreSQL 17 install is:
 sh documentdb-install.sh --pg-major 17
 ```
 
-The default installs from the stable package repository. To test a release
-candidate on a clean, disposable host, select its tag explicitly:
+The installer installs one of:
+
+- The `latest` channel, the default on a host that follows no channel yet: it
+  configures the `latest` DocumentDB package repository, which carries the
+  newest GA release, and installs from it. `apt upgrade` or `dnf upgrade` then
+  follows `latest`.
+- The `stable` channel, with `--stable`: the same for the `stable`
+  repository, which can lag `latest`. Its definition is the one the 1.0
+  installer wrote, so hosts set up by that installer keep it.
+- A pinned GA release, with `--version X.Y.Z` (1.0.0 or later): its packages
+  come from its GitHub release and no DocumentDB repository is configured, so
+  the package manager never upgrades it. `1.2-0`, `v1.2-0`, and `1.2` select
+  the same release as `1.2.0`.
+
+```sh
+sh documentdb-install.sh --stable
+sh documentdb-install.sh --version 1.2.0
+```
+
+`--version latest` and `--version stable` name the channels too. With no
+selection, a host whose repository definition already names a channel keeps
+it, so hosts set up by the 1.0 installer rerun unchanged. A selected channel
+is refused, not rewritten, when that file holds the installer's definition of
+the other one: rerun with the host's channel, or remove `/etc/apt/sources.list.d/documentdb.list` or
+`/etc/yum.repos.d/documentdb.repo` to switch. Once DocumentDB is installed, the
+installer configures no repository, so switch by editing that file yourself:
+the APT suite is `latest` or `stable`, the DNF `baseurl` is
+`https://documentdb.io/rpm/latest/rhel9` or `https://documentdb.io/rpm/rhel9`.
+A pinned release refuses a host with a DocumentDB repository, and a host where
+the shared DocumentDB packages or those for the selected PostgreSQL major are
+at another version; at the same version they are reused.
+
+To test a release candidate on a clean, disposable host, select its tag
+explicitly:
 
 ```sh
 sh documentdb-install.sh --version 1.0-rc2
 ```
 
-This selects the host's five packages from that release's `SHA256SUMS`,
-downloaded over HTTPS, and verifies each before installation. Rebuilt
-packages work when their published checksums are updated; no package name or
-digest is hardcoded in the installer. RCs are not maintained and have no
-supported upgrade path; existing DocumentDB packages, configuration, or data
-are refused. The RC path does not configure a DocumentDB stable repository
-and refuses an existing one. Before installing RC packages, it records
+Pinned releases and RCs select the host's five packages from that release's
+`SHA256SUMS`, downloaded over HTTPS, and verify each before installation.
+Rebuilt packages work when their published checksums are updated; no package
+name or digest is hardcoded in the installer. RCs are not maintained and have
+no supported upgrade path; existing DocumentDB packages, configuration, or data
+are refused. The RC path does not configure a DocumentDB repository and
+refuses an existing one. Before installing RC packages, it records
 `/etc/documentdb/installer-release-candidate`; later installer runs refuse
-this host, even in stable mode. This also covers partial package installs.
-Invalid selections and failed downloads never fall back to stable.
+this host, whatever they select. This also covers partial package installs.
+Invalid selections and failed downloads never fall back to a repository.
 The original installer attached to the RC1 release lacks this option; use
 the website installer above.
 
@@ -96,7 +128,8 @@ without configuring an instance, and `--no-enable` to configure the new
 instance without starting or enabling its gateway.
 
 The installer selects the repositories required for the detected operating
-system and verifies trusted signing keys before installing packages. It does
+system and verifies trusted signing keys before installing from them; pinned
+and RC packages are checked against their release's `SHA256SUMS` instead. It does
 not replace conflicting repository or key configuration. An already configured
 setup is not overwritten, and brownfield or otherwise conflicting package,
 configuration, or data state is refused. This bootstrap makes no upgrade or
