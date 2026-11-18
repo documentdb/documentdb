@@ -97,10 +97,7 @@ pub fn process(
         response_doc.append("localTime", local_time);
         response_doc.append("logicalSessionTimeoutMinutes", 30);
         response_doc.append("minWireVersion", 0);
-        response_doc.append(
-            "maxWireVersion",
-            dynamic_configuration.server_version().max_wire_protocol(),
-        );
+        response_doc.append("maxWireVersion", dynamic_configuration.max_wire_version());
     } else {
         response_doc.append("errmsg", ENDPOINT_NOT_ROUTABLE_MESSAGE);
     }
