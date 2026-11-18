@@ -588,7 +588,7 @@ RumNewBuffer(Relation index)
 				 * Without it, a streaming standby can retain a stale physical
 				 * reference when this block is overwritten for reuse.
 				 */
-				if (RumEnableEmitReusePageOnRecycle &&
+				if (RelationNeedsWAL(index) && RumEnableEmitReusePageOnRecycle &&
 					XLogStandbyInfoActive())
 				{
 					RumLogReusePage(index, buffer);

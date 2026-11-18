@@ -1,4 +1,7 @@
 ### documentdb v1.4-0 (Unreleased) ###
+* Report collection autovacuum and autoanalyze workers in `currentOp` as `autocompact`, including maintenance progress even when application-name filtering is enabled. *[Feature]*
+* Use Generic WAL for built-in-rmgr RUM entry inserts when GIN WAL consistency checking is enabled, preventing false GIN consistency failures caused by unlogged hints. Normal optimized inserts continue to use GIN WAL. *[Bugfix]*
+* Skip page-reuse WAL for unlogged and temporary RUM indexes, avoiding unnecessary recovery-conflict cancellations of unrelated standby readers. *[Bugfix]*
 * Let the native planner generate and cost eligible composite index-only scans, including parallel scans, through a planner support marker, while preserving sample-scan eligibility, covered ordered-merge scans, and unfiltered primary-key index-only scans. Controlled by the default-on `documentdb.enable_native_planner_index_only_scan` setting. *[Perf]*
 * Run recovery cursor cleanup through its dedicated background-worker entry point while retaining the scheduled cleanup entry point. *[Refactor]*
 * Add the default-off `documentdb_rum.enable_single_pass_deferred_leaf_delete` setting, which makes single-pass RUM vacuum delete an emptied posting-tree leaf only after vacuuming its right sibling. The delete rewrites that sibling's left link, so deleting first can log a full-page image of the sibling while its dead items are still on it. This reduces WAL volume for range deletes without changing which pages are reclaimed. *[Perf]*

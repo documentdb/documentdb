@@ -15,6 +15,8 @@
 #include "postgres.h"
 
 #include "access/generic_xlog.h"
+#include "access/rmgr.h"
+#include "access/xlog.h"
 #include "miscadmin.h"
 #include "storage/predicate.h"
 
@@ -641,13 +643,23 @@ rumPlaceToPage(RumBtree btree, RumBtreeStack *stack,
 	bool requireWalFromPlaceToPage = false;
 	if (btree->isEnoughSpace(btree, stack->buffer, stack->off))
 	{
+		bool useEntryWal = RelationNeedsWAL(btree->index) &&
+						   SupportsXLogInsertForEntry(page, childbuf);
+
+#ifdef RUM_BUILT_IN_RMGR_MODE
+		if (useEntryWal && wal_consistency_checking[RM_GIN_ID])
+		{
+			/* GIN's mask does not normalize RUM hints. */
+			useEntryWal = false;
+		}
+#endif
+
 		if (btree->rumstate->isBuild)
 		{
 			page = BufferGetPage(stack->buffer);
 			START_CRIT_SECTION();
 		}
-		else if (RelationNeedsWAL(btree->index) &&
-				 SupportsXLogInsertForEntry(page, childbuf))
+		else if (useEntryWal)
 		{
 			/* Entry page XLog is handled inside placeToPage */
 			START_CRIT_SECTION();

@@ -685,7 +685,10 @@ WorkerGetBaseActivities(void)
 							 DistributedApplicationNamePrefix);
 		}
 
-		appendStringInfoString(queryInfo, ") ");
+		appendStringInfoString(queryInfo,
+							   " OR (pa.backend_type = 'autovacuum worker'"
+							   " AND pa.datname = current_database()"
+							   " AND collectionRawName IS NOT NULL)) ");
 	}
 
 	List *workerActivities = NIL;
@@ -1199,6 +1202,11 @@ WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 		}
 	}
 
+	const char *compactCommandName =
+		activity->backendType != NULL &&
+		strcmp(activity->backendType, "autovacuum worker") == 0 ?
+		"autocompact" : "compact";
+
 	if (strstr(query, "CREATE INDEX") != NULL ||
 		strstr(query, "CREATE  INDEX") != NULL)
 	{
@@ -1234,7 +1242,8 @@ WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 	}
 	else if (strstr(query, "VACUUM") != NULL)
 	{
-		PgbsonWriterAppendUtf8(commandWriter, "compact", 7,
+		PgbsonWriterAppendUtf8(commandWriter, compactCommandName,
+							   strlen(compactCommandName),
 							   activity->processedMongoCollection);
 		if (strstr(query, "VACUUM FULL") != NULL)
 		{
@@ -1254,7 +1263,8 @@ WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 	}
 	else if (strstr(query, "ANALYZE") != NULL)
 	{
-		PgbsonWriterAppendUtf8(commandWriter, "compact", 7,
+		PgbsonWriterAppendUtf8(commandWriter, compactCommandName,
+							   strlen(compactCommandName),
 							   activity->processedMongoCollection);
 		PgbsonWriterAppendUtf8(commandWriter, "mode", 4, "updateStats");
 		activity->maintenanceProgressType = MAINTENANCE_PROGRESS_ANALYZE;
