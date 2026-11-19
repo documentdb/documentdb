@@ -1,0 +1,56 @@
+backend: tokio-postgres
+
+features:
+  own:
+    - serde
+    - rt_tokio_1
+    - rt_async-std_1
+
+test:
+  services:
+    postgres:
+      image: postgres:17-alpine
+      ports:
+        - 5432:5432
+      env:
+        POSTGRES_USER: deadpool
+        POSTGRES_PASSWORD: deadpool
+        POSTGRES_DB: deadpool
+      # Health checks to wait until Postgres has started.
+      options: >-
+        --health-cmd pg_isready
+        --health-interval 10s
+        --health-timeout 5s
+        --health-retries 5
+  env:
+    PG__HOST: 127.0.0.1
+    PG__PORT: 5432
+    PG__USER: deadpool
+    PG__PASSWORD: deadpool
+    PG__DBNAME: deadpool
+
+jobs:
+  check-integration-wasm:
+    # Don't run WASM checks as they are broken at the moment.
+    name: Check integration (WebAssembly)
+    strategy:
+      fail-fast: false
+      matrix:
+        feature:
+          - --features rt_tokio_1
+          - --features rt_tokio_1,serde
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: rustc,rust-std,cargo
+
+      - run: cargo check
+          --no-default-features
+          ${{ matrix.feature }}
+          --target wasm32-unknown-unknown
