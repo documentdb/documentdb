@@ -1,10 +1,3 @@
-/*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.
- * Licensed under the MIT License.
- * SPDX-License-Identifier: MIT
- *-------------------------------------------------------------------------
- */
-
 SET search_path TO documentdb_api, documentdb_api_catalog,documentdb_core;
 SET documentdb.next_collection_id TO 15000;
 SET documentdb.next_collection_index_id TO 15000;
@@ -36,11 +29,6 @@ CALL documentdb_api.drop_indexes('db', '{"dropIndexes": "collection_4"}');
 
 ---- dropIndexes -- index doesn't exist ----
 SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "collection_3", "indexes": [{"key": {"a": 1}, "name": "my_idx_1"}]}', true);
-
--- Background index-drop procedures are not implemented yet; both calls must error.
-CALL documentdb_api.drop_indexes_background('db', '{"dropIndexes": "collection_3", "index": "my_idx_1"}', NULL, NULL, NULL);
-CALL documentdb_api_internal.drop_indexes_background_internal('db', '{"dropIndexes": "collection_3", "index": "my_idx_1"}', NULL);
-
 CALL documentdb_api.drop_indexes('db', '{"dropIndexes": "collection_3", "index": ["my_idx_1", "does_not_exist"]}');
 CALL documentdb_api.drop_indexes('db', '{"dropIndexes": "collection_3", "index": ["does_not_exist", "my_idx_1"]}');
 

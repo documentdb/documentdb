@@ -924,26 +924,6 @@ impl PgDataClient for DocumentDBDataClient {
         Ok(PgResponse::new(rows))
     }
 
-    async fn execute_drop_indexes_background(
-        &self,
-        request_context: &RequestContext<'_>,
-        connection_context: &ConnectionContext,
-    ) -> Result<PgResponse> {
-        let rows = self
-            .run_db_bson_rows(
-                request_context,
-                connection_context,
-                self.service_context
-                    .query_catalog()
-                    .drop_indexes_background(),
-                QueryOptions::builder()
-                    .supports_backend_timeout(false)
-                    .build(),
-            )
-            .await?;
-        Ok(PgResponse::new(rows))
-    }
-
     async fn execute_shard_collection(
         &self,
         request_context: &RequestContext<'_>,
