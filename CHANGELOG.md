@@ -14,6 +14,7 @@
 * Fix `getMore` failing with an internal error when an aggregation pipeline has `$match` after `$project` and dynamic cursors are enabled, but the query falls back to a streaming cursor (for example, on a sharded collection). *[Bugfix]*
 
 ### documentdb v1.3-0 (Unreleased) ###
+* Accept nonzero `readConcern.afterClusterTime` timestamp values for request-shape compatibility without enforcing causal visibility, while retaining read-concern validation enabled by default, and treat a null `readConcern` as omitted with validation on or off. *[Bugfix]*
 * Enable single-pass posting-tree vacuum by default. Set `documentdb_rum.enable_single_pass_posting_tree_vacuum = off` to retain the two-pass pruning path. *[Perf]*
 * Report physical heap-block and tuple progress during unique-index validation through `currentOp`, including `collMod` and background unique-index builds. *[Feature]*
 * End a dynamic cursor's `getMore` with a query-plan-killed error when its collection was dropped and created again, or another collection was renamed onto its name, after the previous page. Such a `getMore` previously resumed in the new collection's table at the old position, returning its documents or crashing the server process. *[Bugfix]*

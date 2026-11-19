@@ -1,10 +1,5 @@
-/*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
- * documentdb_gateway_core/src/requests/common_fields.rs
- *
- *-------------------------------------------------------------------------
- */
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use std::str::FromStr;
 
@@ -239,25 +234,22 @@ fn extract_common_field<'a>(
             request_info.start_transaction(start_transaction);
         }
         "readConcern" => {
-            if read_concern_validation {
-                // A null readConcern is accepted and treated as unspecified (default).
-                const BSON_NULL: u8 = 0x0A;
-                if field.element_type() == BSON_NULL {
-                    request_info.read_concern(ReadConcern::Unspecified);
-                } else {
-                    let doc_bytes = field.as_embedded_document_bytes().ok_or_else(|| {
-                        DocumentDBError::type_mismatch(format!(
-                            "Expected readConcern to be a document but got element type 0x{:02X}",
-                            field.element_type()
-                        ))
-                    })?;
+            const BSON_NULL: u8 = 0x0A;
+            if field.element_type() == BSON_NULL {
+                request_info.read_concern(ReadConcern::Unspecified);
+            } else if read_concern_validation {
+                let doc_bytes = field.as_embedded_document_bytes().ok_or_else(|| {
+                    DocumentDBError::type_mismatch(format!(
+                        "Expected readConcern to be a document but got element type 0x{:02X}",
+                        field.element_type()
+                    ))
+                })?;
 
-                    let parsed = read_concern::validate_and_extract_level(doc_bytes)?;
-                    if parsed == ReadConcern::Snapshot {
-                        request_info.isolation_level(IsolationLevel::RepeatableRead);
-                    }
-                    request_info.read_concern(parsed);
+                let parsed = read_concern::validate_and_extract_level(doc_bytes)?;
+                if parsed == ReadConcern::Snapshot {
+                    request_info.isolation_level(IsolationLevel::RepeatableRead);
                 }
+                request_info.read_concern(parsed);
             } else {
                 // Legacy permissive parse, used when readConcern validation is disabled.
                 let doc_bytes = field.as_embedded_document_bytes().ok_or_else(|| {
@@ -329,7 +321,38 @@ mod tests {
     use bson::{doc, rawdoc, RawDocumentBuf};
 
     use super::*;
-    use crate::requests::Request;
+    use crate::requests::{info::StrictRequestInfo, Request};
+
+    #[test]
+    fn null_read_concern_is_unspecified_with_validation_on_or_off() {
+        let command = rawdoc! {
+            "find": "orders",
+            "$db": "testdb",
+            "readConcern": null,
+        };
+        let malformed = rawdoc! {
+            "find": "orders",
+            "$db": "testdb",
+            "readConcern": 42_i32,
+        };
+
+        for enabled in [true, false] {
+            let (_, info) = extract_request_type_and_info_from_document(&command, enabled, true)
+                .expect("null readConcern should be treated as omitted");
+            let info = StrictRequestInfo::try_from_info(info).expect("request metadata");
+            assert_eq!(info.read_concern(), &ReadConcern::Unspecified);
+            let error = extract_request_type_and_info_from_document(&malformed, enabled, true)
+                .expect_err("non-document readConcern should still fail");
+            assert_eq!(
+                error.error_code(),
+                if enabled {
+                    ErrorCode::TypeMismatch
+                } else {
+                    ErrorCode::BadValue
+                }
+            );
+        }
+    }
 
     #[test]
     fn extract_common_ignores_unknown_fields_without_callback() {

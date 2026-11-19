@@ -1,10 +1,5 @@
-/*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
- * documentdb_gateway_core/src/requests/read_concern.rs
- *
- *-------------------------------------------------------------------------
- */
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use crate::{
     error::{DocumentDBError, ErrorCode, Result},
@@ -73,8 +68,7 @@ impl ReadConcern {
 /// - `level`: non-string (non-null) → `TypeMismatch`; empty/unknown/wrong-case →
 ///   `BadValue`.
 /// - `afterClusterTime`: non-Timestamp (incl. null) → `TypeMismatch`; the zero
-///   timestamp → `InvalidOptions`; any valid non-zero timestamp →
-///   `IllegalOperation` (not supported on a non-replica-set deployment).
+///   timestamp → `InvalidOptions`; any valid non-zero timestamp is accepted.
 /// - `atClusterTime`: non-Timestamp (incl. null) → `TypeMismatch`; any valid
 ///   timestamp → `InvalidOptions`.
 /// - `provenance`: non-string (non-null) → `TypeMismatch`; unknown value →
@@ -82,6 +76,7 @@ impl ReadConcern {
 /// - any other sub-field → `UnknownBsonField`.
 ///
 /// A `null` value for `level` or `provenance` is accepted and treated as unset.
+/// Timestamp validation does not enforce causal visibility.
 ///
 /// # Errors
 /// Returns a [`DocumentDBError`] with the appropriate error code when any
@@ -150,16 +145,10 @@ pub fn validate_and_extract_level(doc_bytes: &[u8]) -> Result<ReadConcern> {
 ///
 /// `is_at_cluster_time` selects the `atClusterTime` rules (any valid timestamp is
 /// rejected with `InvalidOptions`) versus the `afterClusterTime` rules (the zero
-/// timestamp yields `InvalidOptions`, any other valid timestamp yields
-/// `IllegalOperation`).
+/// timestamp yields `InvalidOptions`, any other valid timestamp is accepted).
 fn validate_cluster_time(field: &RawField<'_>, is_at_cluster_time: bool) -> Result<()> {
-    let field_name = if is_at_cluster_time {
-        "atClusterTime"
-    } else {
-        "afterClusterTime"
-    };
-
     if field.element_type() != element_type::TIMESTAMP {
+        let field_name = String::from_utf8_lossy(field.name());
         return Err(DocumentDBError::type_mismatch(format!(
             "readConcern.{field_name} must be a timestamp but got element type 0x{:02X}",
             field.element_type()
@@ -169,15 +158,13 @@ fn validate_cluster_time(field: &RawField<'_>, is_at_cluster_time: bool) -> Resu
     let is_zero = field.value().iter().all(|&b| b == 0);
 
     if is_at_cluster_time || is_zero {
+        let field_name = String::from_utf8_lossy(field.name());
         Err(DocumentDBError::documentdb_error(
             ErrorCode::InvalidOptions,
             format!("readConcern.{field_name} is not supported"),
         ))
     } else {
-        Err(DocumentDBError::documentdb_error(
-            ErrorCode::IllegalOperation,
-            format!("readConcern.{field_name} is not supported on this deployment"),
-        ))
+        Ok(())
     }
 }
 
@@ -268,9 +255,56 @@ mod tests {
             &rawdoc! { "afterClusterTime": Timestamp { time: 0, increment: 0 } },
             ErrorCode::InvalidOptions,
         );
+        assert_eq!(
+            validate(&rawdoc! { "afterClusterTime": Timestamp { time: 1, increment: 1 } }).unwrap(),
+            ReadConcern::Unspecified
+        );
+    }
+
+    #[test]
+    fn accepts_nonzero_bits_in_either_timestamp_component() {
+        for bit in 0..u32::BITS {
+            for timestamp in [
+                Timestamp {
+                    time: 1_u32 << bit,
+                    increment: 0,
+                },
+                Timestamp {
+                    time: 0,
+                    increment: 1_u32 << bit,
+                },
+            ] {
+                assert_eq!(
+                    validate(&rawdoc! { "afterClusterTime": timestamp }).unwrap(),
+                    ReadConcern::Unspecified
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validates_fields_following_after_cluster_time() {
+        assert_eq!(
+            validate(&rawdoc! {
+                "afterClusterTime": Timestamp { time: 1, increment: 1 },
+                "level": "majority",
+            })
+            .unwrap(),
+            ReadConcern::Majority
+        );
         expect_code(
-            &rawdoc! { "afterClusterTime": Timestamp { time: 1, increment: 1 } },
-            ErrorCode::IllegalOperation,
+            &rawdoc! {
+                "afterClusterTime": Timestamp { time: 1, increment: 1 },
+                "level": "invalid",
+            },
+            ErrorCode::BadValue,
+        );
+        expect_code(
+            &rawdoc! {
+                "afterClusterTime": Timestamp { time: 1, increment: 1 },
+                "unknownField": 1_i32,
+            },
+            ErrorCode::UnknownBsonField,
         );
     }
 
