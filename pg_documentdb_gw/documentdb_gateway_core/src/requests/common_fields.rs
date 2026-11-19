@@ -280,7 +280,8 @@ fn extract_common_field<'a>(
             }
         }
         "$readPreference" => {
-            ReadPreference::parse(field.as_embedded_document_bytes())?;
+            request_info
+                .read_preference(ReadPreference::parse(field.as_embedded_document_bytes())?);
         }
         "comment" => {
             if let Some(comment) = field.as_str() {

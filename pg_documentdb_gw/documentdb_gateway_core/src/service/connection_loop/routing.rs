@@ -1,8 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
- * SPDX-License-Identifier: MIT
- *
  * documentdb_gateway_core/src/service/connection_loop/routing.rs
  *
  *-------------------------------------------------------------------------
@@ -39,16 +38,32 @@ pub trait RequestRouter<D>: Sync {
 )]
 pub struct DefaultRequestRouter {}
 
-#[async_trait]
-impl<D> RequestRouter<D> for DefaultRequestRouter
-where
-    D: PgDataClient,
-{
-    async fn handle_request(
-        &self,
+/// A completed authentication command or a data client selected after access checks.
+///
+/// This result belongs to the current request and connection identity; do not
+/// retain its client across authentication or transaction-state changes.
+#[derive(Debug)]
+pub enum RequestAuthenticationResult<D> {
+    /// Return this response without constructing a data client or dispatching again.
+    Response(Response),
+    /// Continue request processing with the selected client, without repeating preparation.
+    DataClient(D),
+}
+
+impl DefaultRequestRouter {
+    /// Handles authentication commands, validates access and constructs a data client.
+    ///
+    /// A response completes the request. Otherwise, pass the selected client to
+    /// request processing rather than re-entering `handle_request`, which would
+    /// repeat authentication preparation. Ordinary command processing is left
+    /// to the caller.
+    ///
+    /// # Errors
+    /// Returns an authentication error or a data-client construction error.
+    pub async fn authenticate_request<D: PgDataClient>(
         request_context: &RequestContext<'_>,
         connection_context: &mut ConnectionContext,
-    ) -> Result<Response> {
+    ) -> Result<RequestAuthenticationResult<D>> {
         connection_context.update_user_expiration_status();
         let request_type = request_context.request_type();
 
@@ -56,7 +71,7 @@ where
             if let Some(response) =
                 auth::handle_authentication(connection_context, request_context).await?
             {
-                return Ok(response);
+                return Ok(RequestAuthenticationResult::Response(response));
             }
 
             return Err(unauthorized_command_error(request_type));
@@ -73,15 +88,33 @@ where
                 return Err(unauthorized_command_error(request_type));
             }
 
-            let data_client = D::new_unauthorized(&connection_context.service_context)?;
-            return processor::process_request(request_context, connection_context, &data_client)
-                .await;
+            return D::new_unauthorized(&connection_context.service_context)
+                .map(RequestAuthenticationResult::DataClient);
         }
 
-        let data_client = D::new_authorized(
+        D::new_authorized(
             &connection_context.service_context,
             connection_context.user(),
-        )?;
+        )
+        .map(RequestAuthenticationResult::DataClient)
+    }
+}
+
+#[async_trait]
+impl<D> RequestRouter<D> for DefaultRequestRouter
+where
+    D: PgDataClient,
+{
+    async fn handle_request(
+        &self,
+        request_context: &RequestContext<'_>,
+        connection_context: &mut ConnectionContext,
+    ) -> Result<Response> {
+        let data_client =
+            match Self::authenticate_request::<D>(request_context, connection_context).await? {
+                RequestAuthenticationResult::Response(response) => return Ok(response),
+                RequestAuthenticationResult::DataClient(client) => client,
+            };
 
         processor::process_request(request_context, connection_context, &data_client).await
     }

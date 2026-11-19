@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/service/connection_loop/mod.rs
  *
  *-------------------------------------------------------------------------
@@ -17,5 +18,5 @@ mod stream_driver;
 mod writer;
 
 pub use request_pipeline::process_request_message;
-pub use routing::{DefaultRequestRouter, RequestRouter};
+pub use routing::{DefaultRequestRouter, RequestAuthenticationResult, RequestRouter};
 pub use stream_driver::handle_stream;

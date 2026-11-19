@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/postgres/conn_mgmt/mod.rs
  *
  *-------------------------------------------------------------------------
@@ -27,4 +28,7 @@ pub use pool_settings::{
     PgPoolSettings, CONN_BUFFER_SIZE, CONN_IDLE_LIFETIME_SECS, CONN_LIFETIME_SECS,
     CONN_PRUNE_INTERVAL_SECS,
 };
-pub use query_dispatch::{run_request_with_retries, ConnectionSource, PullConnection};
+pub use query_dispatch::{
+    run_request_with_retries, run_request_with_retries_using, ConnectionSource, PullConnection,
+    QueryFailureAction,
+};

@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/service/connection_loop/request_pipeline.rs
  *
  *-------------------------------------------------------------------------
@@ -431,9 +432,11 @@ mod tests {
 
     use super::*;
     use crate::{
+        auth::UserAuthState,
         postgres::DocumentDBDataClient,
         protocol::opcode::OpCode,
         responses::Response,
+        security::principal::Principal,
         service::DefaultRequestRouter,
         telemetry::TelemetryProvider,
         testing::{
@@ -445,6 +448,128 @@ mod tests {
     };
 
     const NON_EXPIRING_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
+
+    #[tokio::test]
+    async fn read_preference_failures_precede_authentication_for_reads_and_writes() {
+        for authenticated in [false, true] {
+            let mut connection =
+                test_connection_context(false, Arc::new(TestDynamicConfiguration::default()), None)
+                    .await;
+            if authenticated {
+                connection.set_user(UserAuthState::authenticated(
+                    "SCRAM-SHA-256",
+                    Principal::new("preference-test", 1),
+                    None,
+                    None,
+                ));
+            }
+            for command in [
+                doc! { "find": "items", "$db": "app" },
+                doc! { "insert": "items", "documents": [], "$db": "app" },
+            ] {
+                for (preference, expected) in [
+                    (
+                        doc! { "mode": "secondary" },
+                        ErrorCode::FailedToSatisfyReadPreference,
+                    ),
+                    (
+                        doc! { "mode": "secondary", "hedge": { "enabled": true } },
+                        ErrorCode::FailedToSatisfyReadPreference,
+                    ),
+                    (
+                        doc! { "mode": "nearest", "tags": [] },
+                        ErrorCode::FailedToSatisfyReadPreference,
+                    ),
+                    (
+                        doc! { "mode": "nearest", "hedge": { "enabled": true } },
+                        ErrorCode::BadValue,
+                    ),
+                    (
+                        doc! { "mode": "primary", "maxStalenessSeconds": 30 },
+                        ErrorCode::FailedToParse,
+                    ),
+                    (
+                        doc! { "mode": "nearest", "maxStalenessSeconds": -1 },
+                        ErrorCode::FailedToParse,
+                    ),
+                    (
+                        doc! { "mode": "nearest", "maxStalenessSeconds": i64::MAX },
+                        ErrorCode::FailedToParse,
+                    ),
+                    (doc! { "mode": 1 }, ErrorCode::FailedToParse),
+                ] {
+                    let mut command = command.clone();
+                    command.insert("$readPreference", preference);
+                    let (header, body) = build_op_msg_parts(&command, 87);
+                    let mut writer = Vec::new();
+                    process_request_message::<DocumentDBDataClient, _, _>(
+                        &mut connection,
+                        header,
+                        Bytes::from(body),
+                        Instant::now(),
+                        "preference-error-precedence",
+                        &DefaultRequestRouter {},
+                        &mut writer,
+                    )
+                    .await
+                    .expect("request error should be written");
+                    let (_, document) = decode_op_msg_response(&Bytes::from(writer));
+                    assert_error_response(&document, expected);
+                }
+            }
+            assert!(connection
+                .service_context
+                .connection_pool_manager()
+                .report_pool_stats()
+                .iter()
+                .all(|pool| pool.status().size == 0));
+        }
+    }
+
+    #[tokio::test]
+    async fn supported_preferences_do_not_bypass_authentication() {
+        let mut connection =
+            test_connection_context(false, Arc::new(TestDynamicConfiguration::default()), None)
+                .await;
+        for mode in [
+            None,
+            Some("primary"),
+            Some("primaryPreferred"),
+            Some("secondaryPreferred"),
+            Some("nearest"),
+        ] {
+            for command in [
+                doc! { "find": "items", "$db": "app" },
+                doc! { "insert": "items", "documents": [], "$db": "app" },
+            ] {
+                let mut command = command;
+                if let Some(mode) = mode {
+                    command.insert("$readPreference", doc! { "mode": mode });
+                }
+                let (header, body) = build_op_msg_parts(&command, 87);
+                let mut writer = Vec::new();
+                process_request_message::<DocumentDBDataClient, _, _>(
+                    &mut connection,
+                    header,
+                    Bytes::from(body),
+                    Instant::now(),
+                    "preference-authentication",
+                    &DefaultRequestRouter {},
+                    &mut writer,
+                )
+                .await
+                .expect("authentication error should be written");
+                let (_, document) = decode_op_msg_response(&Bytes::from(writer));
+                assert_error_response(&document, ErrorCode::Unauthorized);
+            }
+        }
+        assert!(connection
+            .service_context
+            .connection_pool_manager()
+            .report_pool_stats()
+            .iter()
+            .all(|pool| pool.status().size == 0));
+    }
 
     #[derive(Clone, Debug, Default)]
     struct ReadIntervalTelemetryProvider {
