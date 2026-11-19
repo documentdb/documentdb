@@ -414,6 +414,7 @@ static List * GetSortDetails(PlannerInfo *root, Index rti,
 static bool IsQueryCollationCompatibleWithIndex(const char *queryCollation,
 												bytea *indexOptions);
 static bool IsValidIndexPathForIdOrderBy(IndexPath *indexPath, List *sortDetails);
+static bool IsNativePlannerIndexOnlyScanSchemaSupported(void);
 
 static Expr * HandleSupportRequestForBtreeObjectIdCondition(
 	SupportRequestIndexCondition *req);
@@ -605,7 +606,7 @@ bool
 IsNativePlannerIndexOnlyScanEnabled(void)
 {
 	return EnableNativePlannerIndexOnlyScan &&
-		   IsClusterVersionAtleast(DocDB_V1, 4, 0) &&
+		   IsNativePlannerIndexOnlyScanSchemaSupported() &&
 		   OidIsValid(BsonIndexOptScanFunctionOid());
 }
 
@@ -2276,12 +2277,26 @@ IsScalarArrayOpExprTrimmable(const ScalarArrayOpExpr *scalarArrayOpExpr)
 }
 
 
+/*
+ * Local function availability does not establish readiness on every node.
+ * Require the published cluster schema, with exact patch-line checks so
+ * unpatched intermediate schemas cannot enable the marker.
+ */
+static bool
+IsNativePlannerIndexOnlyScanSchemaSupported(void)
+{
+	return IsClusterVersionAtleast(DocDB_V1, 3, 0) ||
+		   IsClusterVersionAtLeastPatch(DocDB_V1, 2, 2) ||
+		   IsClusterVersionAtLeastPatch(DocDB_V1, 1, 3);
+}
+
+
 static inline bool
 IsFuncExprTrimmable(const FuncExpr *funcExpr)
 {
 	return funcExpr->funcid == BsonIndexHintFunctionOid() ||
 		   funcExpr->funcid == BsonFullScanFunctionOid() ||
-		   (IsClusterVersionAtleast(DocDB_V1, 4, 0) &&
+		   (IsNativePlannerIndexOnlyScanSchemaSupported() &&
 			funcExpr->funcid == BsonIndexOptScanFunctionOid()) ||
 		   (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 			funcExpr->funcid == ApiCursorTrackerFunctionId()) ||
