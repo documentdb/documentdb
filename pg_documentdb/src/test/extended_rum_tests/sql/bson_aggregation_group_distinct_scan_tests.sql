@@ -1,11 +1,5 @@
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
 
--- enableDistinctScanForGroupFirst is enabled by default starting in v116. Pin it off
--- here so the $first cases in this suite keep exercising the non-distinct-scan plan
--- shape (this suite manages enableGroupByDistinctScan explicitly per section). Remove
--- this pin when the flag is retired.
-SET documentdb.enableDistinctScanForGroupFirst TO off;
-
 -- enableProjectPushUpBeforeUnwindWithGroup is enabled by default starting in v118.
 -- Pin it off here so the $unwind -> $group cases in this suite keep exercising the
 -- plan shape without the injected field-pruning $project. Remove this pin when the
@@ -49,49 +43,16 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db',
 ANALYZE;
 
 -- ============================================================
--- Test 1: $group with only _id (no accumulators) - GUC OFF
--- This is equivalent to SELECT DISTINCT on the group key.
--- With the GUC off, the plan should NOT show
--- DocumentDBApiDistinctQueryScan.
--- ============================================================
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO off;
-
--- Correctness: verify returned distinct values
-SELECT document FROM bson_aggregation_pipeline('db',
-  '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
-    { "$group": { "_id": "$x" } },
-    { "$sort": { "_id": 1 } }
-  ] }');
-
--- EXPLAIN ANALYZE: should NOT have DocumentDBApiDistinctQueryScan.
--- Without the custom scan, the index scan returns one row per document (8),
--- which the GroupAggregate then collapses to 3 groups.
-SELECT documentdb_test_helpers.run_explain_and_trim($Q$
-EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
-SELECT document FROM bson_aggregation_pipeline('db',
-  '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
-    { "$group": { "_id": "$x" } },
-    { "$sort": { "_id": 1 } }
-  ] }')
-$Q$, p_ignore_heap_fetches := true);
-ROLLBACK;
-
--- ============================================================
--- Test 2: $group with only _id (no accumulators) - GUC ON
--- With the GUC on, the plan SHOULD show
+-- Test 2: $group with only _id (no accumulators).
+-- The plan should show
 -- DocumentDBApiDistinctQueryScan wrapping the index scan.
 -- ============================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
--- Correctness: same distinct values as Test 1
+-- Correctness: verify returned distinct values.
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
     { "$group": { "_id": "$x" } },
@@ -112,7 +73,7 @@ $Q$, p_ignore_heap_fetches := true);
 ROLLBACK;
 
 -- ============================================================
--- Test 3: $sort BEFORE $group, no accumulators - GUC ON.
+-- Test 3: $sort BEFORE $group, no accumulators.
 -- The preceding $sort on "y" is irrelevant to the group output
 -- because there is no order-sensitive accumulator: the group's
 -- output is just the set of distinct "x" values. The custom
@@ -122,9 +83,8 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
--- Correctness: same distinct values as Test 1 / Test 2
+-- Correctness: same distinct values as Test 2.
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
     { "$sort": { "y": 1 } },
@@ -144,7 +104,7 @@ $Q$, p_ignore_heap_fetches := true);
 ROLLBACK;
 
 -- ============================================================
--- Test 4: GUC on, enable_hashagg also on.
+-- Test 4: enable_hashagg on.
 -- Same pipeline as Test 2. The wrapper should still fire and
 -- the inner scan should emit one row per distinct key (3), with
 -- GroupAggregate -- not HashAggregate -- chosen on top.
@@ -153,9 +113,8 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO on;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
--- Correctness: same distinct values as Tests 1-3
+-- Correctness: same distinct values as Tests 2-3.
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
     { "$group": { "_id": "$x" } },
@@ -176,8 +135,8 @@ $Q$, p_ignore_heap_fetches := true);
 ROLLBACK;
 
 -- ============================================================
--- Negative tests: scenarios where the custom scan must NOT fire
--- even when the GUC is on. We assert this by EXPLAIN ANALYZE
+-- Negative tests: scenarios where the custom scan must NOT fire.
+-- We assert this by EXPLAIN ANALYZE
 -- showing the inner index scan returning one row per document
 -- (8), not one per distinct group key (3), and the absence of
 -- "Custom Scan (DocumentDBApiDistinctQueryScan)" in the plan.
@@ -192,7 +151,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 -- Correctness: per-group sum of y
 SELECT document FROM bson_aggregation_pipeline('db',
@@ -212,45 +170,13 @@ $Q$, p_ignore_heap_fetches := true);
 ROLLBACK;
 
 -- ------------------------------------------------------------
--- Case 1b: $group with $first accumulator.
--- This file covers the original distinct-scan wrapper, which is
--- gated by enableGroupByDistinctScan and only fires for $group
--- pipelines with NO accumulators. The $first scenario is gated
--- by the separate enableDistinctScanForGroupFirst GUC (covered
--- in bson_aggregation_group_first_distinct_scan_tests.sql) and
--- is intentionally OFF here, so the wrapper must not fire today.
--- ------------------------------------------------------------
-BEGIN;
-SET LOCAL enable_seqscan TO off;
-SET LOCAL enable_bitmapscan TO off;
-SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
-
-SELECT document FROM bson_aggregation_pipeline('db',
-  '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
-    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
-    { "$sort": { "_id": 1 } }
-  ] }');
-
-SELECT documentdb_test_helpers.run_explain_and_trim($Q$
-EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF, VERBOSE ON)
-SELECT document FROM bson_aggregation_pipeline('db',
-  '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
-    { "$group": { "_id": "$x", "f": { "$first": "$y" } } },
-    { "$sort": { "_id": 1 } }
-  ] }')
-$Q$, p_ignore_heap_fetches := true);
-ROLLBACK;
-
--- ------------------------------------------------------------
 -- Case 1c: $group with $last accumulator.
--- Same reasoning as $first: not implemented today.
+-- $last needs to see every document, so the wrapper must not fire.
 -- ------------------------------------------------------------
 BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -278,7 +204,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -312,7 +237,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -344,7 +268,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -378,7 +301,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -407,7 +329,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -439,7 +360,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -475,7 +395,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -503,7 +422,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -534,7 +452,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -566,7 +483,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -595,7 +511,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist_arr", "hint": "idx_arr_x", "pipeline": [
@@ -629,7 +544,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -657,7 +571,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -685,7 +598,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist", "hint": "idx_x", "pipeline": [
@@ -780,7 +692,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist_more", "hint": "idx_x", "pipeline": [
@@ -817,7 +728,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 
@@ -849,7 +759,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_mk", "hint": "idx_tags", "pipeline": [
@@ -878,7 +787,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_part", "hint": "idx_x_partial", "pipeline": [
@@ -907,7 +815,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist_more", "hint": "idx_x", "pipeline": [
@@ -936,7 +843,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 
@@ -965,7 +871,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist_more", "hint": "idx_x", "pipeline": [
@@ -991,7 +896,6 @@ BEGIN;
 SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 
 SELECT document FROM bson_aggregation_pipeline('db',
   '{ "aggregate": "grp_dist_more", "hint": "idx_y", "pipeline": [

@@ -1,13 +1,9 @@
 \i sql/bson_group_by_dynamic_streaming_tests.sql
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
--- enableGroupByDistinctScan is enabled by default starting in v116. Pin it off here
--- so this suite keeps exercising the non-distinct-scan plan shape for accumulator-less
--- $group. Remove this pin when the flag is retired.
-SET documentdb.enableGroupByDistinctScan TO off;
 -- Ensure database 'gbstream_db' exists so that the system.dbSentinel collection
 -- does not consume a test collection id when running in standalone mode.
 SELECT documentdb_api.insert_one('gbstream_db', 'setup_sentinel', '{ "_id": 0 }');
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:10: NOTICE:  creating collection
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:5: NOTICE:  creating collection
                               insert_one                              
 ----------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
@@ -25,7 +21,7 @@ SET documentdb.next_collection_index_id TO 79000;
 SELECT COUNT(documentdb_api.insert_one('gbstream_db', 'gstream',
     FORMAT('{ "_id": %s, "a": %s, "b": %s }', i, i % 5, i)::documentdb_core.bson))
 FROM generate_series(1, 50) i;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:19: NOTICE:  creating collection
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:14: NOTICE:  creating collection
  count 
 -------
     50
@@ -46,8 +42,8 @@ SET documentdb.enableDynamicCursors TO on;
 SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 -- ===========================================================================
 -- Plan shape: with dynamic cursors off the grouping-only $group must NOT be
--- wrapped by the dynamic cursor scan (the GroupAggregate sits directly on the
--- ordered index only scan).
+-- wrapped by the dynamic cursor scan. The distinct scan wraps the ordered
+-- index-only scan below GroupAggregate.
 -- ===========================================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -64,17 +60,18 @@ $Q$);
  GroupAggregate
    Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Index Only Scan using a_1 on documentdb_data.documents_79000 collection
+   ->  Custom Scan (DocumentDBApiDistinctQueryScan)
          Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-         Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-         Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(7 rows)
+         ->  Index Only Scan using a_1 on documentdb_data.documents_79000 collection
+               Output: document
+               Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(9 rows)
 
 ROLLBACK;
 -- ===========================================================================
 -- Plan shape: with dynamic cursors on the grouping-only $group is served by
--- the dynamic cursor scan, producing
---   GroupAggregate -> Custom Scan (DocumentDBApiCursorScan) -> Index Only Scan.
+-- the distinct scan over the dynamic cursor scan and ordered index-only scan.
 -- ===========================================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -90,18 +87,20 @@ $Q$);
  GroupAggregate
    Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Custom Scan (DocumentDBApiCursorScan)
+   ->  Custom Scan (DocumentDBApiDistinctQueryScan)
          Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-         cursorScanType: Secondary Index Only Scan
-         indexName: a_1
-         indexKey: {"a": 1}
-         isMultiKey: false
-         indexBounds: ["a": (MinKey, MaxKey)]
-         ->  Index Only Scan using a_1 on documentdb_data.documents_79000 collection
+         ->  Custom Scan (DocumentDBApiCursorScan)
                Output: document
-               Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-               Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(14 rows)
+               cursorScanType: Secondary Index Only Scan
+               indexName: a_1
+               indexKey: {"a": 1}
+               isMultiKey: false
+               indexBounds: ["a": (MinKey, MaxKey)]
+               ->  Index Only Scan using a_1 on documentdb_data.documents_79000 collection
+                     Output: document
+                     Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+                     Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(16 rows)
 
 ROLLBACK;
 -- ===========================================================================
@@ -262,7 +261,7 @@ BEGIN
     RAISE NOTICE 'Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor';
 END;
 $$;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:219: NOTICE:  Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:213: NOTICE:  Group-by dynamic streaming: batch sizes 1..7 stream all 5 groups and match the persisted cursor
 DROP FUNCTION gstream_drain_group(int, bool);
 -- ===========================================================================
 -- Stages layered on top of a fully pushable $group (a trailing $project or a
@@ -364,5 +363,5 @@ BEGIN
     RAISE NOTICE 'Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes';
 END;
 $$;
-psql:sql/bson_group_by_dynamic_streaming_tests.sql:323: NOTICE:  Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes
+psql:sql/bson_group_by_dynamic_streaming_tests.sql:317: NOTICE:  Group-by dynamic streaming: $group with trailing $project/$match stages matches the persisted cursor across batch sizes
 DROP FUNCTION gstream_drain_pipeline(text, int, bool);

@@ -422,14 +422,6 @@ bool EnableIndexPathKeySummarization = DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATI
 #define DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN true
 bool EnableDistinctCustomScan = DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN;
 
-/* Added in v0.114, enabled in v0.117, remove after v1.1 */
-#define DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN true
-bool EnableGroupByDistinctScan = DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN;
-
-/* Added in v0.114, enabled in v0.117, remove after v1.1 */
-#define DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST true
-bool EnableDistinctScanForGroupFirst = DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST;
-
 /* Added in v1.0, enabled in v1.0, remove after v1.3 */
 #define DEFAULT_ENABLE_DISTINCT_SCAN_FOR_ORDERED_GROUP_FIRST true
 bool EnableDistinctScanForOrderedGroupFirst =
@@ -1122,24 +1114,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to allow unique indexes to be built with a collation."),
 		NULL, &EnableCollatedUniqueIndexes,
 		DEFAULT_ENABLE_COLLATED_UNIQUE_INDEXES,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableGroupByDistinctScan", newGucPrefix),
-		gettext_noop(
-			"Whether or not to enable the distinct custom scan wrapper for "
-			"$group pipelines that have no aggregate accumulators."),
-		NULL, &EnableGroupByDistinctScan,
-		DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableDistinctScanForGroupFirst", newGucPrefix),
-		gettext_noop(
-			"Whether or not to enable the distinct custom scan wrapper for "
-			"$group pipelines whose accumulators are exclusively $first."),
-		NULL, &EnableDistinctScanForGroupFirst,
-		DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -1,10 +1,5 @@
 SET search_path TO documentdb_api, documentdb_core, documentdb_api_catalog, documentdb_api_internal, public;
 
--- enableGroupByDistinctScan is enabled by default starting in v116. Pin it off here
--- so this suite keeps exercising the non-distinct-scan plan shape for accumulator-less
--- $group. Remove this pin when the flag is retired.
-SET documentdb.enableGroupByDistinctScan TO off;
-
 -- Ensure database 'gbstream_db' exists so that the system.dbSentinel collection
 -- does not consume a test collection id when running in standalone mode.
 SELECT documentdb_api.insert_one('gbstream_db', 'setup_sentinel', '{ "_id": 0 }');
@@ -31,8 +26,8 @@ SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
 
 -- ===========================================================================
 -- Plan shape: with dynamic cursors off the grouping-only $group must NOT be
--- wrapped by the dynamic cursor scan (the GroupAggregate sits directly on the
--- ordered index only scan).
+-- wrapped by the dynamic cursor scan. The distinct scan wraps the ordered
+-- index-only scan below GroupAggregate.
 -- ===========================================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;
@@ -49,8 +44,7 @@ ROLLBACK;
 
 -- ===========================================================================
 -- Plan shape: with dynamic cursors on the grouping-only $group is served by
--- the dynamic cursor scan, producing
---   GroupAggregate -> Custom Scan (DocumentDBApiCursorScan) -> Index Only Scan.
+-- the distinct scan over the dynamic cursor scan and ordered index-only scan.
 -- ===========================================================================
 BEGIN;
 SET LOCAL enable_seqscan TO off;

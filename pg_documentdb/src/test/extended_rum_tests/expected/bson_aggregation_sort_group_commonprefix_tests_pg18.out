@@ -1,9 +1,5 @@
 \i sql/bson_aggregation_sort_group_commonprefix_tests.sql
 SET search_path TO documentdb_api,documentdb_core,documentdb_api_catalog,documentdb_api_internal,public;
--- enableDistinctScanForGroupFirst is enabled by default starting in v116. Pin it
--- off here so this suite keeps exercising the non-distinct-scan plan shape for the
--- $first accumulator cases. Remove this pin when the flag is retired.
-SET documentdb.enableDistinctScanForGroupFirst TO off;
 SET documentdb.next_collection_id TO 9300;
 SET documentdb.next_collection_index_id TO 9300;
 -- ================================================================
@@ -38,7 +34,7 @@ SELECT COUNT(documentdb_api.insert_one('db', 'cpfx_test', bson_build_document(
     'v', i * 10,
     'name', concat('name_', i)
 ))) FROM generate_series(1, 100) AS i;
-psql:sql/bson_aggregation_sort_group_commonprefix_tests.sql:42: NOTICE:  creating collection
+psql:sql/bson_aggregation_sort_group_commonprefix_tests.sql:37: NOTICE:  creating collection
  count 
 -------
    100
@@ -91,7 +87,7 @@ SELECT COUNT(documentdb_api.insert_one('db', 'cpfx_test_by', bson_build_document
     'c', i % 5,
     'name', concat('byname_', i)
 ))) FROM generate_series(0, 9) AS i;
-psql:sql/bson_aggregation_sort_group_commonprefix_tests.sql:66: NOTICE:  creating collection
+psql:sql/bson_aggregation_sort_group_commonprefix_tests.sql:61: NOTICE:  creating collection
  count 
 -------
     10
@@ -471,11 +467,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  GroupAggregate
    Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bsonfirstwithexprinternal(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Index Scan using idx_a_b on documentdb_data.documents_9300 collection
+   ->  Custom Scan (DocumentDBApiDistinctQueryScan)
          Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-         Index Cond: ((collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-         Order By: ((collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson))
-(7 rows)
+         ->  Index Scan using idx_a_b on documentdb_data.documents_9300 collection
+               Output: document
+               Index Cond: ((collection.document @<> '{ "a" : { "fullScan" : true, "numGroupKeyPaths" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+               Order By: ((collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson))
+(9 rows)
 
 -- ----------------------------------------------------------------
 -- 2.4 Multi-field group: sort{a,b,c}, group{a,b}, $first — hint _id_
@@ -538,11 +536,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  GroupAggregate
    Output: bson_repath_and_build('_id'::text, bson_repath_and_build('a'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'b'::text, (bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), 'firstVal'::text, bsonfirstwithexprinternal(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "c" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Index Scan using idx_a_b_c on documentdb_data.documents_9300 collection
+   ->  Custom Scan (DocumentDBApiDistinctQueryScan)
          Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-         Index Cond: ((collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-         Order By: ((collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "c" : { "$numberInt" : "1" } }'::bson))
-(7 rows)
+         ->  Index Scan using idx_a_b_c on documentdb_data.documents_9300 collection
+               Output: document
+               Index Cond: ((collection.document @<> '{ "a" : { "fullScan" : true, "numGroupKeyPaths" : { "$numberInt" : "2" } } }'::bson) AND (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "c" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+               Order By: ((collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "c" : { "$numberInt" : "1" } }'::bson))
+(9 rows)
 
 -- ----------------------------------------------------------------
 -- 2.7 Sort and group match exactly: sort{a}, group{a}, $first — hint _id_
@@ -580,11 +580,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  GroupAggregate
    Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bsonfirstwithexprinternal(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Index Scan using idx_a on documentdb_data.documents_9300 collection
+   ->  Custom Scan (DocumentDBApiDistinctQueryScan)
          Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-         Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
-         Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
-(7 rows)
+         ->  Index Scan using idx_a on documentdb_data.documents_9300 collection
+               Output: document
+               Index Cond: (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson)
+(9 rows)
 
 -- ----------------------------------------------------------------
 -- 2.9 Sort and group match exactly: sort{a,b}, group{a,b}, $first — hint _id_
@@ -648,11 +650,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  GroupAggregate
    Output: bson_repath_and_build('_id'::text, bson_repath_and_build('a'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'b'::text, (bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), 'firstVal'::text, bsonfirstwithexprinternal(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(collection.document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Index Scan using idx_a_b on documentdb_data.documents_9300 collection
+   ->  Custom Scan (DocumentDBApiDistinctQueryScan)
          Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-         Index Cond: ((collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-         Order By: ((collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson))
-(7 rows)
+         ->  Index Scan using idx_a_b on documentdb_data.documents_9300 collection
+               Output: document
+               Index Cond: ((collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+               Order By: ((collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson))
+(9 rows)
 
 -- ----------------------------------------------------------------
 -- 2.12 Dotted sort key, non-dotted group: sort{a, b.y}, group{a}, $first — hint _id_
@@ -762,11 +766,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  GroupAggregate
    Output: bson_repath_and_build('_id'::text, (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, bsonfirstwithexprinternal(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text ORDER BY (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST)), (bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    Group Key: bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Index Scan using idx_a_b on documentdb_data.documents_9300 collection
+   ->  Custom Scan (DocumentDBApiDistinctQueryScan)
          Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-         Index Cond: ((collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
-         Order By: ((collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson))
-(7 rows)
+         ->  Index Scan using idx_a_b on documentdb_data.documents_9300 collection
+               Output: document
+               Index Cond: ((collection.document @<> '{ "a" : { "fullScan" : true, "numGroupKeyPaths" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "a" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson) AND (collection.document @<> '{ "b" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson))
+               Order By: ((collection.document |-<> '{ "a" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "b" : { "$numberInt" : "1" } }'::bson))
+(9 rows)
 
 RESET enable_hashagg;
 RESET enable_sort;

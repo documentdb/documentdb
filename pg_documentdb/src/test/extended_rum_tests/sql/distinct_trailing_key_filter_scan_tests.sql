@@ -203,7 +203,6 @@ SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL enable_sort TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
@@ -249,7 +248,6 @@ SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL enable_sort TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
@@ -291,7 +289,6 @@ SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL enable_sort TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 SET LOCAL documentdb.enableExtendedExplainPlans TO on;
 
 SELECT document FROM bson_aggregation_pipeline('dtk_db',
@@ -334,7 +331,6 @@ SET LOCAL enable_seqscan TO off;
 SET LOCAL enable_bitmapscan TO off;
 SET LOCAL enable_hashagg TO off;
 SET LOCAL enable_sort TO off;
-SET LOCAL documentdb.enableGroupByDistinctScan TO on;
 SET LOCAL documentdb.enableGroupByCompoundIdIndexPushdown TO on;
 SET LOCAL documentdb_core.enableWriteDocumentsInRepath TO on;
 

@@ -71,7 +71,6 @@ set local enable_bitmapscan to off;
 set local enable_hashagg to off;
 SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
 SET LOCAL documentdb.enableDebugQueryText TO on;
-SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
   SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "firstVal": { "$first": "$val" } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }')
@@ -186,7 +185,6 @@ set local enable_bitmapscan to off;
 set local enable_hashagg to off;
 SET LOCAL documentdb_api.forceUseIndexIfAvailable TO on;
 SET LOCAL documentdb.enableDebugQueryText TO on;
-SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, TIMING OFF, SUMMARY OFF, VERBOSE ON)
   SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "group_firstlast_dist", "pipeline": [ { "$group": { "_id": "$category", "firstExpr": { "$first": { "$concat": ["$name", "-seen"] } } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }')

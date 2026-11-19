@@ -155,9 +155,6 @@ extern bool EnableCursorsOnAggregationQueryRewrite;
 extern bool EnableCompositeParallelIndexScan;
 extern bool ForceParallelScanIfAvailable;
 extern bool EnableExtendedIndexes;
-extern bool EnableDistinctCustomScan;
-extern bool EnableGroupByDistinctScan;
-extern bool EnableDistinctScanForGroupFirst;
 extern bool EnableMergeSortForInPrefix;
 extern bool EnableRumIndexOnlyScanProjectionWrapper;
 extern bool EnableSupportObjectIdFunctionPfePushdown;
@@ -771,11 +768,7 @@ ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		}
 	}
 
-	if (EnableDistinctCustomScan || EnableGroupByDistinctScan ||
-		EnableDistinctScanForGroupFirst)
-	{
-		AddDistinctCustomScanWrapper(root, rel, rte);
-	}
+	AddDistinctCustomScanWrapper(root, rel, rte);
 
 	/* For vector, text search inject custom scan path to track lifetime of
 	 * $meta/ivfprobes.
