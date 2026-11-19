@@ -681,6 +681,10 @@ bool EnableArrayBsonStatsWithPlannerStatistics =
 #define DEFAULT_ENABLE_INSERT_WORKER_PUSHDOWN false
 bool EnableInsertWorkerPushdown = DEFAULT_ENABLE_INSERT_WORKER_PUSHDOWN;
 
+/* Added on v1.3, enabled on v1.3, remove after v1.5 */
+#define DEFAULT_ENABLE_BATCH_INSERT_RETRY_END_INDEX_FIX true
+bool EnableBatchInsertRetryEndIndexFix = DEFAULT_ENABLE_BATCH_INSERT_RETRY_END_INDEX_FIX;
+
 /* Added on v1.2, enabled on v1.2, remove after v1.4 */
 #define DEFAULT_ENABLE_IN_GRANULAR_SELECTIVITY true
 bool EnableInGranularSelectivity = DEFAULT_ENABLE_IN_GRANULAR_SELECTIVITY;
@@ -1864,6 +1868,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableInsertWorkerPushdown,
 		DEFAULT_ENABLE_INSERT_WORKER_PUSHDOWN,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_batch_insert_retry_end_index_fix", newGucPrefix),
+		gettext_noop(
+			"Whether a batch-insert group that fails before its insert runs is retried one document at a time across the whole group, rather than resuming grouping after the first retried document."),
+		NULL,
+		&EnableBatchInsertRetryEndIndexFix,
+		DEFAULT_ENABLE_BATCH_INSERT_RETRY_END_INDEX_FIX,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

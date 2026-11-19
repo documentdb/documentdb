@@ -196,6 +196,7 @@ extern bool EnableInsertOnConflictOptimization;
 extern int32_t DocumentToastCompressionThreshold;
 extern bool DefaultInlineWriteOperations;
 extern bool EnableInsertWorkerPushdown;
+extern bool EnableBatchInsertRetryEndIndexFix;
 
 
 static inline bool
@@ -1190,7 +1191,11 @@ DoBatchInsertNoTransactionId(MongoCollection *collection, BatchInsertionSpec *ba
 			{
 				/* Has a failure, set hasFailures and retry */
 				hasBatchedInsertFailed = true;
-				retryBatchEndIndex = batchEndIndex;
+
+				/* batchEndIndex is unset if the group failed during preprocessing. */
+				retryBatchEndIndex = EnableBatchInsertRetryEndIndexFix ?
+									 nextInsertIndex + BatchWriteSubTransactionCount :
+									 batchEndIndex;
 			}
 			else
 			{
