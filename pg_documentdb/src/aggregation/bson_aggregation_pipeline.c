@@ -9926,6 +9926,7 @@ GenerateBaseTableQueryAndGetStages(text *databaseDatum, const
 	query->querySource = QSRC_ORIGINAL;
 	query->canSetTag = true;
 	context->collectionNameView = *collectionNameView;
+	context->hasIndependentSource = false;
 	context->namespaceName = CreateNamespaceName(databaseDatum,
 												 collectionNameView);
 	Datum collectionNameDatum = PointerGetDatum(

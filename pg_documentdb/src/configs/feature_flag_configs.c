@@ -555,6 +555,11 @@ bool EnableExistentialNullArrayMatch = DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MAT
 #define DEFAULT_ENABLE_MERGE_GENERATED_ID_CONSISTENCY true
 bool EnableMergeGeneratedIdConsistency = DEFAULT_ENABLE_MERGE_GENERATED_ID_CONSISTENCY;
 
+/* Added on v1.3, enabled on v1.3, remove after v1.5 */
+#define DEFAULT_ENABLE_DOLLAR_MERGE_ON_AGNOSTIC_SOURCES true
+bool EnableDollarMergeOnAgnosticSources =
+	DEFAULT_ENABLE_DOLLAR_MERGE_ON_AGNOSTIC_SOURCES;
+
 /*
  * SECTION: Lookup feature flags
  */
@@ -1929,6 +1934,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableExistentialNullArrayMatch,
 		DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_dollar_merge_on_agnostic_sources", newGucPrefix),
+		gettext_noop(
+			"Whether $merge writes input supplied independently of the source collection."),
+		NULL,
+		&EnableDollarMergeOnAgnosticSources,
+		DEFAULT_ENABLE_DOLLAR_MERGE_ON_AGNOSTIC_SOURCES,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

@@ -99,6 +99,7 @@ GenerateBaseAgnosticQuery(text *databaseDatum, AggregationPipelineBuildContext *
 	context->namespaceName = CreateNamespaceName(databaseDatum,
 												 &agnosticCollection);
 	context->mongoCollection = NULL;
+	context->hasIndependentSource = true;
 
 	query->rtable = NIL;
 

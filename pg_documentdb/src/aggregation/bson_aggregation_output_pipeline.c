@@ -37,6 +37,8 @@
 #include <executor/spi.h>
 
 #include "io/bson_core.h"
+#include "api_hooks.h"
+#include "configs/config_initialization.h"
 #include "metadata/metadata_cache.h"
 #include "query/query_operator.h"
 #include "query/bson_compare.h"
@@ -102,6 +104,13 @@ typedef struct MergeArgs
 	/* input `whenNotMatched` field */
 	WhenNotMatchedAction whenNotMatched;
 } MergeArgs;
+
+typedef struct MergeQueryValidationContext
+{
+	char *stageName;
+	bool allowEmptySources;
+	bool hasCollectionSource;
+} MergeQueryValidationContext;
 
 
 /*
@@ -174,11 +183,16 @@ static inline void AddTargetCollectionRTEDollarMerge(Query *query,
 													 AclMode requiredPermissions);
 static HTAB * InitHashTableFromStringArray(const bson_value_t *onValues, int
 										   onValuesArraySize);
-static inline void ValidatePreOutputStages(Query *query, char *stageName);
+static inline bool ValidatePreOutputStages(Query *query, char *stageName,
+										   bool allowEmptySources);
 static Query * MigrateQueryToFilteredOutputSubQuery(Query *query,
 													AggregationPipelineBuildContext *
 													context);
 static bool MergeQueryCTEWalker(Node *node, void *context);
+static void InspectMergeQuerySources(Query *query,
+									 MergeQueryValidationContext *validationContext);
+static Query * AddEmptyMergeSource(Query *query, MongoCollection *targetCollection,
+								   AggregationPipelineBuildContext *context);
 static inline void ValidateFinalPgbsonBeforeWriting(const pgbson *finalBson, const
 													pgbson *targetDocument,
 													ExprEvalState *
@@ -695,13 +709,15 @@ HandleMerge(const bson_value_t *existingValue, Query *query,
 							"$merge is not permitted within an active transaction")));
 	}
 
-	/* if source table does not exist do not modify query */
-	if (context->mongoCollection == NULL)
+	/* Independent input can supply a missing source when the feature is enabled. */
+	if (context->mongoCollection == NULL &&
+		(!EnableDollarMergeOnAgnosticSources || !context->hasIndependentSource))
 	{
 		return query;
 	}
 
-	ValidatePreOutputStages(query, "$merge");
+	bool hasCollectionSource = ValidatePreOutputStages(query, "$merge",
+													   context->hasIndependentSource);
 
 	MergeArgs mergeArgs;
 	memset(&mergeArgs, 0, sizeof(mergeArgs));
@@ -757,8 +773,14 @@ HandleMerge(const bson_value_t *existingValue, Query *query,
 		VaildateMergeOnFieldValues(&mergeArgs.on, targetCollection->collectionId);
 	}
 
-	bool isSourceAndTargetAreSame = (targetCollection->collectionId ==
-									 context->mongoCollection->collectionId);
+	if (!hasCollectionSource)
+	{
+		query = AddEmptyMergeSource(query, targetCollection, context);
+	}
+
+	bool isSourceAndTargetAreSame = context->mongoCollection != NULL &&
+									targetCollection->collectionId ==
+									context->mongoCollection->collectionId;
 
 	/* constant for target collection */
 	const int targetCollectionVarNo = 1;     /* In merge query target table is 1st table */
@@ -1965,11 +1987,16 @@ InitHashTableFromStringArray(const bson_value_t *inputKeyArray, int arraySize)
 /*
  * ValidatePreOutputStages traverse query tree to fail early if $merge/$out is used with $graphLookup or contains any mutable function.
  */
-static inline void
-ValidatePreOutputStages(Query *query, char *stageName)
+static inline bool
+ValidatePreOutputStages(Query *query, char *stageName, bool allowEmptySources)
 {
+	MergeQueryValidationContext validationContext = {
+		.stageName = stageName,
+		.allowEmptySources = allowEmptySources,
+	};
+
 	/* First, walk the query tree to detect any constructs that disqualify merge support */
-	query_tree_walker(query, MergeQueryCTEWalker, stageName, 0);
+	MergeQueryCTEWalker((Node *) query, &validationContext);
 
 	/* Already checked for known mutable functions; perform a recheck to ensure none were missed */
 	if (contain_mutable_functions((Node *) query))
@@ -1981,6 +2008,108 @@ ValidatePreOutputStages(Query *query, char *stageName)
 						errdetail_log(
 							"MUTABLE functions are not yet in MERGE command by citus")));
 	}
+
+	return validationContext.hasCollectionSource;
+}
+
+
+static Query *
+AddEmptyMergeSource(Query *query, MongoCollection *targetCollection,
+					AggregationPipelineBuildContext *context)
+{
+	MongoCollection *emptyCollection = GetEmptyMergeSourceCollection(targetCollection);
+	if (emptyCollection == NULL)
+	{
+		return query;
+	}
+
+	Query *emptyQuery = makeNode(Query);
+	emptyQuery->commandType = CMD_SELECT;
+	emptyQuery->querySource = QSRC_ORIGINAL;
+	emptyQuery->canSetTag = true;
+	RangeTblEntry *rte = makeNode(RangeTblEntry);
+	bool allowShardBaseTable = false;
+	FillRteForMongoCollection(emptyQuery, rte, "merge_source_anchor",
+							  &allowShardBaseTable, emptyCollection);
+	emptyQuery->rtable = list_make1(rte);
+
+	RangeTblRef *reference = makeNode(RangeTblRef);
+	reference->rtindex = 1;
+
+	/* Allow the empty branch to be pruned before dispatching source reads. */
+	const bool hasRows = false;
+	const bool isNull = false;
+	emptyQuery->jointree = makeFromExpr(list_make1(reference),
+										(Node *) makeBoolConst(hasRows, isNull));
+	Var *document = makeVar(1, DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER,
+							BsonTypeId(), -1, InvalidOid, 0);
+	const bool resjunk = false;
+	emptyQuery->targetList = list_make1(makeTargetEntry((Expr *) document, 1, "document",
+														resjunk));
+	return UnionQueries(query, emptyQuery, context);
+}
+
+
+/* Track real collection inputs and normalize known-empty placeholders in one walk. */
+static void
+InspectMergeQuerySources(Query *query,
+						 MergeQueryValidationContext *validationContext)
+{
+	ListCell *cell;
+	foreach(cell, query->rtable)
+	{
+		RangeTblEntry *rte = lfirst(cell);
+		if (!validationContext->hasCollectionSource && rte->rtekind == RTE_RELATION)
+		{
+			uint64 collectionId = 0;
+			const bool requireShardTable = false;
+			validationContext->hasCollectionSource =
+				TryGetCollectionIdByRelationOid(rte->relid, &collectionId,
+												requireShardTable);
+		}
+
+		if (!validationContext->allowEmptySources ||
+			rte->rtekind != RTE_FUNCTION || list_length(rte->functions) != 1)
+		{
+			continue;
+		}
+
+		RangeTblFunction *function = linitial(rte->functions);
+		if (!IsA(function->funcexpr, FuncExpr) ||
+			((FuncExpr *) function->funcexpr)->funcid != BsonEmptyDataTableFunctionId())
+		{
+			continue;
+		}
+
+		Query *emptyQuery = makeNode(Query);
+		emptyQuery->commandType = CMD_SELECT;
+		emptyQuery->querySource = QSRC_ORIGINAL;
+		Oid columnTypes[] = { INT8OID, BsonTypeId(), BsonTypeId() };
+		const bool resjunk = false;
+		const bool hasRows = false;
+		for (size_t i = 0; i < lengthof(columnTypes); i++)
+		{
+			emptyQuery->targetList = lappend(emptyQuery->targetList,
+											 makeTargetEntry(
+												 (Expr *) makeNullConst(columnTypes[i],
+																		-1, InvalidOid),
+												 i + 1, strVal(list_nth(
+																   rte->eref->colnames,
+																   i)),
+												 resjunk));
+		}
+		emptyQuery->jointree = makeFromExpr(NIL,
+											(Node *) MakeBoolValueConst(hasRows));
+
+		RangeTblEntry *emptyRte = makeNode(RangeTblEntry);
+		emptyRte->rtekind = RTE_SUBQUERY;
+		emptyRte->subquery = emptyQuery;
+		emptyRte->alias = rte->alias;
+		emptyRte->eref = rte->eref;
+		emptyRte->lateral = rte->lateral;
+		emptyRte->inFromCl = rte->inFromCl;
+		lfirst(cell) = emptyRte;
+	}
 }
 
 
@@ -1990,6 +2119,7 @@ ValidatePreOutputStages(Query *query, char *stageName)
 static bool
 MergeQueryCTEWalker(Node *node, void *context)
 {
+	MergeQueryValidationContext *validationContext = context;
 	if (node == NULL)
 	{
 		return false;
@@ -1998,7 +2128,7 @@ MergeQueryCTEWalker(Node *node, void *context)
 	if (IsA(node, Query))
 	{
 		Query *query = (Query *) node;
-		char *stageName = (char *) context;
+		char *stageName = validationContext->stageName;
 
 		if (query->hasRecursive)
 		{
@@ -2010,6 +2140,8 @@ MergeQueryCTEWalker(Node *node, void *context)
 								"$graphLookup is not supported with $merge/$out stage yet.")));
 		}
 
+		InspectMergeQuerySources(query, validationContext);
+
 		query_tree_walker(query, MergeQueryCTEWalker, context, 0);
 
 		/* we're done, no need to recurse anymore for this query */
@@ -2018,7 +2150,7 @@ MergeQueryCTEWalker(Node *node, void *context)
 	else if (IsA(node, FuncExpr))
 	{
 		FuncExpr *fexpr = (FuncExpr *) node;
-		char *stageName = (char *) context;
+		char *stageName = validationContext->stageName;
 
 		if (fexpr->funcid == ExtensionTableSampleSystemRowsFunctionId() ||
 			fexpr->funcid == PgRandomFunctionOid())
@@ -2165,7 +2297,8 @@ HandleOut(const bson_value_t *existingValue, Query *query,
 										   outArgs.targetDB.length);
 	ValidateNamespaceStringForEmbeddedNull(outArgs.targetCollection.string,
 										   outArgs.targetCollection.length);
-	ValidatePreOutputStages(query, "$out");
+	const bool allowEmptySources = false;
+	ValidatePreOutputStages(query, "$out", allowEmptySources);
 
 	MongoCollection *targetCollection =
 		GetMongoCollectionOrViewByNameDatum(StringViewGetTextDatum(&outArgs.targetDB),

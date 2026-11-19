@@ -1092,6 +1092,8 @@ HandleUnionWith(const bson_value_t *existingValue, Query *query,
 											collectionUuid,
 											indexHint,
 											&subPipelineContext);
+		context->hasIndependentSource |= subPipelineContext.mongoCollection != NULL ||
+										 subPipelineContext.hasIndependentSource;
 	}
 	else
 	{
@@ -1131,8 +1133,19 @@ HandleUnionWith(const bson_value_t *existingValue, Query *query,
 			rightQuery = MutateQueryWithPipeline(rightQuery, stages,
 												 &subPipelineContext);
 		}
+
+		context->hasIndependentSource |= subPipelineContext.mongoCollection != NULL ||
+										 subPipelineContext.hasIndependentSource;
 	}
 
+	return UnionQueries(leftQuery, rightQuery, context);
+}
+
+
+Query *
+UnionQueries(Query *leftQuery, Query *rightQuery,
+			 AggregationPipelineBuildContext *context)
+{
 	bool includeAllColumns = false;
 	RangeTblEntry *leftRte = MakeSubQueryRte(leftQuery, context->stageNum, 0,
 											 "unionLeft",
@@ -1143,7 +1156,7 @@ HandleUnionWith(const bson_value_t *existingValue, Query *query,
 
 	Query *modifiedQuery = makeNode(Query);
 	modifiedQuery->commandType = CMD_SELECT;
-	modifiedQuery->querySource = query->querySource;
+	modifiedQuery->querySource = leftQuery->querySource;
 	modifiedQuery->canSetTag = true;
 	modifiedQuery->jointree = makeNode(FromExpr);
 

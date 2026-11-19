@@ -9,11 +9,15 @@ ERROR:  customAction is required
 SELECT documentdb_api.custom_action('{"customAction": 1, "$db": "admin"}');
 ERROR:  The BSON field 'customAction' has an incorrect type 'int'; it should be of type 'string'.
 SELECT documentdb_api.custom_action('{"customAction": "unknown"}');
-ERROR:  customAction may only be run against the admin database
+ERROR:  customAction is not supported
+\echo :SQLSTATE
+M00EY
 SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": 1}');
 ERROR:  The BSON field '$db' has an incorrect type 'int'; it should be of type 'string'.
 SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "other"}');
-ERROR:  customAction may only be run against the admin database
+ERROR:  customAction is not supported
+\echo :SQLSTATE
+M00EY
 SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin\u0000other"}');
 ERROR:  namespaces cannot have embedded null characters
 SELECT documentdb_api.custom_action('{"customAction": "unknown\u0000action", "$db": "admin"}');
@@ -24,6 +28,8 @@ SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin",
 ERROR:  $db must be specified only once
 SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin"}');
 ERROR:  customAction is not supported
+\echo :SQLSTATE
+M00EY
 CREATE ROLE custom_action_nonadmin;
 GRANT USAGE ON SCHEMA documentdb_api TO custom_action_nonadmin;
 SET ROLE custom_action_nonadmin;

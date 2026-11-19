@@ -8,13 +8,16 @@ SELECT documentdb_api.custom_action(NULL);
 SELECT documentdb_api.custom_action('{}');
 SELECT documentdb_api.custom_action('{"customAction": 1, "$db": "admin"}');
 SELECT documentdb_api.custom_action('{"customAction": "unknown"}');
+\echo :SQLSTATE
 SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": 1}');
 SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "other"}');
+\echo :SQLSTATE
 SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin\u0000other"}');
 SELECT documentdb_api.custom_action('{"customAction": "unknown\u0000action", "$db": "admin"}');
 SELECT documentdb_api.custom_action('{"customAction": "unknown", "customAction": "other", "$db": "admin"}');
 SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin", "$db": "other"}');
 SELECT documentdb_api.custom_action('{"customAction": "unknown", "$db": "admin"}');
+\echo :SQLSTATE
 
 CREATE ROLE custom_action_nonadmin;
 GRANT USAGE ON SCHEMA documentdb_api TO custom_action_nonadmin;
