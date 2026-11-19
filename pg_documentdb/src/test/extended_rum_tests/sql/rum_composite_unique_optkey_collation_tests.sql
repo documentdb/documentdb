@@ -18,8 +18,7 @@ SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 
 -- ===== Section 1: With the flag OFF, unique + collation is rejected =====
 -- CALLOUT: while enable_collated_unique_indexes is off, a unique index that
--- requests a collation spec is rejected with
--- "Collation is not yet supported for unique indexes".
+-- requests a collation spec is rejected with disabled-feature guidance.
 SET documentdb.enable_collated_unique_indexes TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
   '{ "createIndexes": "optkeyCollColl", "indexes": [ { "key": { "a": 1 }, "name": "a_coll_off", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);

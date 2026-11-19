@@ -670,8 +670,9 @@ BuildDeletionSpec(bson_iter_t *deletionIter, const bson_value_t *variableSpec)
 			else
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg("BSON field 'delete.deletes.collation' is not yet "
-									   "supported")));
+								errmsg(
+									"Collation support is disabled. "
+									"Enable it to use 'delete.deletes.collation'.")));
 			}
 		}
 		else if (strcmp(field, "hint") == 0)

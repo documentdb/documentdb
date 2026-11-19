@@ -2001,7 +2001,8 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 			{
 				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								errmsg(
-									"collation is not supported in the aggregate command yet.")));
+									"Collation support is disabled. "
+									"Enable it to use 'aggregate.collation'.")));
 			}
 		}
 		else if (setStatementTimeout &&
@@ -2401,7 +2402,8 @@ ParseFindQuery(pgbson *findSpec, QueryData *queryData,
 					{
 						ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 										errmsg(
-											"collation is not supported in the find command yet.")));
+											"Collation support is disabled. "
+											"Enable it to use 'find.collation'.")));
 					}
 					continue;
 				}
@@ -3235,7 +3237,8 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 			{
 				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								errmsg(
-									"collation is not supported in the count command yet.")));
+									"Collation support is disabled. "
+									"Enable it to use 'count.collation'.")));
 			}
 		}
 		else if (StringViewEqualsCString(&keyView, "$db"))
@@ -3464,8 +3467,8 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 		else if (StringViewEqualsCString(&keyView, "collation"))
 		{
 			ReportFeatureUsage(FEATURE_COLLATION);
-			if (EnableCollation &&
-				IsClusterVersionAtleast(DocDB_V1, 1, 0))
+			bool isCollationSchemaSupported = IsClusterVersionAtleast(DocDB_V1, 1, 0);
+			if (EnableCollation && isCollationSchemaSupported)
 			{
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"collation", &distinctIter))
@@ -3476,9 +3479,17 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 			}
 			else if (!SkipFailOnCollation)
 			{
+				if (!isCollationSchemaSupported)
+				{
+					ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+									errmsg(
+										"collation is not supported in the distinct command yet.")));
+				}
+
 				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								errmsg(
-									"collation is not supported in the distinct command yet.")));
+									"Collation support is disabled. "
+									"Enable it to use 'distinct.collation'.")));
 			}
 		}
 		else if (StringViewEqualsCString(&keyView, "$db"))

@@ -554,7 +554,7 @@ SET documentdb.enable_composite_unique_optional_key TO on;
 SET documentdb.enable_collated_unique_indexes TO off;
 SELECT documentdb_api.create_collection_view('collated_creation',
     '{"create":"gated","collation":{"locale":"en","strength":2}}');
-ERROR:  Collation is not yet supported for unique indexes
+ERROR:  Collation support for unique indexes is disabled. Enable it to use 'createIndexes.indexes.collation'.
 CONTEXT:  SQL statement "SELECT documentdb_api.create_collection_with_options($1, $2, $3)"
 SET documentdb.enable_collated_unique_indexes TO on;
 -- Both creation entrypoints reject collation when its creation gate is disabled.
@@ -562,13 +562,13 @@ SET documentdb.enable_collation_with_create_collection TO off;
 SET documentdb.skipFailOnCollation TO off;
 SELECT documentdb_api.create_collection_view('collated_creation',
     '{"create":"creation_gated","collation":{"locale":"en","strength":2}}');
-ERROR:  Collation is currently not supported
+ERROR:  Collation support for collection creation is disabled. Enable it to use 'create.collation'.
 SELECT documentdb_api.create_collection_with_options('collated_creation', 'creation_gated_sql',
     '{"collation":{"locale":"en","strength":2}}');
-ERROR:  Collection collation is not supported yet
+ERROR:  Collation support for collection creation is disabled. Enable it to use 'create.collation'.
 SELECT documentdb_api.create_collection_view('collated_creation',
     '{"create":"creation_gated_simple","collation":{"locale":"simple"}}');
-ERROR:  Collation is currently not supported
+ERROR:  Collation support for collection creation is disabled. Enable it to use 'create.collation'.
 SELECT documentdb_api.create_collection('collated_creation', 'binary_gate_off');
 NOTICE:  creating collection
  create_collection 

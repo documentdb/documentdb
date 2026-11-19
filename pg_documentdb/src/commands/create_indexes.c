@@ -2601,7 +2601,9 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 			else if (!SkipFailOnCollation)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg("createIndex.collation is not implemented yet")));
+								errmsg(
+									"Collation support for indexes is disabled. "
+									"Enable it to use 'createIndexes.indexes.collation'.")));
 			}
 		}
 		else if (strcmp(indexDefDocKey, "storageEngine") == 0)
@@ -2663,7 +2665,9 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 			if (!EnableCollationWithNonUniqueOrderedIndexes)
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg("Collation is not supported with indexes yet")));
+								errmsg(
+									"Collation support for indexes is disabled. "
+									"Enable it to inherit the collection's collation.")));
 			}
 
 			char collationString[MAX_ICU_COLLATION_LENGTH] = { 0 };
@@ -3019,7 +3023,8 @@ ParseIndexDefDocumentInternal(const bson_iter_t *indexesDocIter,
 		{
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							errmsg(
-								"Collation is not yet supported for unique indexes")));
+								"Collation support for unique indexes is disabled. "
+								"Enable it to use 'createIndexes.indexes.collation'.")));
 		}
 	}
 

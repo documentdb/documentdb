@@ -514,9 +514,16 @@ ParseCreateSpec(Datum *databaseDatum, pgbson *createSpec, bool *hasSchemaValidat
 			}
 			else if (!SkipFailOnCollation)
 			{
+				if (!IsCreateCollectionWithOptionsSchemaSupported())
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+									errmsg("Collation is currently not supported")));
+				}
+
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 								errmsg(
-									"Collation is currently not supported")));
+									"Collation support for collection creation is disabled. "
+									"Enable it to use 'create.collation'.")));
 			}
 		}
 		else if (strcmp(key, "writeConcern") == 0)

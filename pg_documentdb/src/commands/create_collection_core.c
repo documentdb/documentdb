@@ -177,8 +177,16 @@ ParseCollectionCollationOptions(pgbson *options, bson_value_t *collationValue)
 	if (!(EnableCollation && EnableCollationWithCreateCollection &&
 		  IsCreateCollectionWithOptionsSchemaSupported()))
 	{
+		if (!IsCreateCollectionWithOptionsSchemaSupported())
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+							errmsg("Collection collation is not supported yet")));
+		}
+
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-						errmsg("Collection collation is not supported yet")));
+						errmsg(
+							"Collation support for collection creation is disabled. "
+							"Enable it to use 'create.collation'.")));
 	}
 
 	bson_iter_t iter;

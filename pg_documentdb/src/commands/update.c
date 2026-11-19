@@ -1174,9 +1174,18 @@ BuildUpdateSpec(bson_iter_t *updateIter, const bson_value_t *variableSpec,
 			}
 			else
 			{
+				if (!IsClusterVersionAtleast(DocDB_V1, 1, 0))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+									errmsg(
+										"BSON field 'update.updates.collation' is not yet "
+										"supported")));
+				}
+
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg("BSON field 'update.updates.collation' is not yet "
-									   "supported")));
+								errmsg(
+									"Collation support is disabled. "
+									"Enable it to use 'update.updates.collation'.")));
 			}
 		}
 		else if (allowInternalFields && strcmp(field, "$_internalCollation") == 0)
