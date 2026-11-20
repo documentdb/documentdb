@@ -1,0 +1,386 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+-- SPDX-License-Identifier: MIT
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET citus.next_shard_id TO 198480000;
+SET documentdb.next_collection_id TO 1984800;
+SET documentdb.next_collection_index_id TO 1984800;
+-- Enable the worker path GUC for the entire test
+SET documentdb.enable_delete_many_worker_pushdown TO ON;
+-- ================================================================
+-- Tests for deleteMany worker pushdown (enable_delete_many_worker_pushdown)
+-- Validates that sharded deleteMany uses the delete_worker path and
+-- returns correct deleted counts.
+-- ================================================================
+-- Setup: create collection, insert docs, shard it
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcoll', '{"_id":1, "a":1, "b":10, "tag":"x"}');
+NOTICE:  creating collection
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcoll', '{"_id":2, "a":2, "b":20, "tag":"x"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcoll', '{"_id":3, "a":3, "b":30, "tag":"y"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcoll', '{"_id":4, "a":4, "b":40, "tag":"y"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcoll', '{"_id":5, "a":5, "b":50, "tag":"x"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcoll', '{"_id":6, "a":6, "b":60, "tag":"z"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcoll', '{"_id":7, "a":7, "b":70, "tag":"z"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcoll', '{"_id":8, "a":8, "b":80, "tag":"x"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcoll', '{"_id":9, "a":9, "b":90, "tag":"y"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcoll', '{"_id":10, "a":10, "b":100, "tag":"z"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT documentdb_api.shard_collection('dmwdb', 'dmwcoll', '{"a":"hashed"}', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- ================================================================
+-- 1. Basic deleteMany all docs (GUC ON by default)
+--    Expect: n=10
+-- ================================================================
+BEGIN;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{},"limit":0}]}');
+                                         delete                                          
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""10"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcoll');
+ count 
+---------------------------------------------------------------------
+     0
+(1 row)
+
+ROLLBACK;
+-- ================================================================
+-- 2. deleteMany on subset
+--    Expect: n=3 (tag=y has 3 docs: _id 3,4,9)
+-- ================================================================
+BEGIN;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"tag":"y"},"limit":0}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""3"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcoll');
+ count 
+---------------------------------------------------------------------
+     7
+(1 row)
+
+ROLLBACK;
+-- ================================================================
+-- 3. deleteMany with shard key eq filter
+--    Should route to a single shard
+-- ================================================================
+BEGIN;
+SET LOCAL citus.log_remote_commands TO ON;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"a":{"$eq":5}},"limit":0}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker('1984801'::bigint, '1786987034919379147'::bigint, (0)::regclass, '{ "deleteMany" : { "query" : { "a" : { "$eq" : { "$numberInt" : "5" } } }, "variableSpec" : { "now" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson, (NULL::bytea)::documentdb_core.bsonsequence, NULL::text) AS delete_worker FROM documentdb_data.documents_1984801_198480010 documents_1984801 WHERE (shard_key_value OPERATOR(pg_catalog.=) '1786987034919379147'::bigint)
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""1"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+RESET citus.log_remote_commands;
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcoll') WHERE document @@ '{"a":5}';
+ count 
+---------------------------------------------------------------------
+     0
+(1 row)
+
+ROLLBACK;
+-- ================================================================
+-- 4. deleteMany without shard key filter
+--    Should fan out to all shards via delete_worker
+-- ================================================================
+BEGIN;
+SET LOCAL citus.log_remote_commands TO ON;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"tag":"z"},"limit":0}]}');
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker('1984801'::bigint, '0'::bigint, '-'::regclass, '{ "deleteMany" : { "query" : { "tag" : "z" }, "variableSpec" : { "now" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson, NULL::documentdb_core.bsonsequence, NULL::text) AS delete_worker FROM documentdb_data.documents_1984801_198480004 documents_1984801 WHERE true
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker('1984801'::bigint, '0'::bigint, '-'::regclass, '{ "deleteMany" : { "query" : { "tag" : "z" }, "variableSpec" : { "now" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson, NULL::documentdb_core.bsonsequence, NULL::text) AS delete_worker FROM documentdb_data.documents_1984801_198480005 documents_1984801 WHERE true
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker('1984801'::bigint, '0'::bigint, '-'::regclass, '{ "deleteMany" : { "query" : { "tag" : "z" }, "variableSpec" : { "now" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson, NULL::documentdb_core.bsonsequence, NULL::text) AS delete_worker FROM documentdb_data.documents_1984801_198480006 documents_1984801 WHERE true
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker('1984801'::bigint, '0'::bigint, '-'::regclass, '{ "deleteMany" : { "query" : { "tag" : "z" }, "variableSpec" : { "now" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson, NULL::documentdb_core.bsonsequence, NULL::text) AS delete_worker FROM documentdb_data.documents_1984801_198480007 documents_1984801 WHERE true
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker('1984801'::bigint, '0'::bigint, '-'::regclass, '{ "deleteMany" : { "query" : { "tag" : "z" }, "variableSpec" : { "now" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson, NULL::documentdb_core.bsonsequence, NULL::text) AS delete_worker FROM documentdb_data.documents_1984801_198480008 documents_1984801 WHERE true
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker('1984801'::bigint, '0'::bigint, '-'::regclass, '{ "deleteMany" : { "query" : { "tag" : "z" }, "variableSpec" : { "now" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson, NULL::documentdb_core.bsonsequence, NULL::text) AS delete_worker FROM documentdb_data.documents_1984801_198480009 documents_1984801 WHERE true
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker('1984801'::bigint, '0'::bigint, '-'::regclass, '{ "deleteMany" : { "query" : { "tag" : "z" }, "variableSpec" : { "now" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson, NULL::documentdb_core.bsonsequence, NULL::text) AS delete_worker FROM documentdb_data.documents_1984801_198480010 documents_1984801 WHERE true
+NOTICE:  executing the command locally: SELECT documentdb_api_internal.delete_worker('1984801'::bigint, '0'::bigint, '-'::regclass, '{ "deleteMany" : { "query" : { "tag" : "z" }, "variableSpec" : { "now" : NOW_SYS_VARIABLE } } }'::documentdb_core.bson, NULL::documentdb_core.bsonsequence, NULL::text) AS delete_worker FROM documentdb_data.documents_1984801_198480011 documents_1984801 WHERE true
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""3"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+RESET citus.log_remote_commands;
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcoll') WHERE document @@ '{"tag":"z"}';
+ count 
+---------------------------------------------------------------------
+     0
+(1 row)
+
+ROLLBACK;
+-- ================================================================
+-- 5. deleteMany with GUC OFF - should use the coordinator (CTE) path
+-- ================================================================
+BEGIN;
+SET LOCAL documentdb.enable_delete_many_worker_pushdown TO OFF;
+SET LOCAL citus.log_remote_commands TO ON;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"tag":"x"},"limit":0}]}');
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_1984801_198480004 documents_1984801 WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "tag" : "x" }'::documentdb_core.bsonquery)
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_1984801_198480005 documents_1984801 WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "tag" : "x" }'::documentdb_core.bsonquery)
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_1984801_198480006 documents_1984801 WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "tag" : "x" }'::documentdb_core.bsonquery)
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_1984801_198480007 documents_1984801 WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "tag" : "x" }'::documentdb_core.bsonquery)
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_1984801_198480008 documents_1984801 WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "tag" : "x" }'::documentdb_core.bsonquery)
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_1984801_198480009 documents_1984801 WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "tag" : "x" }'::documentdb_core.bsonquery)
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_1984801_198480010 documents_1984801 WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "tag" : "x" }'::documentdb_core.bsonquery)
+NOTICE:  executing the command locally: DELETE FROM documentdb_data.documents_1984801_198480011 documents_1984801 WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "tag" : "x" }'::documentdb_core.bsonquery)
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""4"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+RESET citus.log_remote_commands;
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcoll') WHERE document @@ '{"tag":"x"}';
+ count 
+---------------------------------------------------------------------
+     0
+(1 row)
+
+ROLLBACK;
+-- ================================================================
+-- 6. deleteMany no matching docs
+--    Expect: n=0
+-- ================================================================
+BEGIN;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"a":999},"limit":0}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+ROLLBACK;
+-- ================================================================
+-- 7. deleteMany with range filter ($gte/$lte)
+--    Expect: n=5 (a >= 3 AND a <= 7)
+-- ================================================================
+BEGIN;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"a":{"$gte":3,"$lte":7}},"limit":0}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""5"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcoll');
+ count 
+---------------------------------------------------------------------
+     5
+(1 row)
+
+ROLLBACK;
+-- ================================================================
+-- 8. deleteMany toggle GUC on/off and compare results
+--    Both paths must return identical deleted counts
+-- ================================================================
+BEGIN;
+-- With GUC ON (worker path)
+SET LOCAL documentdb.enable_delete_many_worker_pushdown TO ON;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"tag":"x"},"limit":0}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""4"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+ROLLBACK;
+BEGIN;
+-- With GUC OFF (CTE path)
+SET LOCAL documentdb.enable_delete_many_worker_pushdown TO OFF;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"tag":"x"},"limit":0}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""4"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+ROLLBACK;
+-- ================================================================
+-- 9. deleteMany with let variables via worker path
+--    Verifies let variables are preserved through the worker path
+--    serialization/deserialization (variableSpec on DeleteOneParams)
+--    Expect: n=3 (tag=y has 3 docs: _id 3,4,9)
+-- ================================================================
+BEGIN;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"$expr":{"$eq":["$tag","$$targetTag"]}},"limit":0}], "let":{"targetTag":"y"}}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""3"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcoll');
+ count 
+---------------------------------------------------------------------
+     7
+(1 row)
+
+ROLLBACK;
+-- ================================================================
+-- 10. Batch delete: multiple delete specs in one call
+--     First spec: delete tag=x (4 docs), second spec: delete tag=y (3 docs)
+-- ================================================================
+BEGIN;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"tag":"x"},"limit":0},{"q":{"tag":"y"},"limit":0}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""7"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcoll');
+ count 
+---------------------------------------------------------------------
+     3
+(1 row)
+
+ROLLBACK;
+-- ================================================================
+-- 11. deleteMany with non-default collation via worker path
+--     Case-insensitive collation (strength 2) must match both
+--     "alpha" and "ALPHA" through the worker serialization path.
+--     Expect: n=2
+-- ================================================================
+SET documentdb_core.enableCollation TO ON;
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcollation', '{"_id":1, "name":"alpha"}');
+NOTICE:  creating collection
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcollation', '{"_id":2, "name":"ALPHA"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT 1 FROM documentdb_api.insert_one('dmwdb', 'dmwcollation', '{"_id":3, "name":"beta"}');
+ ?column? 
+---------------------------------------------------------------------
+        1
+(1 row)
+
+SELECT documentdb_api.shard_collection('dmwdb', 'dmwcollation', '{"name":"hashed"}', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+BEGIN;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcollation", "deletes":[{"q":{"name":"alpha"},"limit":0,"collation":{"locale":"en","strength":2}}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""2"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcollation');
+ count 
+---------------------------------------------------------------------
+     1
+(1 row)
+
+ROLLBACK;
+-- Parity: same collation delete with the worker path OFF deletes the same docs
+BEGIN;
+SET LOCAL documentdb.enable_delete_many_worker_pushdown TO OFF;
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcollation", "deletes":[{"q":{"name":"alpha"},"limit":0,"collation":{"locale":"en","strength":2}}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""2"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcollation');
+ count 
+---------------------------------------------------------------------
+     1
+(1 row)
+
+ROLLBACK;
+SELECT documentdb_api.drop_collection('dmwdb', 'dmwcollation');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+RESET documentdb_core.enableCollation;
+-- ================================================================
+-- 12. Data integrity: permanent delete and read-back
+-- ================================================================
+SELECT documentdb_api.delete('dmwdb', '{"delete":"dmwcoll", "deletes":[{"q":{"tag":"z"},"limit":0}]}');
+                                         delete                                         
+---------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""3"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcoll');
+ count 
+---------------------------------------------------------------------
+     7
+(1 row)
+
+SELECT count(*) FROM documentdb_api.collection('dmwdb', 'dmwcoll') WHERE document @@ '{"tag":"z"}';
+ count 
+---------------------------------------------------------------------
+     0
+(1 row)
+
+-- Cleanup
+SELECT documentdb_api.drop_collection('dmwdb', 'dmwcoll');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- Reset the worker path GUC
+RESET documentdb.enable_delete_many_worker_pushdown;

@@ -654,6 +654,10 @@ bool EnableCommutativeUpdateMany =
 bool EnableCommutativeDeleteMany =
 	DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY;
 
+/* Added on v1.2, pending stabilization, enable on v1.5 */
+#define DEFAULT_ENABLE_DELETE_MANY_WORKER_PUSHDOWN false
+bool EnableDeleteManyWorkerPushdown = DEFAULT_ENABLE_DELETE_MANY_WORKER_PUSHDOWN;
+
 /* Added in v1.2, pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_UPDATE_WORKER_PLAN_CACHE false
 bool EnableUpdateWorkerPlanCache =
@@ -1796,6 +1800,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableCommutativeDeleteMany,
 		DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_delete_many_worker_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to push deleteMany to worker nodes via delete_worker UDF, "
+			"avoiding CTE intermediate result overhead on the coordinator."),
+		NULL,
+		&EnableDeleteManyWorkerPushdown,
+		DEFAULT_ENABLE_DELETE_MANY_WORKER_PUSHDOWN,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
