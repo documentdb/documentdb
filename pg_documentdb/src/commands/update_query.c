@@ -20,6 +20,7 @@
 #include "optimizer/optimizer.h"
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
+#include "parser/parsetree.h"
 #include "tcop/pquery.h"
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
@@ -35,6 +36,7 @@
 #include "commands/update_query.h"
 #include "metadata/metadata_cache.h"
 #include "query/query_operator.h"
+#include "schema_validation/schema_validation.h"
 #include "utils/docdb_make_funcs.h"
 #include "utils/documentdb_pg_compatibility.h"
 #include "utils/guc_utils.h"
@@ -47,6 +49,7 @@ typedef enum UpdateParameterName
 	UpdateParameter_ArrayFilters,
 	UpdateParameter_Variables,
 	UpdateParameter_Collation,
+	UpdateParameter_Validator,
 
 	/* Always add all the parameters before this */
 	UpdateParameter_Max
@@ -57,11 +60,25 @@ typedef enum UpdateBaseTableVar
 	UpdateBaseTableVar_SelfItemPointer,
 	UpdateBaseTableVar_TableOid,
 	UpdateBaseTableVar_ShardKey,
+	UpdateBaseTableVar_ObjectId,
 	UpdateBaseTableVar_Document,
 
 	/* Always add all the base table vars before this */
 	UpdateBaseTableVar_Max
 } UpdateBaseTableVar;
+
+/* Every query built here references the collection table at this range table index. */
+#define UPDATE_BASE_TABLE_RTINDEX 1
+
+/*
+ * Base table VARs and column permissions are tracked per query: each Query owns
+ * its range table and permission info, so VARs are never shared across queries.
+ */
+typedef struct UpdateQueryVars
+{
+	Query *query;
+	Var *vars[UpdateBaseTableVar_Max];
+} UpdateQueryVars;
 
 typedef struct UpdateAstContext
 {
@@ -77,13 +94,12 @@ typedef struct UpdateAstContext
 	bool useCommutativeWrites;
 	bool useDirectUpdate;
 
-	/* Query AST and related structures, base table VARs for multiple references
-	 * parameter bindings for the update query etc
-	 */
+	List *schemaValidationCTEs;
+	Expr *matchedCount;
+
+	/* Parameter bindings shared by all queries in the update query tree */
 	List *bindings;
 	Expr *parameters[UpdateParameter_Max];
-	Query *baseTableVarQuery;
-	Var *baseTableVars[UpdateBaseTableVar_Max];
 } UpdateAstContext;
 
 extern bool EnableUpdateManyWorkerPushdown;
@@ -96,16 +112,19 @@ static Query * MakeQueryNode(CmdType commandType);
 static void AddUpdateRelation(Query *query, const UpdateAllQuerySpec *spec);
 static void PopulateUpdateRelation(Query *query, Relation relation, const
 								   char *tableName);
-static Var * UpdateRelationVar(Query *query, UpdateAstContext *context,
-							   UpdateBaseTableVar column);
+static Var * UpdateRelationVar(UpdateQueryVars *queryVars, UpdateBaseTableVar column);
 static Var * UpdateCteTargetVar(Index relation, TargetEntry *entry);
-static Expr * BuildUpdateQuals(UpdateAstContext *context, Query *query);
-static Expr * BuildDocumentTransformation(UpdateAstContext *context, Query *query);
+static Expr * BuildUpdateQuals(UpdateAstContext *context, UpdateQueryVars *queryVars);
+static Expr * BuildDocumentTransformation(UpdateAstContext *context,
+										  UpdateQueryVars *queryVars);
 static CommonTableExpr * MakeUpdateCte(const char *name, Query *query);
 static Index AddUpdateCteReference(Query *query, CommonTableExpr *cte, Index levelsUp);
 static Aggref * BuildUpdateAggregate(const char *name, Expr *argument);
-static Query * BuildBaseUpdateManyQuery(UpdateAstContext *context);
-static Query * BuildUpdateManyResultQuery(UpdateAstContext *context, Query *update);
+static Query * BuildUpdateManySourceQuery(Query *update);
+static void ApplySchemaValidationToUpdateMany(UpdateAstContext *context,
+											  UpdateQueryVars *updateVars);
+static Query * BuildUpdateManyResultQuery(UpdateAstContext *context,
+										  UpdateQueryVars *updateVars);
 static uint64 ExecuteUpdateManyQueryAst(Query *query, ParamListInfo params,
 										bool commutativeWrites);
 
@@ -162,8 +181,10 @@ PerformUpdateAll(const UpdateAllQuerySpec *spec)
 		NumBsonDocumentsUpdated = 0;
 	}
 
+	/* Match the legacy validation path, which does not use commutative writes. */
 	bool commutativeWrites = spec->collection->shardKey != NULL &&
-							 EnableCommutativeUpdateMany;
+							 EnableCommutativeUpdateMany &&
+							 context.schemaValidationCTEs == NIL;
 	uint64 processed = ExecuteUpdateManyQueryAst(query, params, commutativeWrites);
 
 	UpdateAllMatchingDocsResult result = { 0 };
@@ -193,16 +214,32 @@ PerformUpdateAll(const UpdateAllQuerySpec *spec)
 
 
 /*
- * Build one UPDATE shape, adding the result-count wrapper only when the direct
- * worker path cannot supply matched and modified counts.
+ * Build matching and transformation once, then layer validation and result counts
+ * over the same UPDATE rather than maintaining independent query shapes.
  */
 static Query *
 BuildUpdateManyQueryAst(UpdateAstContext *context)
 {
 	const UpdateAllQuerySpec *spec = context->spec;
 	bool isLocalShard = spec->collection->shardTableName[0] != '\0';
+	bool validate = EnableSchemaValidation && spec->schemaValidator != NULL;
 
-	Query *update = BuildBaseUpdateManyQuery(context);
+	Query *update = MakeQueryNode(CMD_UPDATE);
+	AddUpdateRelation(update, spec);
+	UpdateQueryVars updateVars = { .query = update };
+
+	if (validate)
+	{
+		/* Matching and transformation are built in the validated source query. */
+		ApplySchemaValidationToUpdateMany(context, &updateVars);
+		return BuildUpdateManyResultQuery(context, &updateVars);
+	}
+
+	update->targetList = list_make1(makeTargetEntry(
+										BuildDocumentTransformation(context, &updateVars),
+										DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER,
+										"document", false));
+	update->jointree->quals = (Node *) BuildUpdateQuals(context, &updateVars);
 
 	/* whether we have enough information to run this as a direct update on this shard. */
 	context->useDirectUpdate = isLocalShard && EnableUpdateManyWorkerPushdown;
@@ -210,7 +247,7 @@ BuildUpdateManyQueryAst(UpdateAstContext *context)
 	{
 		return update;
 	}
-	return BuildUpdateManyResultQuery(context, update);
+	return BuildUpdateManyResultQuery(context, &updateVars);
 }
 
 
@@ -267,6 +304,13 @@ UpdateParameter(UpdateAstContext *context, UpdateParameterName name)
 				type = TEXTOID;
 				value = CStringGetTextDatum(context->applyCollation ?
 											spec->updateParams->collationString : "");
+				break;
+			}
+
+			case UpdateParameter_Validator:
+			{
+				bson = spec->schemaValidator;
+				type = BsonTypeId();
 				break;
 			}
 
@@ -371,7 +415,7 @@ PopulateUpdateRelation(Query *query, Relation relation, const char *tableName)
 	rte->inh = true;
 	rte->eref = makeAlias(pstrdup(tableName), columnNames);
 	query->rtable = list_make1(rte);
-	query->resultRelation = 1;
+	query->resultRelation = UPDATE_BASE_TABLE_RTINDEX;
 #if PG_VERSION_NUM >= 160000
 	RTEPermissionInfo *permissions = addRTEPermissionInfo(&query->rteperminfos, rte);
 #else
@@ -387,35 +431,30 @@ PopulateUpdateRelation(Query *query, Relation relation, const char *tableName)
 		FirstLowInvalidHeapAttributeNumber);
 
 	RangeTblRef *reference = makeNode(RangeTblRef);
-	reference->rtindex = 1;
+	reference->rtindex = UPDATE_BASE_TABLE_RTINDEX;
 	query->jointree->fromlist = list_make1(reference);
 }
 
 
 /*
- * Gets the VAR nodes for the specified base table columns in the UPDATE query.
- * If the VAR is already created, it returns the existing VAR node.
+ * Gets a VAR for the specified base table column of the query owning queryVars,
+ * and records the column read in that query's permission info.
  */
 static Var *
-UpdateRelationVar(Query *query, UpdateAstContext *context, UpdateBaseTableVar column)
+UpdateRelationVar(UpdateQueryVars *queryVars, UpdateBaseTableVar column)
 {
-	if (context->baseTableVarQuery == NULL)
-	{
-		/* First time initialization for the base table VARs and query assignment */
-		memset(context->baseTableVars, 0, sizeof(context->baseTableVars));
-		context->baseTableVarQuery = query;
-	}
-
-	if (context->baseTableVarQuery != query)
+	Query *query = queryVars->query;
+	if (query == NULL || list_length(query->rtable) < UPDATE_BASE_TABLE_RTINDEX)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
-				 errmsg(
-					 "Multiple base queries are not supported for update query tree generation")));
+				 errmsg("update query tree has no base table for column references")));
 	}
-	if (context->baseTableVars[column] != NULL)
+
+	/* Each occurrence must own its node because planning can mutate it. */
+	if (queryVars->vars[column] != NULL)
 	{
-		return context->baseTableVars[column];
+		return copyObject(queryVars->vars[column]);
 	}
 	AttrNumber attribute;
 	switch (column)
@@ -444,12 +483,18 @@ UpdateRelationVar(Query *query, UpdateAstContext *context, UpdateBaseTableVar co
 			break;
 		}
 
+		case UpdateBaseTableVar_ObjectId:
+		{
+			attribute = DOCUMENT_DATA_TABLE_OBJECT_ID_VAR_ATTR_NUMBER;
+			break;
+		}
+
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 					 errmsg("unrecognized update column	for query tree generation")));
 	}
-	RangeTblEntry *rte = linitial(query->rtable);
+	RangeTblEntry *rte = rt_fetch(UPDATE_BASE_TABLE_RTINDEX, query->rtable);
 #if PG_VERSION_NUM >= 160000
 	RTEPermissionInfo *permissions = list_nth(query->rteperminfos,
 											  rte->perminfoindex - 1);
@@ -463,8 +508,10 @@ UpdateRelationVar(Query *query, UpdateAstContext *context, UpdateBaseTableVar co
 	int32 typmod;
 	Oid collation;
 	get_atttypetypmodcoll(rte->relid, attribute, &type, &typmod, &collation);
-	context->baseTableVars[column] = makeVar(1, attribute, type, typmod, collation, 0);
-	return context->baseTableVars[column];
+	Index levelsUp = 0;
+	queryVars->vars[column] = makeVar(UPDATE_BASE_TABLE_RTINDEX, attribute, type,
+									  typmod, collation, levelsUp);
+	return copyObject(queryVars->vars[column]);
 }
 
 
@@ -486,12 +533,13 @@ UpdateCteTargetVar(Index relation, TargetEntry *entry)
  * unused bindings for distributed execution.
  */
 static Expr *
-BuildUpdateQuals(UpdateAstContext *context, Query *query)
+BuildUpdateQuals(UpdateAstContext *context, UpdateQueryVars *queryVars)
 {
+	Query *query = queryVars->query;
 	BsonQueryOperatorContext queryContext;
 	memset(&queryContext, 0, sizeof(BsonQueryOperatorContext));
 
-	queryContext.documentExpr = (Expr *) UpdateRelationVar(query, context,
+	queryContext.documentExpr = (Expr *) UpdateRelationVar(queryVars,
 														   UpdateBaseTableVar_Document);
 	if (context->variables != NULL)
 	{
@@ -511,14 +559,14 @@ BuildUpdateQuals(UpdateAstContext *context, Query *query)
 	Expr *qual = make_ands_explicit(quals);
 
 	/* Key Vars introduced by expansion also require column read permissions. */
+	RangeTblEntry *rte = rt_fetch(UPDATE_BASE_TABLE_RTINDEX, query->rtable);
 #if PG_VERSION_NUM >= 160000
-	RangeTblEntry *rte = linitial(query->rtable);
 	RTEPermissionInfo *permissions = list_nth(query->rteperminfos,
 											  rte->perminfoindex - 1);
 #else
-	RangeTblEntry *permissions = linitial(query->rtable);
+	RangeTblEntry *permissions = rte;
 #endif
-	pull_varattnos((Node *) qual, query->resultRelation, &permissions->selectedCols);
+	pull_varattnos((Node *) qual, UPDATE_BASE_TABLE_RTINDEX, &permissions->selectedCols);
 	return qual;
 }
 
@@ -528,7 +576,7 @@ BuildUpdateQuals(UpdateAstContext *context, Query *query)
  * SET document = COALESCE(update_bson_document(...), document)
  */
 static Expr *
-BuildDocumentTransformation(UpdateAstContext *context, Query *query)
+BuildDocumentTransformation(UpdateAstContext *context, UpdateQueryVars *queryVars)
 {
 	Expr *variables = context->useVariableSpecOrCollationArgs ?
 					  UpdateParameter(context, UpdateParameter_Variables) :
@@ -536,7 +584,7 @@ BuildDocumentTransformation(UpdateAstContext *context, Query *query)
 	Expr *collation = context->useVariableSpecOrCollationArgs ?
 					  UpdateParameter(context, UpdateParameter_Collation) :
 					  (Expr *) makeNullConst(TEXTOID, -1, get_typcollation(TEXTOID));
-	List *arguments = list_make5(UpdateRelationVar(query, context,
+	List *arguments = list_make5(UpdateRelationVar(queryVars,
 												   UpdateBaseTableVar_Document),
 								 UpdateParameter(context, UpdateParameter_Update),
 								 UpdateParameter(context, UpdateParameter_Query),
@@ -549,9 +597,9 @@ BuildDocumentTransformation(UpdateAstContext *context, Query *query)
 	{
 		/* Use the update_bson_document overload with update description */
 		updateFunctionOid = UpdateBsonDocumentWithDescriptionFunctionOid();
-		arguments = lappend(arguments, UpdateRelationVar(query, context,
+		arguments = lappend(arguments, UpdateRelationVar(queryVars,
 														 UpdateBaseTableVar_SelfItemPointer));
-		arguments = lappend(arguments, UpdateRelationVar(query, context,
+		arguments = lappend(arguments, UpdateRelationVar(queryVars,
 														 UpdateBaseTableVar_TableOid));
 	}
 
@@ -561,7 +609,7 @@ BuildDocumentTransformation(UpdateAstContext *context, Query *query)
 											COERCE_EXPLICIT_CALL);
 	CoalesceExpr *coalesce = makeNode(CoalesceExpr);
 	coalesce->coalescetype = BsonTypeId();
-	coalesce->args = list_make2(updateBsonFunc, UpdateRelationVar(query, context,
+	coalesce->args = list_make2(updateBsonFunc, UpdateRelationVar(queryVars,
 																  UpdateBaseTableVar_Document));
 	coalesce->location = -1;
 	return (Expr *) coalesce;
@@ -657,19 +705,138 @@ BuildUpdateAggregate(const char *name, Expr *argument)
 
 
 /*
- * Builds the base UPDATE query and returns it with document transformation and query filters applied.
+ * Builds a SELECT over the UPDATE's target relation for validated updates. The
+ * SELECT owns a copy of the range table and its own read-only permission info,
+ * so its VARs and column permissions are tracked by a separate UpdateQueryVars.
  */
 static Query *
-BuildBaseUpdateManyQuery(UpdateAstContext *context)
+BuildUpdateManySourceQuery(Query *update)
 {
-	Query *update = MakeQueryNode(CMD_UPDATE);
-	AddUpdateRelation(update, context->spec);
+	if (list_length(update->rtable) != 1 ||
+		update->resultRelation != UPDATE_BASE_TABLE_RTINDEX)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+				 errmsg("unexpected base query shape for update source query")));
+	}
+
+	Query *filtered = MakeQueryNode(CMD_SELECT);
+	filtered->rtable = copyObject(update->rtable);
+	RangeTblEntry *sourceRte = rt_fetch(UPDATE_BASE_TABLE_RTINDEX, filtered->rtable);
+	sourceRte->rellockmode = AccessShareLock;
+	sourceRte->inFromCl = true;
+#if PG_VERSION_NUM >= 160000
+	filtered->rteperminfos = copyObject(update->rteperminfos);
+	RTEPermissionInfo *permissions = list_nth(filtered->rteperminfos,
+											  sourceRte->perminfoindex - 1);
+#else
+	RangeTblEntry *permissions = sourceRte;
+#endif
+	permissions->requiredPerms = ACL_SELECT;
+	permissions->selectedCols = NULL;
+	permissions->updatedCols = NULL;
+
+	RangeTblRef *reference = makeNode(RangeTblRef);
+	reference->rtindex = UPDATE_BASE_TABLE_RTINDEX;
+	filtered->jointree->fromlist = list_make1(reference);
+	return filtered;
+}
+
+
+/*
+ * Build matching and the new document in filtered_documents, validate its output
+ * in v, then join back to the UPDATE by object ID and shard key.
+ */
+static void
+ApplySchemaValidationToUpdateMany(UpdateAstContext *context, UpdateQueryVars *updateVars)
+{
+	Query *update = updateVars->query;
+	UpdateQueryVars filteredVars = { .query = BuildUpdateManySourceQuery(update) };
+	Query *filtered = filteredVars.query;
+
+	TargetEntry *filteredObjectId = makeTargetEntry(
+		(Expr *) UpdateRelationVar(&filteredVars, UpdateBaseTableVar_ObjectId),
+		1, "object_id", false);
+	TargetEntry *filteredShardKey = makeTargetEntry(
+		(Expr *) UpdateRelationVar(&filteredVars, UpdateBaseTableVar_ShardKey),
+		2, "shard_key_value", false);
+	TargetEntry *filteredDocument = makeTargetEntry(
+		(Expr *) UpdateRelationVar(&filteredVars, UpdateBaseTableVar_Document),
+		3, "document", false);
+	TargetEntry *newDocument = makeTargetEntry(
+		BuildDocumentTransformation(context, &filteredVars), 4, "newdocument", false);
+	filtered->targetList = list_make4(filteredObjectId, filteredShardKey,
+									  filteredDocument, newDocument);
+
+	/* Sort entries from matching are appended after the projected columns. */
+	filtered->jointree->quals = (Node *) BuildUpdateQuals(context, &filteredVars);
+	CommonTableExpr *filteredCte = MakeUpdateCte("filtered_documents", filtered);
+
+	/* The result SELECT owns these CTEs; column Vars remain at query level zero. */
+	Index cteLevelsUp = 1;
+	Query *validation = MakeQueryNode(CMD_SELECT);
+	Index source = AddUpdateCteReference(validation, filteredCte, cteLevelsUp);
+	TargetEntry *validatedObjectId = makeTargetEntry(
+		(Expr *) UpdateCteTargetVar(source, filteredObjectId), 1, "object_id", false);
+	TargetEntry *validatedShardKey = makeTargetEntry(
+		(Expr *) UpdateCteTargetVar(source, filteredShardKey), 2, "shard_key_value",
+		false);
+	TargetEntry *validatedDocument = makeTargetEntry(
+		(Expr *) UpdateCteTargetVar(source, newDocument), 3, "newdocument", false);
+
+	Expr *validator = UpdateParameter(context, UpdateParameter_Validator);
+	bool moderate = context->spec->collection->schemaValidator.validationLevel ==
+					ValidationLevel_Moderate;
+	List *arguments = list_make4(validator, UpdateCteTargetVar(source, newDocument),
+								 UpdateCteTargetVar(source, filteredDocument),
+								 makeBoolConst(moderate, false));
+	FuncExpr *validate = makeFuncExpr(
+		SchemaValidationAgainstUpdateFunctionOid(), BOOLOID,
+		arguments, InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+
+	/* The volatile validator prevents inlining and must execute even if unused. */
+	TargetEntry *validated = makeTargetEntry((Expr *) validate, 4,
+											 "schema_validation_against_update", false);
+	validation->targetList = list_make4(validatedObjectId, validatedShardKey,
+										validatedDocument, validated);
+	CommonTableExpr *validationCte = MakeUpdateCte("v", validation);
+
+	source = AddUpdateCteReference(update, validationCte, cteLevelsUp);
 	update->targetList = list_make1(makeTargetEntry(
-										BuildDocumentTransformation(context, update),
+										(Expr *) UpdateCteTargetVar(source,
+																	validatedDocument),
 										DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER,
 										"document", false));
-	update->jointree->quals = (Node *) BuildUpdateQuals(context, update);
-	return update;
+
+	bool returnsSet = false;
+	Expr *objectIdJoin = make_opclause(BsonEqualOperatorId(), BOOLOID, returnsSet,
+									   (Expr *) UpdateRelationVar(updateVars,
+																  UpdateBaseTableVar_ObjectId),
+									   (Expr *) UpdateCteTargetVar(source,
+																   validatedObjectId),
+									   InvalidOid, InvalidOid);
+	Expr *shardKeyJoin = make_opclause(BigintEqualOperatorId(), BOOLOID, returnsSet,
+									   (Expr *) UpdateRelationVar(updateVars,
+																  UpdateBaseTableVar_ShardKey),
+									   (Expr *) UpdateCteTargetVar(source,
+																   validatedShardKey),
+									   InvalidOid, InvalidOid);
+	update->jointree->quals = (Node *) make_ands_explicit(list_make2(objectIdJoin,
+																	 shardKeyJoin));
+
+	Query *count = MakeQueryNode(CMD_SELECT);
+	count->canSetTag = false;
+	AddUpdateCteReference(count, filteredCte, cteLevelsUp);
+	count->hasAggs = true;
+	count->targetList = list_make1(makeTargetEntry(
+									   (Expr *) BuildUpdateAggregate("count", NULL),
+									   1, "count", false));
+	SubLink *matched = makeNode(SubLink);
+	matched->subLinkType = EXPR_SUBLINK;
+	matched->subselect = (Node *) count;
+	matched->location = -1;
+	context->schemaValidationCTEs = list_make2(filteredCte, validationCte);
+	context->matchedCount = (Expr *) matched;
 }
 
 
@@ -677,11 +844,12 @@ BuildBaseUpdateManyQuery(UpdateAstContext *context)
  * Augments the update query with a result query that includes matched and modified counts.
  */
 static Query *
-BuildUpdateManyResultQuery(UpdateAstContext *context, Query *update)
+BuildUpdateManyResultQuery(UpdateAstContext *context, UpdateQueryVars *updateVars)
 {
+	Query *update = updateVars->query;
+
 	/* This function reads transformation state, so it must stay in RETURNING. */
-	Var *shardKeyVar = UpdateRelationVar(update, context,
-										 UpdateBaseTableVar_ShardKey);
+	Var *shardKeyVar = UpdateRelationVar(updateVars, UpdateBaseTableVar_ShardKey);
 	FuncExpr *returned = makeFuncExpr(BsonUpdateReturnedValueFunctionOid(), INT4OID,
 									  list_make1(shardKeyVar),
 									  InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
@@ -691,15 +859,18 @@ BuildUpdateManyResultQuery(UpdateAstContext *context, Query *update)
 
 	CommonTableExpr *updateCte = MakeUpdateCte("u", update);
 	Query *result = MakeQueryNode(CMD_SELECT);
-	result->cteList = list_make1(updateCte);
+	result->cteList = list_concat(context->schemaValidationCTEs, list_make1(updateCte));
 	result->hasModifyingCTE = true;
 	result->hasAggs = true;
+	result->hasSubLinks = context->matchedCount != NULL;
 
 	/* This is at the same level now */
 	int levelsup = 0;
 	Index source = AddUpdateCteReference(result, updateCte, levelsup);
 
-	Expr *matchedCount = (Expr *) BuildUpdateAggregate("count", NULL);
+	Expr *matchedCount = context->matchedCount == NULL ?
+						 (Expr *) BuildUpdateAggregate("count", NULL) :
+						 context->matchedCount;
 	Expr *modifiedCount = (Expr *) BuildUpdateAggregate("sum",
 														(Expr *) UpdateCteTargetVar(
 															source, updated));

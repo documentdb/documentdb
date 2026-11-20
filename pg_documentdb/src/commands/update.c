@@ -489,6 +489,8 @@ static void BuildUpdateAllMatchingDocumentQueryLegacy(const UpdateAllQuerySpec *
 													  pgbson *schemaValidator,
 													  bool forceBsonOutput,
 													  UpdateQueryParserState *updateState);
+static pgbson * PrepareUpdateManySchemaValidator(MongoCollection *collection,
+												 pgbson *schemaValidator);
 
 PG_FUNCTION_INFO_V1(command_update_bulk);
 PG_FUNCTION_INFO_V1(command_update);
@@ -2683,26 +2685,7 @@ BuildUpdateAllMatchingDocumentQueryLegacy(const UpdateAllQuerySpec *spec,
 	/* set the schema validation rule, if any */
 	if (validationLevelArgIndex != -1)
 	{
-		if (EnableCollationWithSchemaValidation &&
-			IsCollationApplicable(collection->options.collationString))
-		{
-			if (!IsClusterVersionAtleast(DocDB_V1, 2, 0))
-			{
-				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg(
-									"Multi-document validator on a collated collection requires a cluster schema upgrade")));
-			}
-
-			/* Keep the collection collation with the validator for multi-document updates. */
-			bson_value_t validatorValue = ConvertPgbsonToBsonValue(schemaValidator);
-			pgbson_writer writer;
-			PgbsonWriterInit(&writer);
-			PgbsonWriterAppendValue(&writer, "$__schema_validator",
-									19, &validatorValue);
-			PgbsonWriterAppendUtf8(&writer, "collation", 9,
-								   collection->options.collationString);
-			schemaValidator = PgbsonWriterGetPgbson(&writer);
-		}
+		schemaValidator = PrepareUpdateManySchemaValidator(collection, schemaValidator);
 
 		if (IsClusterVersionAtleast(DocDB_V0, 114, 0))
 		{
@@ -2720,6 +2703,35 @@ BuildUpdateAllMatchingDocumentQueryLegacy(const UpdateAllQuerySpec *spec,
 					schemaValidator));
 		}
 	}
+}
+
+
+/*
+ * Validation uses the collection collation, independently of command matching.
+ * Keep its encoding and schema guard identical for SQL and native queries.
+ */
+static pgbson *
+PrepareUpdateManySchemaValidator(MongoCollection *collection, pgbson *schemaValidator)
+{
+	if (EnableCollationWithSchemaValidation &&
+		IsCollationApplicable(collection->options.collationString))
+	{
+		if (!IsClusterVersionAtleast(DocDB_V1, 2, 0))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+							errmsg(
+								"Multi-document validator on a collated collection requires a cluster schema upgrade")));
+		}
+
+		bson_value_t validatorValue = ConvertPgbsonToBsonValue(schemaValidator);
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		PgbsonWriterAppendValue(&writer, "$__schema_validator", 19, &validatorValue);
+		PgbsonWriterAppendUtf8(&writer, "collation", 9,
+							   collection->options.collationString);
+		return PgbsonWriterGetPgbson(&writer);
+	}
+	return schemaValidator;
 }
 
 
@@ -2743,14 +2755,14 @@ UpdateAllMatchingDocuments(MongoCollection *collection,
 	BuildUpdateAllQuerySpec(collection, currentUpdate, hasShardKeyValueFilter,
 							shardKeyHash, hasOnlyObjectIdFilter, &spec);
 
-	/* TODO: move schema validation to AST
-	 * currently the optimized ID-only path and schema validation remain in legacy execution
-	 */
-	bool requiresSchemaValidation = EnableSchemaValidation && schemaValidator != NULL;
+	/* Keep the optimized ID-only path and its prepared plans in legacy execution. */
 	UpdateAllMatchingDocsResult result = { 0 };
 
-	if (!requiresSchemaValidation && IsUpdateAstEnabled(*hasOnlyObjectIdFilter))
+	if (IsUpdateAstEnabled(*hasOnlyObjectIdFilter))
 	{
+		spec.schemaValidator = EnableSchemaValidation && schemaValidator != NULL ?
+							   PrepareUpdateManySchemaValidator(collection,
+																schemaValidator) : NULL;
 		result = PerformUpdateAll(&spec);
 	}
 	else

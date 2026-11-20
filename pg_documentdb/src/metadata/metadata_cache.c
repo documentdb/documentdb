@@ -1334,6 +1334,9 @@ typedef struct DocumentDBApiOidCacheData
 	/* OIDs of the ApiInternalSchemaNameV2.update_bson_document overload with update description */
 	Oid UpdateBsonDocumentWithDescriptionFunctionOid;
 
+	/* OIDs of the ApiInternalSchemaName.schema_validation_against_update overloads */
+	Oid SchemaValidationAgainstUpdateFunctionOid;
+
 	/* OID of the ApiInternalSchemaNameV2.bson_update_returned_value function */
 	Oid BsonUpdateReturnedValueFunctionOid;
 
@@ -3617,6 +3620,21 @@ UpdateBsonDocumentWithDescriptionFunctionOid(void)
 		ApiInternalSchemaNameV2,
 		"update_bson_document", nargs, argTypes,
 		missingOk);
+}
+
+
+Oid
+SchemaValidationAgainstUpdateFunctionOid(void)
+{
+	Oid bsonTypeId = BsonTypeId();
+	Oid argTypes[4] = { bsonTypeId, bsonTypeId, bsonTypeId, BOOLOID };
+	int nargs = 4;
+	bool missingOk = false;
+
+	return GetSchemaFunctionIdWithNargs(
+		&Cache.SchemaValidationAgainstUpdateFunctionOid,
+		ApiInternalSchemaName,
+		"schema_validation_against_update", nargs, argTypes, missingOk);
 }
 
 

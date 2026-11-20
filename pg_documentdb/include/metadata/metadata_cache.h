@@ -514,6 +514,7 @@ Oid CatalogCollectionsTableId(void);
 /* CRUD functions */
 Oid UpdateBsonDocumentFunctionOid(void);
 Oid UpdateBsonDocumentWithDescriptionFunctionOid(void);
+Oid SchemaValidationAgainstUpdateFunctionOid(void);
 Oid BsonUpdateReturnedValueFunctionOid(void);
 Oid UpdateWorkerFunctionOid(void);
 Oid InsertWorkerFunctionOid(void);

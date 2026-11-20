@@ -10,6 +10,7 @@ SET documentdb.enableSchemaValidation TO ON;
 SET documentdb.enableBypassDocumentValidation TO ON;
 SET documentdb_core.enableCollation TO ON;
 SET documentdb.skipFailOnCollation TO OFF;
+SET documentdb.enable_collation_with_schema_validation TO ON;
 SET documentdb.enable_support_function_id_pushdown TO OFF;
 SET citus.propagate_set_commands TO 'local';
 SET citus.max_cached_conns_per_worker TO 0;
@@ -24,6 +25,16 @@ SELECT documentdb_api.create_collection_view('update_all_ast_remote', '{"create"
 CALL documentdb_distributed_test_helpers.place_collection_on_node('update_all_ast_remote', 'validated', 1);
 SELECT documentdb_api.create_collection_view('update_all_ast_remote', '{"create":"validated_sharded","enableUpdateDescription":true,"validator":{"$jsonSchema":{"properties":{"value":{"bsonType":"int"}}}},"validationLevel":"strict","validationAction":"error"}');
 SELECT documentdb_api.shard_collection('update_all_ast_remote', 'validated_sharded', '{"tenant":"hashed"}', false);
+SELECT documentdb_api.create_collection_view('update_all_ast_remote', '{"create":"collated_validator","validator":{"label":{"$in":["CAT","DOG"]}},"validationAction":"error"}');
+UPDATE documentdb_api_catalog.collections
+SET options = '{"collation":{"locale":"en","strength":2}}'::bson
+WHERE database_name = 'update_all_ast_remote' AND collection_name = 'collated_validator';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+CALL documentdb_distributed_test_helpers.place_collection_on_node('update_all_ast_remote', 'collated_validator', 1);
+SELECT documentdb_api.create_collection_view('update_all_ast_remote', '{"create":"strict_invalid","validator":{"$jsonSchema":{"properties":{"value":{"bsonType":"int"}}}},"validationLevel":"strict","validationAction":"error"}');
+CALL documentdb_distributed_test_helpers.place_collection_on_node('update_all_ast_remote', 'strict_invalid', 1);
+SELECT documentdb_api.create_collection_view('update_all_ast_remote', '{"create":"moderate_sharded","validator":{"$jsonSchema":{"properties":{"value":{"bsonType":"int"}}}},"validationLevel":"moderate","validationAction":"error"}');
+SELECT documentdb_api.shard_collection('update_all_ast_remote', 'moderate_sharded', '{"tenant":"hashed"}', false);
 
 -- Check placements rather than treating a distributed table as proof of
 -- remote execution. Validated unsharded writes must use the schema worker route.
@@ -31,15 +42,18 @@ SELECT c.collection_name, bool_and(p.groupid <> 0) AS all_placements_remote
 FROM documentdb_api_catalog.collections c
 JOIN pg_dist_shard s ON s.logicalrelid = ('documentdb_data.documents_' || c.collection_id)::regclass
 JOIN pg_dist_placement p ON p.shardid = s.shardid AND p.shardstate = 1
-WHERE c.database_name = 'update_all_ast_remote' AND c.collection_name IN ('remote', 'validated')
+WHERE c.database_name = 'update_all_ast_remote' AND c.collection_name IN ('remote', 'validated', 'collated_validator', 'strict_invalid')
 GROUP BY c.collection_name ORDER BY c.collection_name;
 SELECT c.collection_name, count(DISTINCT s.shardid) > 1 AS multiple_shards,
        bool_or(p.groupid <> 0) AS has_remote_placement
 FROM documentdb_api_catalog.collections c
 JOIN pg_dist_shard s ON s.logicalrelid = ('documentdb_data.documents_' || c.collection_id)::regclass
 JOIN pg_dist_placement p ON p.shardid = s.shardid AND p.shardstate = 1
-WHERE c.database_name = 'update_all_ast_remote' AND c.collection_name IN ('sharded', 'string_sharded', 'validated_sharded')
+WHERE c.database_name = 'update_all_ast_remote' AND c.collection_name IN ('sharded', 'string_sharded', 'validated_sharded', 'moderate_sharded')
 GROUP BY c.collection_name ORDER BY c.collection_name;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('update_all_ast_remote', '{"createIndexes":"validated","indexes":[{"key":{"location":"2dsphere"},"name":"schema_geo"}]}', true);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('update_all_ast_remote', '{"createIndexes":"validated_sharded","indexes":[{"key":{"location":"2dsphere"},"name":"schema_geo"}]}', true);
 
 CREATE TEMP TABLE remote_update_all_cases (
     seq int PRIMARY KEY, label text, target text, command bson,
@@ -71,7 +85,27 @@ INSERT INTO remote_update_all_cases VALUES
  (23, 'nested targeted ID filters', 'sharded', '{"update":"sharded","updates":[{"q":{"$and":[{"tenant":2},{"_id":2},{"group":"x"}]},"u":{"$inc":{"value":1}},"multi":true}]}', 1, 1, false),
  (24, 'remote empty predicate', 'remote', '{"update":"remote","updates":[{"q":{},"u":{"$inc":{"value":1}},"multi":true}]}', 3, 3, false),
  (25, 'collated shard key scatter', 'string_sharded', '{"update":"string_sharded","updates":[{"q":{"tenant":"CAT"},"u":{"$inc":{"value":1}},"multi":true,"collation":{"locale":"en","strength":2}}]}', 2, 2, false),
- (26, 'collated shard key mixed ID', 'string_sharded', '{"update":"string_sharded","updates":[{"q":{"tenant":"CAT","_id":2},"u":{"$inc":{"value":1}},"multi":true,"collation":{"locale":"en","strength":2}}]}', 1, 1, false);
+ (26, 'collated shard key mixed ID', 'string_sharded', '{"update":"string_sharded","updates":[{"q":{"tenant":"CAT","_id":2},"u":{"$inc":{"value":1}},"multi":true,"collation":{"locale":"en","strength":2}}]}', 1, 1, false),
+ (27, 'remote schema no-op', 'validated', '{"update":"validated","updates":[{"q":{"group":"x"},"u":{"$set":{"group":"x"}},"multi":true}]}', 2, 0, false),
+ (28, 'schema collated array filters', 'validated_sharded', '{"update":"validated_sharded","updates":[{"q":{"label":"CAT"},"u":{"$inc":{"items.$[item].qty":10}},"arrayFilters":[{"item.label":"CAT"}],"multi":true,"collation":{"locale":"en","strength":2}}]}', 2, 2, false),
+ (29, 'schema array filter rollback', 'validated_sharded', '{"update":"validated_sharded","updates":[{"q":{"group":"x"},"u":{"$inc":{"items.$[item].qty":10},"$set":{"value":"invalid"}},"arrayFilters":[{"item.qty":{"$lt":3}}],"multi":true}]}', NULL, NULL, true),
+ (30, 'schema zero matches', 'validated_sharded', '{"update":"validated_sharded","updates":[{"q":{"group":"missing"},"u":{"$set":{"value":"invalid"}},"multi":true}]}', 0, 0, false),
+ (31, 'validator collection collation', 'collated_validator', '{"update":"collated_validator","updates":[{"q":{"group":"x"},"u":{"$set":{"label":"cAt"}},"multi":true,"collation":{"locale":"simple"}}]}', 2, 2, false),
+ (32, 'collated validator rollback', 'collated_validator', '{"update":"collated_validator","updates":[{"q":{"group":"x"},"u":{"$set":{"label":"invalid"}},"multi":true}]}', NULL, NULL, true),
+ (33, 'remote schema indexed near', 'validated', '{"update":"validated","updates":[{"q":{"location":{"$near":{"$geometry":{"type":"Point","coordinates":[0,0]},"$maxDistance":200000}}},"u":{"$inc":{"value":1}},"multi":true}]}', 2, 2, false),
+ (34, 'remote schema indexed nearSphere', 'validated', '{"update":"validated","updates":[{"q":{"location":{"$nearSphere":{"$geometry":{"type":"Point","coordinates":[0,0]},"$maxDistance":200000}}},"u":{"$inc":{"value":1}},"multi":true}]}', 2, 2, false),
+ (35, 'sharded schema indexed near', 'validated_sharded', '{"update":"validated_sharded","updates":[{"q":{"location":{"$near":{"$geometry":{"type":"Point","coordinates":[0,0]},"$maxDistance":200000}}},"u":{"$inc":{"value":1}},"multi":true}]}', 2, 2, false),
+ (36, 'sharded schema indexed nearSphere', 'validated_sharded', '{"update":"validated_sharded","updates":[{"q":{"location":{"$nearSphere":{"$geometry":{"type":"Point","coordinates":[0,0]},"$maxDistance":200000}}},"u":{"$inc":{"value":1}},"multi":true}]}', 2, 2, false),
+ -- Existing invalid documents: strict validates every updated document,
+ -- moderate skips validation when the existing document is already invalid.
+ (37, 'remote strict existing invalid stays invalid', 'strict_invalid', '{"update":"strict_invalid","updates":[{"q":{"group":"y"},"u":{"$set":{"value":"still invalid"}},"multi":true}]}', NULL, NULL, true),
+ (38, 'remote strict existing invalid unrelated field', 'strict_invalid', '{"update":"strict_invalid","updates":[{"q":{"group":"y"},"u":{"$set":{"label":"DOG"}},"multi":true}]}', NULL, NULL, true),
+ (39, 'remote strict existing invalid made valid', 'strict_invalid', '{"update":"strict_invalid","updates":[{"q":{"group":"y"},"u":{"$set":{"value":30}},"multi":true}]}', 1, 1, false),
+ (40, 'remote strict existing invalid rolls back all rows', 'strict_invalid', '{"update":"strict_invalid","updates":[{"q":{},"u":{"$set":{"seen":true}},"multi":true}]}', NULL, NULL, true),
+ (41, 'sharded moderate invalid to invalid', 'moderate_sharded', '{"update":"moderate_sharded","updates":[{"q":{"group":"y"},"u":{"$set":{"value":"still invalid"}},"multi":true}]}', 1, 1, false),
+ (42, 'sharded moderate valid to invalid', 'moderate_sharded', '{"update":"moderate_sharded","updates":[{"q":{"group":"x"},"u":{"$set":{"value":"invalid"}},"multi":true}]}', NULL, NULL, true),
+ (43, 'sharded moderate mixed valid and invalid', 'moderate_sharded', '{"update":"moderate_sharded","updates":[{"q":{},"u":{"$set":{"seen":true}},"multi":true}]}', 3, 3, false),
+ (44, 'targeted moderate existing invalid', 'moderate_sharded', '{"update":"moderate_sharded","updates":[{"q":{"tenant":3},"u":{"$set":{"label":"DOG"}},"multi":true}]}', 1, 1, false);
 
 CREATE TEMP TABLE remote_update_all_results (
     pass text, seq int, result text, success bool, error text, documents text[],
@@ -93,14 +127,15 @@ BEGIN
         PERFORM documentdb_api.delete('update_all_ast_remote',
             format('{"delete":"%s","deletes":[{"q":{},"limit":0}]}', test_case.target)::bson);
         PERFORM documentdb_api.insert('update_all_ast_remote', format(
-            '{"insert":"%s","documents":[
-             {"_id":1,"tenant":%s,"group":"x","label":"Cat","value":10,"tags":["Cat"],"items":[{"label":"Cat","qty":1},{"label":"Dog","qty":5}]},
-             {"_id":2,"tenant":%s,"group":"x","label":"cat","value":20,"tags":["cat"],"items":[{"label":"cat","qty":2},{"label":"Dog","qty":7}]},
-             {"_id":3,"tenant":%s,"group":"y","label":"dog","value":30,"tags":["dog"],"items":[{"label":"dog","qty":3}]}]}',
+            '{"insert":"%s","bypassDocumentValidation":true,"documents":[
+             {"_id":1,"tenant":%s,"group":"x","label":"Cat","value":10,"tags":["Cat"],"items":[{"label":"Cat","qty":1},{"label":"Dog","qty":5}],"location":{"type":"Point","coordinates":[0,0]}},
+             {"_id":2,"tenant":%s,"group":"x","label":"cat","value":20,"tags":["cat"],"items":[{"label":"cat","qty":2},{"label":"Dog","qty":7}],"location":{"type":"Point","coordinates":[1,1]}},
+             {"_id":3,"tenant":%s,"group":"y","label":"dog","value":%s,"tags":["dog"],"items":[{"label":"dog","qty":3}],"location":{"type":"Point","coordinates":[40,40]}}]}',
             test_case.target,
             CASE WHEN test_case.target = 'string_sharded' THEN '"Cat"' ELSE '1' END,
             CASE WHEN test_case.target = 'string_sharded' THEN '"cat"' ELSE '2' END,
-            CASE WHEN test_case.target = 'string_sharded' THEN '"dog"' ELSE '3' END)::bson);
+            CASE WHEN test_case.target = 'string_sharded' THEN '"dog"' ELSE '3' END,
+            CASE WHEN test_case.target IN ('strict_invalid', 'moderate_sharded') THEN '"invalid"' ELSE '30' END)::bson);
         SELECT array_agg(document::text ORDER BY object_id) INTO before_docs
         FROM documentdb_api.collection('update_all_ast_remote', test_case.target);
         response := NULL;
@@ -117,12 +152,17 @@ BEGIN
         IF test_case.fails IS DISTINCT FROM (failure IS NOT NULL OR succeeded IS NOT TRUE) THEN
             RAISE EXCEPTION 'Unexpected outcome for %: %, %', test_case.label, response, failure;
         END IF;
-        IF NOT test_case.fails AND (response @@ format(
-            '{"n":%s,"nModified":%s}', test_case.matched, test_case.modified)::bson) IS NOT TRUE THEN
+        -- Extract fields directly: @@ on a scalar bson falls back to runtime bson_query_match.
+        IF NOT test_case.fails AND (
+            bson_get_value_text(response, 'n')::int IS DISTINCT FROM test_case.matched OR
+            bson_get_value_text(response, 'nModified')::int IS DISTINCT FROM test_case.modified) THEN
             RAISE EXCEPTION 'Unexpected counts for %: %', test_case.label, response;
         END IF;
-        IF test_case.fails AND (response @@
-            '{"n":0,"nModified":0,"writeErrors":{"$elemMatch":{"errmsg":"Document failed validation"}}}'::bson) IS NOT TRUE THEN
+        IF test_case.fails AND (
+            bson_get_value_text(response, 'n')::int IS DISTINCT FROM 0 OR
+            bson_get_value_text(response, 'nModified')::int IS DISTINCT FROM 0 OR
+            position('Document failed validation' IN
+                     COALESCE(bson_get_value_text(response, 'writeErrors'), '')) = 0) THEN
             RAISE EXCEPTION 'Expected validation failure for %: %, %', test_case.label, response, failure;
         END IF;
         IF (test_case.fails OR test_case.modified = 0) AND before_docs IS DISTINCT FROM after_docs THEN
@@ -146,6 +186,7 @@ RETURNS bool LANGUAGE SQL AS $$
          ALTER DATABASE postgres SET documentdb.enableCommutativeUpdateMany = %L;
          ALTER DATABASE postgres SET documentdb.enable_support_function_id_pushdown = %L;
          ALTER DATABASE postgres SET documentdb.enableSchemaValidation = on;
+         ALTER DATABASE postgres SET documentdb.enable_collation_with_schema_validation = on;
          ALTER DATABASE postgres SET documentdb.enableBypassDocumentValidation = on;
          ALTER DATABASE postgres SET documentdb_core.enableCollation = on;',
         enabled, pushdown, commutative, id_pushdown));
@@ -234,7 +275,7 @@ FROM remote_update_all_cases c JOIN remote_update_all_results r USING (seq)
 WHERE r.pass = 'legacy_wrapper' ORDER BY c.seq;
 SELECT c.label, r.documents
 FROM remote_update_all_cases c JOIN remote_update_all_results r USING (seq)
-WHERE r.pass = 'native_worker' AND c.seq IN (5, 6, 8, 10, 11, 14)
+WHERE r.pass = 'native_worker' AND c.seq IN (5, 6, 8, 10, 11, 14, 28, 29, 31, 33, 34, 35, 36, 39, 41, 43)
 ORDER BY c.seq;
 
 -- Commutative-write scoping must be restored even when an update errors.
@@ -297,6 +338,7 @@ SELECT bool_and(success) AS worker_defaults_restored FROM run_command_on_workers
      ALTER DATABASE postgres RESET documentdb.enableCommutativeUpdateMany;
      ALTER DATABASE postgres RESET documentdb.enable_support_function_id_pushdown;
      ALTER DATABASE postgres RESET documentdb.enableSchemaValidation;
+     ALTER DATABASE postgres RESET documentdb.enable_collation_with_schema_validation;
      ALTER DATABASE postgres RESET documentdb.enableBypassDocumentValidation;
      ALTER DATABASE postgres RESET documentdb_core.enableCollation;');
 SELECT documentdb_api.drop_collection('update_all_ast_remote', 'remote');
@@ -304,10 +346,14 @@ SELECT documentdb_api.drop_collection('update_all_ast_remote', 'sharded');
 SELECT documentdb_api.drop_collection('update_all_ast_remote', 'string_sharded');
 SELECT documentdb_api.drop_collection('update_all_ast_remote', 'validated');
 SELECT documentdb_api.drop_collection('update_all_ast_remote', 'validated_sharded');
+SELECT documentdb_api.drop_collection('update_all_ast_remote', 'collated_validator');
+SELECT documentdb_api.drop_collection('update_all_ast_remote', 'strict_invalid');
+SELECT documentdb_api.drop_collection('update_all_ast_remote', 'moderate_sharded');
 RESET documentdb.enableSchemaValidation;
 RESET documentdb.enableBypassDocumentValidation;
 RESET documentdb_core.enableCollation;
 RESET documentdb.skipFailOnCollation;
+RESET documentdb.enable_collation_with_schema_validation;
 RESET documentdb.enable_support_function_id_pushdown;
 RESET citus.propagate_set_commands;
 RESET citus.max_cached_conns_per_worker;

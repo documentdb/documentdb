@@ -1758,8 +1758,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enable_update_query_ast", newGucPrefix),
-		gettext_noop(
-			"Build general-match update-all queries using native query trees when schema validation is not required."),
+		gettext_noop("Build general-match update-all queries using native query trees."),
 		NULL,
 		&EnableUpdateQueryAst,
 		DEFAULT_ENABLE_UPDATE_QUERY_AST,
