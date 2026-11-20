@@ -885,7 +885,6 @@ BuildUpdates(BatchUpdateSpec *spec)
 	}
 
 	spec->updates = updates;
-	ReportUpdateFeatureUsage(list_length(updates));
 }
 
 
@@ -1084,6 +1083,7 @@ BuildUpdateSpecListFromSequence(pgbsonsequence *updateDocs, bool *hasUpsert,
 		}
 	}
 
+	ReportUpdateFeatureUsage(list_length(updates));
 	return updates;
 }
 
