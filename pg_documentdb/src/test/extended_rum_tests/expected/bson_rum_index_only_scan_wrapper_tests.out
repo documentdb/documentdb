@@ -34,9 +34,9 @@ FROM generate_series(1, 200) i;
    200
 (1 row)
 
--- Scoped VACUUM (ANALYZE) so the visibility map is populated alongside fresh
--- statistics, keeping the index-only-scan plan choice stable across PostgreSQL
--- versions.
+-- Older snapshots prevent VACUUM from marking the new rows all-visible, which
+-- can make these small-fixture queries prefer sequential scans.
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 VACUUM (ANALYZE) documentdb_data.documents_29501;
 -- ============================================================================
 -- 1. Flag ON, extended explain OFF: covered count / count-like aggregates lower
@@ -341,6 +341,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('rumidxonly_db',
  { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
 (1 row)
 
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 VACUUM (ANALYZE) documentdb_data.documents_29501;
 -- Equality, two-sided ranges, membership and regex all use covered object-ID predicates.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$

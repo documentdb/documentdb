@@ -11,9 +11,6 @@ SELECT insert_one('db','regex5', '{"x": ["acd", "xyz23"]}');
 SELECT insert_one('db','regex5', '{"F1" : "F1_value",  "x": ["first regular expression", "second expression", "third value for x"]}');
 SELECT insert_one('db','regex5', '{"F1" : "F1_value2"}');
 
--- DROP PRIMARY KEY
-SELECT documentdb_distributed_test_helpers.drop_primary_key('db', 'regex5');
-
 \set prevEcho :ECHO
 \set ECHO none
 \o /dev/null
@@ -27,6 +24,8 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', documentdb_
 
 BEGIN;
 set local enable_seqscan TO OFF;
+set local enable_bitmapscan TO OFF;
+set local documentdb.forceDisableSeqScan TO ON;
 
 -- When x is non-array
 EXPLAIN (COSTS OFF) SELECT document FROM collection('db', 'regex5') WHERE document @@ '{"x": {"$in": [{"$regex" : ".*Yc", "$options": "i"}]}}';
@@ -55,6 +54,11 @@ ROLLBACK;
 -- RUN TIME PATH
 --
 
+BEGIN;
+set local enable_indexscan TO OFF;
+set local enable_bitmapscan TO OFF;
+set local enable_indexonlyscan TO OFF;
+
 -- When x is non-array
 EXPLAIN (COSTS OFF) SELECT document FROM collection('db', 'regex5') WHERE document @@ '{"x": {"$in": [{"$regex" : ".*yc", "$options": ""}]}}';
 
@@ -75,6 +79,8 @@ EXPLAIN (COSTS OFF) SELECT document FROM collection('db', 'regex5') WHERE docume
 
 -- Test for $all
 EXPLAIN (COSTS OFF) SELECT document FROM collection('db','regex5') WHERE document @@ '{"x": {"$all": [{"$regex" : "expression", "$options": ""}, {"$regex" : "value .+ x", "$options": ""}]}}';
+
+ROLLBACK;
 
 SELECT drop_collection('db','regex5');
 DROP SCHEMA regex5 CASCADE;

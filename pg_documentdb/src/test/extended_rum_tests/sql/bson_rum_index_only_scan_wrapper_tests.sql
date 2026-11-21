@@ -29,9 +29,9 @@ SELECT COUNT(documentdb_api.insert_one('rumidxonly_db', 'records',
      ', "band": "b' || (i % 3)::text || '" }')::bson))
 FROM generate_series(1, 200) i;
 
--- Scoped VACUUM (ANALYZE) so the visibility map is populated alongside fresh
--- statistics, keeping the index-only-scan plan choice stable across PostgreSQL
--- versions.
+-- Older snapshots prevent VACUUM from marking the new rows all-visible, which
+-- can make these small-fixture queries prefer sequential scans.
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 VACUUM (ANALYZE) documentdb_data.documents_29501;
 
 -- ============================================================================
@@ -202,6 +202,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('rumidxonly_db',
         { "key": { "_id": 1, "zone": 1 }, "name": "idx_id_zone", "enableOrderedIndex": 1 },
         { "key": { "_id": 1, "zone": 1 }, "name": "idx_id_zone_ci", "enableOrderedIndex": 1, "collation": { "locale": "en", "strength": 1 } }
     ] }', TRUE);
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 VACUUM (ANALYZE) documentdb_data.documents_29501;
 
 -- Equality, two-sided ranges, membership and regex all use covered object-ID predicates.
