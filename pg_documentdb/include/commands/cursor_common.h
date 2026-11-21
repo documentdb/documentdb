@@ -41,6 +41,7 @@ typedef struct ContinuationFieldNames
 	StringView RemoteQuery;
 	StringView ResumeToken;
 	StringView ResumeTokenData;
+	StringView SecondaryIndex;
 	StringView StreamingQuery;
 	StringView TableName;
 	StringView TailableQuery;

@@ -460,6 +460,11 @@ bool EnableWritableContribCollections = DEFAULT_ENABLE_WRITABLE_CONTRIB_COLLECTI
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN true
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
 
+/* Added on v1.4, pending stabilization, enable on v1.7 */
+#define DEFAULT_ENABLE_INDEX_SCAN_ON_STREAMING_CURSORS false
+bool EnableIndexScanOnStreamingCursors =
+	DEFAULT_ENABLE_INDEX_SCAN_ON_STREAMING_CURSORS;
+
 /* Added in v0.108, Pending stabilization, enable in v1.5 */
 #define DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS false
 bool UseFileBasedPersistedCursors = DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS;
@@ -979,6 +984,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether or not to enable primary key cursor scan for streaming cursors."),
 		NULL, &EnablePrimaryKeyCursorScan,
 		DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_index_scan_on_streaming_cursors", newGucPrefix),
+		gettext_noop(
+			"Whether to enable index scans for streaming cursors."),
+		NULL, &EnableIndexScanOnStreamingCursors,
+		DEFAULT_ENABLE_INDEX_SCAN_ON_STREAMING_CURSORS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

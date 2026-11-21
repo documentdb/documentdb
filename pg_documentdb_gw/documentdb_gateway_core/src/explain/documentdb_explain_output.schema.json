@@ -151,7 +151,7 @@
         },
         "cursorScanType": {
           "type": "string",
-          "description": "The type of cursor scan used by the streaming or dynamic cursor custom scan. Values include 'streaming' (streaming continuation scan), 'streamingPrimaryKey' (streaming scan using primary key continuation), 'Primary Key Scan', 'Secondary Index Scan', 'Secondary Index Only Scan', 'Secondary Index Bitmap Scan', 'Secondary Index Bitmap AND Scan', 'Secondary Index Bitmap OR Scan', 'TID Range Scan'. Present when the plan uses a cursor-based scan."
+          "description": "The type of cursor scan used by the streaming or dynamic cursor custom scan. Values include 'streaming' (streaming continuation scan), 'streamingPrimaryKey' (streaming scan using primary key continuation), 'streamingSecondaryIndex' (streaming scan using ordered secondary index continuation), 'Primary Key Scan', 'Secondary Index Scan', 'Secondary Index Only Scan', 'Secondary Index Bitmap Scan', 'Secondary Index Bitmap AND Scan', 'Secondary Index Bitmap OR Scan', 'TID Range Scan'. Present when the plan uses a cursor-based scan."
         },
         "direction": {
           "type": "string",

@@ -60,6 +60,7 @@ test: bson_aggregate_group_firstlast_explain_sharded!PG18_OR_HIGHER!
 
 # With PG18 the tests above this line all pass.
 test: bson_aggregation_cursor_tests_pk_cursors bson_persisted_cursor_subquery_pushdown_distributed
+test: bson_streaming_secondary_index_tests
 
 test: create_indexes_cosmos_vector bson_aggregation_pipeline_tests_index_pushdown
 test: bson_query_operator_geospatial_tests_index

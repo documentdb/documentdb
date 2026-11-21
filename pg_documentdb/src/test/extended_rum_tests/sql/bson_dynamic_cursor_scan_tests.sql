@@ -755,4 +755,587 @@ BEGIN
 END;
 $$;
 
+-- Check both cursor markers independently against the same physical scan.
+-- Disabling the composite planner exposes the per-collection statistics gate.
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncursordb',
+    '{"createIndexes":"selectivity_coll","indexes":[{"key":{"defs.key":1},"name":"defs_key_1"}]}', true);
+
+DO $$
+DECLARE
+    scenario record;
+    collection_id bigint;
+    relation_name text;
+    base_query text;
+    cursor_schema text;
+    plan jsonb;
+    base_rows bigint;
+    base_cost numeric;
+    base_startup numeric;
+    state_rows bigint;
+    state_cost numeric;
+    projection_cost numeric;
+    apply_support boolean;
+BEGIN
+    SELECT collections.collection_id INTO STRICT collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'dyncursordb' AND collection_name = 'selectivity_coll';
+    relation_name := format('documentdb_data.documents_%s', collection_id);
+    base_query := format('SELECT document FROM %s WHERE ctid >= ''(0,0)''::tid', relation_name);
+
+    PERFORM set_config('enable_seqscan', 'off', true);
+    PERFORM set_config('max_parallel_workers_per_gather', '0', true);
+
+    FOR scenario IN SELECT * FROM (VALUES
+        ('stats_off_flag_off', false, true, false, false),
+        ('stats_off_flag_on', false, true, false, true),
+        ('stats_on_flag_off', true, true, false, false),
+        ('stats_on_flag_on', true, true, false, true),
+        ('stats_globally_off', true, false, false, true),
+        ('stats_disabled_again', false, true, false, true),
+        ('composite_override', false, true, true, true),
+        ('composite_flag_off', false, true, true, false)
+    ) AS cases(name, collection_stats, global_stats, composite_planner, feature_enabled)
+    LOOP
+        PERFORM set_config('documentdb.enablePerCollectionPlannerStatistics', 'on', true);
+        PERFORM documentdb_api.coll_mod('dyncursordb', 'selectivity_coll',
+            jsonb_build_object('collMod', 'selectivity_coll',
+                'enableStats', scenario.collection_stats)::text::documentdb_core.bson);
+        EXECUTE format('ANALYZE %s', relation_name);
+        IF scenario.collection_stats AND NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_statistic_ext
+            WHERE stxrelid = relation_name::regclass) THEN
+            RAISE EXCEPTION '%: collection statistics were not created', scenario.name;
+        END IF;
+
+        PERFORM set_config('documentdb.enablePerCollectionPlannerStatistics',
+            scenario.global_stats::text, true);
+        PERFORM set_config('documentdb.enableCompositeIndexPlanner',
+            scenario.composite_planner::text, true);
+        PERFORM set_config('documentdb.enable_index_scan_on_streaming_cursors',
+            scenario.feature_enabled::text, true);
+        apply_support := scenario.feature_enabled AND
+            ((scenario.collection_stats AND scenario.global_stats) OR scenario.composite_planner);
+
+        EXECUTE 'EXPLAIN (FORMAT JSON) ' || base_query INTO plan;
+        base_rows := (plan->0->'Plan'->>'Plan Rows')::bigint;
+        base_cost := (plan->0->'Plan'->>'Total Cost')::numeric;
+        base_startup := (plan->0->'Plan'->>'Startup Cost')::numeric;
+
+        FOREACH cursor_schema IN ARRAY ARRAY[
+            'documentdb_api_internal', 'documentdb_api_internal_readonly']
+        LOOP
+            EXECUTE 'EXPLAIN (FORMAT JSON) ' || base_query || format(
+                ' AND %I.cursor_state(document, ''{"getpage_batchCount":2}'')', cursor_schema)
+            INTO plan;
+            state_rows := (plan->0->'Plan'->>'Plan Rows')::bigint;
+            state_cost := (plan->0->'Plan'->>'Total Cost')::numeric;
+            IF (plan->0->'Plan'->>'Startup Cost')::numeric <> base_startup OR
+                (apply_support AND (state_rows <> base_rows OR state_cost <> base_cost)) OR
+                (NOT apply_support AND (state_rows >= base_rows OR state_cost <= base_cost)) THEN
+                RAISE EXCEPTION '%/%: cursor_state estimate/cost %, % differs from baseline %, % (support %)',
+                    scenario.name, cursor_schema, state_rows, state_cost, base_rows, base_cost, apply_support;
+            END IF;
+
+            EXECUTE format(
+                'EXPLAIN (FORMAT JSON) SELECT %I.current_cursor_state(document)
+                 FROM %s WHERE ctid >= ''(0,0)''::tid', cursor_schema, relation_name)
+            INTO plan;
+            projection_cost := (plan->0->'Plan'->>'Total Cost')::numeric;
+            IF (plan->0->'Plan'->>'Plan Rows')::bigint <> base_rows OR
+                (plan->0->'Plan'->>'Startup Cost')::numeric <> base_startup OR
+                (apply_support AND projection_cost <> base_cost) OR
+                (NOT apply_support AND projection_cost <= base_cost) THEN
+                RAISE EXCEPTION '%/%: current_cursor_state cost % differs from baseline % (support %)',
+                    scenario.name, cursor_schema, projection_cost, base_cost, apply_support;
+            END IF;
+            RAISE NOTICE '%/%: cursor marker estimates and costs honor the planner gates',
+                scenario.name, cursor_schema;
+        END LOOP;
+    END LOOP;
+END;
+$$;
+
 SELECT documentdb_api.drop_collection('dyncursordb', 'selectivity_coll');
+
+-- Secondary streaming cursors must use ordered scans even for predicates that
+-- otherwise select a fast scan. Repeated keys exercise getMore within a key.
+SET documentdb.enableDynamicCursors TO off;
+SET documentdb.enablePrimaryKeyCursorScan TO off;
+SET documentdb.enable_index_scan_on_streaming_cursors TO on;
+SET documentdb.enableIndexOnlyScanForFindProject TO off;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+
+SELECT COUNT(documentdb_api.insert_one('dyncursordb', 'ordered_streaming_coll',
+    FORMAT('{ "_id": %s, "a": %s, "b": %s, "s": "%s" }', i, mod(i, 3), mod(i, 4),
+        CASE mod(i, 3) WHEN 0 THEN 'Alpha' WHEN 1 THEN 'alpha' ELSE 'Beta' END
+    )::documentdb_core.bson))
+FROM generate_series(9, 1, -1) AS i;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncursordb',
+    '{"createIndexes":"ordered_streaming_coll","indexes":[
+        {"key":{"a":1},"name":"ordered_a","enableOrderedIndex":true},
+        {"key":{"a":1,"b":1},"name":"ordered_ab_aa","enableOrderedIndex":true},
+        {"key":{"a":1,"b":-1},"name":"ordered_ab_ad","enableOrderedIndex":true},
+        {"key":{"s":1},"name":"ordered_s_ci","enableOrderedIndex":true,
+         "collation":{"locale":"en","strength":2}}
+    ]}', true);
+
+PREPARE drain_ordered_streaming(bson) AS
+    WITH RECURSIVE pages AS (
+        SELECT cursorPage, continuation, 1 AS page
+        FROM find_cursor_first_page('dyncursordb', $1, 534)
+        UNION ALL
+        SELECT gm.cursorPage, gm.continuation, pages.page + 1
+        FROM pages,
+             cursor_get_more('dyncursordb',
+                 '{"getMore":{"$numberLong":"534"},"collection":"ordered_streaming_coll","batchSize":2}',
+                 pages.continuation) gm
+        WHERE pages.continuation IS NOT NULL AND pages.page < 10
+    )
+    SELECT page,
+           bson_dollar_project(cursorPage,
+               '{"cursor.firstBatch":1,"cursor.nextBatch":1}') AS batch,
+           continuation IS NOT NULL AS has_more,
+           COALESCE((bson_to_json_string(continuation)::text::jsonb
+               -> 'continuation' -> 0) ? 'six', false) AS secondary_continuation
+    FROM pages
+    ORDER BY page;
+
+SET documentdb.enableCursorsOnAggregationQueryRewrite TO on;
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('dyncursordb',
+    '{"find":"ordered_streaming_coll","filter":{"a":{"$in":[0,2]}},"projection":{"_id":1},"hint":"ordered_a","batchSize":2}');
+$cmd$);
+RESET documentdb.enableCursorsOnAggregationQueryRewrite;
+
+EXECUTE drain_ordered_streaming(
+    '{"find":"ordered_streaming_coll","filter":{"a":1},"projection":{"_id":1},"hint":"ordered_a","batchSize":2}');
+EXECUTE drain_ordered_streaming(
+    '{"find":"ordered_streaming_coll","filter":{"a":{"$in":[0,2]}},"projection":{"_id":1},"hint":"ordered_a","batchSize":2}');
+EXECUTE drain_ordered_streaming(
+    '{"find":"ordered_streaming_coll","filter":{"a":{"$in":[0,2]},"b":{"$in":[1,3]}},"projection":{"_id":1},"hint":"ordered_ab_aa","batchSize":2}');
+EXECUTE drain_ordered_streaming(
+    '{"find":"ordered_streaming_coll","filter":{"a":{"$in":[0,2]},"b":{"$in":[1,3]}},"projection":{"_id":1},"hint":"ordered_ab_ad","batchSize":2}');
+EXECUTE drain_ordered_streaming(
+    '{"find":"ordered_streaming_coll","filter":{"a":99},"projection":{"_id":1},"hint":"ordered_a","batchSize":2}');
+
+-- Bitmap candidates must also become ordered scans when unwrapped.
+SET enable_bitmapscan TO on;
+SET enable_indexscan TO off;
+EXECUTE drain_ordered_streaming(
+    '{"find":"ordered_streaming_coll","filter":{"a":1},"projection":{"_id":1},"hint":"ordered_a","batchSize":2}');
+RESET enable_indexscan;
+
+-- Covered candidates are downgraded to ordinary ordered index scans.
+SET documentdb.enableIndexOnlyScanForFindProject TO on;
+EXECUTE drain_ordered_streaming(
+    '{"find":"ordered_streaming_coll","filter":{"a":1},"projection":{"_id":0,"a":1},"hint":"ordered_a","batchSize":2}');
+
+-- Case-insensitive matching must survive the ordered scan and its continuation.
+EXECUTE drain_ordered_streaming(
+    '{"find":"ordered_streaming_coll","filter":{"s":"ALPHA"},"projection":{"_id":1},"hint":"ordered_s_ci","collation":{"locale":"en","strength":2},"batchSize":2}');
+
+-- A competing index may prune the original path, but must not kill its cursor.
+SET documentdb.enableIndexOnlyScanForFindProject TO off;
+SELECT COUNT(documentdb_api.insert_one('dyncursordb', 'ordered_replan_coll', document))
+FROM documentdb_api.collection('dyncursordb', 'ordered_streaming_coll');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncursordb',
+    '{"createIndexes":"ordered_replan_coll","indexes":[
+        {"key":{"a":1},"name":"ordered_a","enableOrderedIndex":true}
+    ]}', true);
+CREATE TEMP TABLE ordered_streaming_resume AS
+SELECT cursorPage, continuation
+FROM find_cursor_first_page('dyncursordb',
+    '{"find":"ordered_replan_coll","filter":{"a":{"$gte":0}},"projection":{"_id":1},"batchSize":2}',
+    534);
+SELECT bson_dollar_project(cursorPage, '{"cursor.firstBatch":1}') AS first_page,
+       (bson_to_json_string(continuation)::text::jsonb
+           -> 'continuation' -> 0) ? 'six' AS secondary_continuation
+FROM ordered_streaming_resume;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncursordb',
+    '{"createIndexes":"ordered_replan_coll","indexes":[
+        {"key":{"a":-1},"name":"ordered_a_desc","enableOrderedIndex":true}
+    ]}', true);
+WITH RECURSIVE pages AS (
+    SELECT cursorPage, continuation, 1 AS page FROM ordered_streaming_resume
+    UNION ALL
+    SELECT gm.cursorPage, gm.continuation, pages.page + 1
+    FROM pages,
+         cursor_get_more('dyncursordb',
+             '{"getMore":{"$numberLong":"534"},"collection":"ordered_replan_coll","batchSize":2}',
+             pages.continuation) gm
+    WHERE pages.continuation IS NOT NULL AND pages.page < 10
+)
+SELECT array_agg((doc -> '_id' ->> '$numberInt')::int
+           ORDER BY (doc -> '_id' ->> '$numberInt')::int) AS ids,
+       bool_or(continuation IS NULL) AS exhausted
+FROM pages,
+     jsonb_array_elements(COALESCE(
+         bson_to_json_string(cursorPage)::text::jsonb #> '{cursor,firstBatch}',
+         bson_to_json_string(cursorPage)::text::jsonb #> '{cursor,nextBatch}')) doc;
+DROP TABLE ordered_streaming_resume;
+SELECT documentdb_api.drop_collection('dyncursordb', 'ordered_replan_coll');
+
+-- A TID continuation must not adopt a newly available secondary index order.
+DO $$
+DECLARE
+    test_case record;
+    collection_name text;
+    command_spec bson;
+    get_more_spec bson;
+    cursor_page bson;
+    cursor_continuation bson;
+    holds_portal bool;
+    ids int[];
+    batch_ids int[];
+    sorted_ids int[];
+    distinct_ids bigint;
+    pages int;
+BEGIN
+    FOR test_case IN
+        SELECT * FROM (VALUES
+            ('heap_index', false, false),
+            ('heap_bitmap', false, true),
+            ('multikey_index', true, false),
+            ('multikey_bitmap', true, true)
+        ) cases(label, multikey, bitmap_only)
+    LOOP
+        collection_name := 'mode_' || test_case.label;
+        PERFORM set_config('documentdb.enablePrimaryKeyCursorScan', test_case.multikey::text, false);
+        PERFORM set_config('enable_bitmapscan', test_case.bitmap_only::text, false);
+        PERFORM set_config('enable_indexscan', (NOT test_case.bitmap_only)::text, false);
+        PERFORM documentdb_api.insert_one('dyncursordb', collection_name,
+            FORMAT('{"_id":%s,"a":%s,"b":%s}', i,
+                CASE WHEN test_case.multikey THEN '[1,2]' ELSE i::text END, i)::bson)
+        FROM generate_series(24, 1, -1) i;
+        IF test_case.multikey THEN
+            PERFORM documentdb_api_internal.create_indexes_non_concurrently('dyncursordb',
+                jsonb_build_object('createIndexes', collection_name, 'indexes',
+                    '[{"key":{"a":1},"name":"a","enableOrderedIndex":true}]'::jsonb)::text::bson, true);
+        END IF;
+        command_spec := jsonb_build_object('find', collection_name,
+            'filter', CASE WHEN test_case.multikey THEN '{"a":1,"b":{"$gte":1}}'::jsonb
+                ELSE '{"b":{"$gte":1}}'::jsonb END,
+            'projection', '{"_id":1}'::jsonb, 'batchSize', 2)::text::bson;
+        get_more_spec := FORMAT(
+            '{"getMore":{"$numberLong":"534"},"collection":"%s","batchSize":2}',
+            collection_name)::bson;
+        SELECT fp.cursorPage, fp.continuation, fp.persistConnection
+        INTO cursor_page, cursor_continuation, holds_portal
+        FROM find_cursor_first_page('dyncursordb', command_spec, 534) fp;
+        IF holds_portal OR cursor_continuation IS NULL THEN
+            RAISE EXCEPTION '%: expected a streaming continuation', test_case.label;
+        END IF;
+        SELECT array_agg((doc -> '_id' ->> '$numberInt')::int)
+        INTO batch_ids FROM jsonb_array_elements(
+            cursor_page::text::jsonb #> '{cursor,firstBatch}') doc;
+        IF batch_ids IS DISTINCT FROM ARRAY[24,23] THEN
+            RAISE EXCEPTION '%: expected initial heap order, got %', test_case.label, batch_ids;
+        END IF;
+        PERFORM documentdb_api_internal.create_indexes_non_concurrently('dyncursordb',
+            jsonb_build_object('createIndexes', collection_name, 'indexes',
+                '[{"key":{"b":1},"name":"b","enableOrderedIndex":true}]'::jsonb)::text::bson, true);
+        ids := '{}';
+        pages := 0;
+        LOOP
+            pages := pages + 1;
+            IF pages > 32 THEN
+                RAISE EXCEPTION '%: cursor did not terminate', test_case.label;
+            END IF;
+            SELECT array_agg((doc -> '_id' ->> '$numberInt')::int)
+            INTO batch_ids FROM jsonb_array_elements(COALESCE(
+                cursor_page::text::jsonb #> '{cursor,firstBatch}',
+                cursor_page::text::jsonb #> '{cursor,nextBatch}')) doc;
+            ids := ids || COALESCE(batch_ids, '{}');
+            EXIT WHEN cursor_continuation IS NULL;
+            IF EXISTS (
+                SELECT FROM jsonb_array_elements(
+                    cursor_continuation::text::jsonb -> 'continuation') entry
+                WHERE entry ? 'six'
+            ) THEN
+                RAISE EXCEPTION '%: TID continuation switched to secondary index order', test_case.label;
+            END IF;
+            SELECT gm.cursorPage, gm.continuation INTO cursor_page, cursor_continuation
+            FROM cursor_get_more('dyncursordb', get_more_spec, cursor_continuation) gm;
+        END LOOP;
+        SELECT array_agg(id ORDER BY id), count(DISTINCT id)
+        INTO sorted_ids, distinct_ids FROM unnest(ids) id;
+        IF sorted_ids IS DISTINCT FROM ARRAY(SELECT generate_series(1,24)) OR
+           cardinality(ids) <> distinct_ids THEN
+            RAISE EXCEPTION '%: incomplete or duplicate results: %', test_case.label, sorted_ids;
+        END IF;
+        SELECT fp.continuation INTO cursor_continuation
+        FROM find_cursor_first_page('dyncursordb', command_spec, 534) fp;
+        IF NOT COALESCE((cursor_continuation::text::jsonb -> 'continuation' -> 0) ? 'six', false) THEN
+            RAISE EXCEPTION '%: fresh cursor did not use the new secondary index', test_case.label;
+        END IF;
+        PERFORM documentdb_api.drop_collection('dyncursordb', collection_name);
+        RAISE NOTICE '%: 24 unique documents, TID order preserved, fresh cursor uses new index', test_case.label;
+    END LOOP;
+END;
+$$;
+SET documentdb.enablePrimaryKeyCursorScan TO off;
+SET enable_bitmapscan TO on;
+RESET enable_indexscan;
+
+-- Long inline terms can be page-owned rather than detoasted copies.
+SELECT COUNT(documentdb_api.insert_one('dyncursordb', 'ordered_streaming_coll',
+    FORMAT('{"_id":%s,"a":"%s"}', 100 + i, repeat('long-key-', 32))::bson))
+FROM generate_series(1, 3) AS i;
+EXECUTE drain_ordered_streaming(FORMAT(
+    '{"find":"ordered_streaming_coll","filter":{"a":"%s"},"projection":{"_id":1},"hint":"ordered_a","batchSize":1}',
+    repeat('long-key-', 32))::bson);
+
+-- If the entire saved key disappears, resume at the next key, not at its TID.
+-- Numeric collation orders item10 after item2, unlike binary comparison.
+SET documentdb.enableComparableTerms TO off;
+SELECT COUNT(documentdb_api.insert_one('dyncursordb', 'ordered_numeric_coll',
+    FORMAT('{"_id":%s,"a":"item%s"}', i, i)::bson))
+FROM (VALUES (2), (10), (20)) AS docs(i);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncursordb',
+    '{"createIndexes":"ordered_numeric_coll","indexes":[
+        {"key":{"a":1},"name":"ordered_numeric_a","enableOrderedIndex":true,
+         "collation":{"locale":"en","numericOrdering":true}}
+    ]}', true);
+CREATE TEMP TABLE ordered_collated_boundary AS
+SELECT cursorPage, continuation
+FROM find_cursor_first_page('dyncursordb',
+    '{"find":"ordered_numeric_coll","filter":{"a":{"$in":["item2","item10","item20"]}},"projection":{"_id":1},"hint":"ordered_numeric_a","collation":{"locale":"en","numericOrdering":true},"batchSize":1}',
+    534);
+SELECT bson_dollar_project(cursorPage, '{"cursor.firstBatch":1}') AS first_page,
+       (bson_to_json_string(continuation)::text::jsonb
+           -> 'continuation' -> 0) ? 'six' AS secondary_continuation
+FROM ordered_collated_boundary;
+SELECT documentdb_api.delete('dyncursordb',
+    '{"delete":"ordered_numeric_coll","deletes":[{"q":{"a":"item2"},"limit":0}],"collation":{"locale":"en","numericOrdering":true}}');
+SELECT bson_dollar_project(cursorPage, '{"cursor.nextBatch":1}') AS remaining,
+       continuation IS NULL AS exhausted
+FROM cursor_get_more('dyncursordb',
+    '{"getMore":{"$numberLong":"534"},"collection":"ordered_numeric_coll","batchSize":10}',
+    (SELECT continuation FROM ordered_collated_boundary));
+DROP TABLE ordered_collated_boundary;
+
+-- Dynamic cursors save the next, unemitted key rather than the last emitted key.
+SELECT COUNT(documentdb_api.insert_one('dyncursordb', 'ordered_numeric_coll',
+    FORMAT('{"_id":%s,"a":"item%s"}', i, i)::bson))
+FROM (VALUES (1), (2)) AS docs(i);
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enableRumCursorDynamicIndexScans TO on;
+CREATE TEMP TABLE dynamic_collated_boundary AS
+SELECT cursorPage, continuation
+FROM find_cursor_first_page('dyncursordb',
+    '{"find":"ordered_numeric_coll","filter":{"a":{"$in":["item1","item2","item10","item20"]}},"projection":{"_id":1},"hint":"ordered_numeric_a","collation":{"locale":"en","numericOrdering":true},"batchSize":1}',
+    534);
+SELECT bson_dollar_project(cursorPage, '{"cursor.firstBatch":1}') AS first_page,
+       continuation::text::jsonb #>> '{dc,type,$numberInt}' AS dynamic_scan_type
+FROM dynamic_collated_boundary;
+SELECT documentdb_api.delete('dyncursordb',
+    '{"delete":"ordered_numeric_coll","deletes":[{"q":{"a":"item2"},"limit":0}],"collation":{"locale":"en","numericOrdering":true}}');
+SELECT bson_dollar_project(cursorPage, '{"cursor.nextBatch":1}') AS remaining,
+       continuation IS NULL AS exhausted
+FROM cursor_get_more('dyncursordb',
+    '{"getMore":{"$numberLong":"534"},"collection":"ordered_numeric_coll","batchSize":10}',
+    (SELECT continuation FROM dynamic_collated_boundary));
+DROP TABLE dynamic_collated_boundary;
+SET documentdb.enableDynamicCursors TO off;
+RESET documentdb.enableRumCursorDynamicIndexScans;
+SELECT documentdb_api.drop_collection('dyncursordb', 'ordered_numeric_coll');
+RESET documentdb.enableComparableTerms;
+
+CREATE TEMP TABLE ordered_deleted_boundary AS
+SELECT continuation
+FROM find_cursor_first_page('dyncursordb',
+    '{"find":"ordered_streaming_coll","filter":{"a":{"$in":[0,2]}},"projection":{"_id":1},"hint":"ordered_a","batchSize":3}',
+    534);
+SELECT documentdb_api.delete('dyncursordb',
+    '{"delete":"ordered_streaming_coll","deletes":[{"q":{"a":0},"limit":0}]}');
+SELECT bson_dollar_project(cursorPage, '{"cursor.nextBatch":1}') AS remaining,
+       continuation IS NULL AS exhausted
+FROM cursor_get_more('dyncursordb',
+    '{"getMore":{"$numberLong":"534"},"collection":"ordered_streaming_coll","batchSize":10}',
+    (SELECT continuation FROM ordered_deleted_boundary));
+DROP TABLE ordered_deleted_boundary;
+
+DEALLOCATE drain_ordered_streaming;
+SELECT documentdb_api.drop_collection('dyncursordb', 'ordered_streaming_coll');
+RESET documentdb.enable_index_scan_on_streaming_cursors;
+RESET documentdb.enableIndexOnlyScanForFindProject;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+
+-- A descending dynamic cursor must resume below a deleted, unemitted key.
+SET documentdb.enableDynamicCursors TO on;
+SET documentdb.enableRumCursorDynamicIndexScans TO on;
+SET documentdb.enable_index_scan_on_streaming_cursors TO off;
+
+SELECT documentdb_api_internal.create_indexes_non_concurrently('dyncursordb',
+    '{"createIndexes":"descending_deleted_boundary","indexes":[{"key":{"item":1},"name":"item_idx"}]}', true);
+SELECT documentdb_api.insert_one('dyncursordb', 'descending_deleted_boundary', '{"_id":1,"item":"A"}');
+SELECT documentdb_api.insert_one('dyncursordb', 'descending_deleted_boundary', '{"_id":2,"item":"B"}');
+SELECT documentdb_api.insert_one('dyncursordb', 'descending_deleted_boundary', '{"_id":3,"item":"C"}');
+SELECT documentdb_api.insert_one('dyncursordb', 'descending_deleted_boundary', '{"_id":4,"item":"D"}');
+SELECT documentdb_api.insert_one('dyncursordb', 'descending_deleted_boundary', '{"_id":5,"item":"E"}');
+
+CREATE TEMP TABLE dynamic_descending_first_page AS
+SELECT cursorPage, continuation, persistConnection
+FROM find_cursor_first_page('dyncursordb',
+    '{"find":"descending_deleted_boundary","sort":{"item":-1},"hint":"item_idx","batchSize":1}',
+    4242);
+SELECT bson_dollar_project(cursorPage, '{"cursor.firstBatch._id":1}') AS first_page,
+       continuation::text::jsonb #>> '{dc,type,$numberInt}' AS dynamic_scan_type
+FROM dynamic_descending_first_page;
+
+DO $$
+DECLARE
+    first_page jsonb;
+    cursor_state jsonb;
+    persistent boolean;
+BEGIN
+    SELECT cursorPage::text::jsonb, continuation::text::jsonb, persistConnection
+    INTO STRICT first_page, cursor_state, persistent
+    FROM dynamic_descending_first_page;
+    IF first_page #>> '{cursor,firstBatch,0,_id,$numberInt}' IS DISTINCT FROM '5'
+        OR jsonb_array_length(first_page #> '{cursor,firstBatch}') <> 1
+        OR cursor_state #>> '{dc,type,$numberInt}' IS DISTINCT FROM '3'
+        OR persistent IS DISTINCT FROM false THEN
+        RAISE EXCEPTION 'expected a secondary-index dynamic cursor returning only _id 5';
+    END IF;
+END;
+$$;
+
+SELECT documentdb_api.delete('dyncursordb',
+    '{"delete":"descending_deleted_boundary","deletes":[{"q":{"_id":4},"limit":1}]}');
+
+CREATE TEMP TABLE dynamic_descending_next_page AS
+SELECT cursorPage, continuation
+FROM cursor_get_more('dyncursordb',
+    '{"getMore":{"$numberLong":"4242"},"collection":"descending_deleted_boundary","batchSize":10}',
+    (SELECT continuation FROM dynamic_descending_first_page));
+SELECT bson_dollar_project(cursorPage, '{"cursor.nextBatch._id":1}') AS remaining,
+       continuation IS NULL AS exhausted
+FROM dynamic_descending_next_page;
+
+DO $$
+DECLARE
+    remaining_ids integer[];
+BEGIN
+    SELECT ARRAY(
+        SELECT (document #>> '{_id,$numberInt}')::integer
+        FROM jsonb_array_elements(page.cursorPage::text::jsonb #> '{cursor,nextBatch}')
+            WITH ORDINALITY AS batch(document, position)
+        ORDER BY position)
+    INTO STRICT remaining_ids
+    FROM dynamic_descending_next_page AS page;
+    IF remaining_ids IS DISTINCT FROM ARRAY[3,2,1] THEN
+        RAISE EXCEPTION 'descending dynamic cursor lost remaining rows after deleting saved key: expected {3,2,1}, got %',
+            remaining_ids;
+    END IF;
+END;
+$$;
+
+DROP TABLE dynamic_descending_first_page, dynamic_descending_next_page;
+SELECT documentdb_api.drop_collection('dyncursordb', 'descending_deleted_boundary');
+
+-- Compare in traversal order, not the query's sort direction or the first index
+-- column's direction. Equal-key TIDs still advance forward in a backward scan.
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+DO $$
+DECLARE
+    comparable_terms boolean;
+    test_case record;
+    collection_name text;
+    first_page jsonb;
+    next_page jsonb;
+    cursor_state bson;
+    persistent boolean;
+    actual_ids integer[];
+BEGIN
+    FOR comparable_terms IN SELECT * FROM (VALUES (false), (true)) AS modes(enabled)
+    LOOP
+        PERFORM set_config('documentdb.enableComparableTerms', comparable_terms::text, true);
+        FOR test_case IN
+            SELECT * FROM (VALUES
+                ('asc_asc', '{"item":1}'::jsonb, 1, NULL::jsonb, NULL::jsonb,
+                 ARRAY['A','B','C','D','E'], 1, 2, ARRAY[3,4,5]),
+                ('asc_desc', '{"item":1}', -1, NULL, NULL,
+                 ARRAY['A','B','C','D','E'], 5, 4, ARRAY[3,2,1]),
+                ('desc_asc', '{"item":-1}', 1, NULL, NULL,
+                 ARRAY['A','B','C','D','E'], 1, 2, ARRAY[3,4,5]),
+                ('desc_desc', '{"item":-1}', -1, NULL, NULL,
+                 ARRAY['A','B','C','D','E'], 5, 4, ARRAY[3,2,1]),
+                ('equal_key', '{"item":1}', -1, NULL, NULL,
+                 ARRAY['A','B','B','B','C'], 5, 2, ARRAY[3,4,1]),
+                ('compound_prefix', '{"prefix":1,"item":-1}', 1, '{"prefix":1}', NULL,
+                 ARRAY['A','B','C','D','E'], 1, 2, ARRAY[3,4,5]),
+                ('numeric_collation', '{"item":1}', -1, NULL, '{"locale":"en","numericOrdering":true}',
+                 ARRAY['item1','item2','item10','item20'], 4, 3, ARRAY[2,1])
+            ) AS cases(label, index_key, sort_direction, filter_spec, collation_spec,
+                       items, first_id, deleted_id, remaining_ids)
+        LOOP
+            collection_name := 'deleted_boundary_' || test_case.label;
+            PERFORM documentdb_api.insert_one('dyncursordb', collection_name,
+                jsonb_build_object('_id', id, 'prefix', 1, 'item', item)::text::bson)
+            FROM unnest(test_case.items) WITH ORDINALITY AS docs(item, id);
+            PERFORM documentdb_api_internal.create_indexes_non_concurrently('dyncursordb',
+                jsonb_build_object('createIndexes', collection_name, 'indexes',
+                    jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
+                        'key', test_case.index_key, 'name', 'resume_idx',
+                        'collation', test_case.collation_spec))))::text::bson, true);
+
+            SELECT cursorPage::text::jsonb, continuation, persistConnection
+            INTO STRICT first_page, cursor_state, persistent
+            FROM find_cursor_first_page('dyncursordb',
+                jsonb_strip_nulls(jsonb_build_object('find', collection_name,
+                    'filter', test_case.filter_spec,
+                    'sort', jsonb_build_object('item', test_case.sort_direction),
+                    'projection', jsonb_build_object('_id', 1),
+                    'hint', 'resume_idx', 'collation', test_case.collation_spec,
+                    'batchSize', 1))::text::bson, 4243);
+            SELECT ARRAY(
+                SELECT (document #>> '{_id,$numberInt}')::integer
+                FROM jsonb_array_elements(first_page #> '{cursor,firstBatch}')
+                    WITH ORDINALITY AS batch(document, position) ORDER BY position)
+            INTO actual_ids;
+            IF actual_ids IS DISTINCT FROM ARRAY[test_case.first_id]
+                OR (cursor_state::text::jsonb #>> '{dc,type,$numberInt}')::integer
+                    IS DISTINCT FROM 3
+                OR persistent IS DISTINCT FROM false THEN
+                RAISE EXCEPTION 'unexpected first page for %, comparable terms %: ids %, continuation %',
+                    test_case.label, comparable_terms, actual_ids, cursor_state;
+            END IF;
+
+            PERFORM documentdb_api.delete('dyncursordb',
+                jsonb_build_object('delete', collection_name, 'deletes',
+                    jsonb_build_array(jsonb_build_object(
+                        'q', jsonb_build_object('_id', test_case.deleted_id),
+                        'limit', 1)))::text::bson);
+            SELECT cursorPage::text::jsonb, continuation
+            INTO STRICT next_page, cursor_state
+            FROM cursor_get_more('dyncursordb',
+                jsonb_build_object('getMore', jsonb_build_object('$numberLong', '4243'),
+                    'collection', collection_name, 'batchSize', 10)::text::bson, cursor_state);
+            SELECT ARRAY(
+                SELECT (document #>> '{_id,$numberInt}')::integer
+                FROM jsonb_array_elements(next_page #> '{cursor,nextBatch}')
+                    WITH ORDINALITY AS batch(document, position) ORDER BY position)
+            INTO actual_ids;
+            IF actual_ids IS DISTINCT FROM test_case.remaining_ids OR cursor_state IS NOT NULL THEN
+                RAISE EXCEPTION 'incorrect resume for %, comparable terms %: expected %, got %, continuation %',
+                    test_case.label, comparable_terms, test_case.remaining_ids, actual_ids, cursor_state;
+            END IF;
+            PERFORM documentdb_api.drop_collection('dyncursordb', collection_name);
+        END LOOP;
+    END LOOP;
+END;
+$$;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb.enableDynamicCursors;
+RESET documentdb.enableRumCursorDynamicIndexScans;
+RESET documentdb.enable_index_scan_on_streaming_cursors;
