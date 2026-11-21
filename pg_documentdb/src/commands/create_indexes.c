@@ -1283,7 +1283,7 @@ create_indexes_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexesArg
 			continue;
 		}
 
-		const IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
+		const IndexSpec indexSpec = MakeIndexSpecFromIndexDef(indexDef);
 		bool indexIsValid = false;
 		int indexId = RecordCollectionIndex(collectionId, &indexSpec, indexIsValid);
 
@@ -1564,7 +1564,7 @@ create_indexes_non_concurrently(Datum dbNameDatum, CreateIndexesArg createIndexe
 			continue;
 		}
 
-		const IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
+		const IndexSpec indexSpec = MakeIndexSpecFromIndexDef(indexDef);
 		bool updatePlannerStatistics = true;
 		CreatePostgresIndexWithMetadata(collectionId, indexDef, &indexSpec, isUnsharded,
 										updatePlannerStatistics);
@@ -4888,7 +4888,7 @@ CheckForConflictsAndPruneExistingIndexes(uint64 collectionId, List *indexDefList
 		 * recreation, collation, version and key restrictions, and secondary
 		 * _id indexes).
 		 */
-		IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
+		IndexSpec indexSpec = MakeIndexSpecFromIndexDef(indexDef);
 
 		int32_t inBuildIndexId = -1;
 		if (!CheckIndexSpecConflictWithExistingIndexes(collectionId, &indexSpec,
@@ -4914,7 +4914,7 @@ CheckForConflictsAndPruneExistingIndexes(uint64 collectionId, List *indexDefList
 	for (int i = 0; i < list_length(prunedIndexDefList); i++)
 	{
 		IndexDef *latterIndexDef = list_nth(prunedIndexDefList, i);
-		const IndexSpec latterIndexSpec = MakeIndexSpecForIndexDef(latterIndexDef);
+		const IndexSpec latterIndexSpec = MakeIndexSpecFromIndexDef(latterIndexDef);
 
 		/*
 		 * This index survived pruning, so we are about to actually create it.
@@ -4937,7 +4937,7 @@ CheckForConflictsAndPruneExistingIndexes(uint64 collectionId, List *indexDefList
 		for (int j = 0; j < i; j++)
 		{
 			const IndexSpec priorIndexSpec =
-				MakeIndexSpecForIndexDef(list_nth(prunedIndexDefList, j));
+				MakeIndexSpecFromIndexDef(list_nth(prunedIndexDefList, j));
 
 			bool indexNamesMatch =
 				strcmp(priorIndexSpec.indexName, latterIndexSpec.indexName) == 0;
@@ -5699,10 +5699,10 @@ MakeCollatedBuiltinIdIndexDef(const bson_value_t *collation, IndexSpec *indexSpe
 
 
 /*
- * MakeIndexSpecForIndexDef creates an IndexSpec object based on given IndexDef.
+ * MakeIndexSpecFromIndexDef creates an IndexSpec object based on given IndexDef.
  */
 IndexSpec
-MakeIndexSpecForIndexDef(IndexDef *indexDef)
+MakeIndexSpecFromIndexDef(IndexDef *indexDef)
 {
 	IndexSpec indexSpec = {
 		.indexName = indexDef->name,

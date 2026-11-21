@@ -1906,7 +1906,7 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 	foreach(indexDefCell, indexDefList)
 	{
 		IndexDef *indexDef = (IndexDef *) lfirst(indexDefCell);
-		const IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
+		const IndexSpec indexSpec = MakeIndexSpecFromIndexDef(indexDef);
 		bool indexIsValid = false;
 		int indexId = RecordCollectionIndex(collectionId, &indexSpec, indexIsValid);
 
