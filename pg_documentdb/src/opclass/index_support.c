@@ -347,7 +347,6 @@ extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableMultiKeyFilterIndexOnlyScan;
-extern bool TrackIndexOnlyScanFindCandidate;
 extern bool EnableExtendedIndexes;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnableSupportFunctionIdPushdown;
@@ -3243,9 +3242,7 @@ CheckFieldCoverage(Node *node, void *context)
 				{
 					fieldPath = TryExtractFieldPathFromConst(secondArg);
 				}
-				else if ((enableIndexOnlyScanForFindProject ||
-						  TrackIndexOnlyScanFindCandidate) &&
-						 IsProjectFunctionOid(funcExpr->funcid))
+				else if (IsProjectFunctionOid(funcExpr->funcid))
 				{
 					bool isProjectionCoveredByIndex = IsProjectionCoveredByIndex(
 						secondArg, state);

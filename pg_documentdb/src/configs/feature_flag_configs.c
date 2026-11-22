@@ -246,20 +246,6 @@ bool EnableEmptyArrayMultiKeyMarking = DEFAULT_ENABLE_EMPTY_ARRAY_MULTI_KEY_MARK
 bool EnableMultiKeyFilterIndexOnlyScan =
 	DEFAULT_ENABLE_MULTI_KEY_FILTER_INDEX_ONLY_SCAN;
 
-/*
- * Temporary kill switch for candidate detection; when off, projection walking
- * stays fully guarded by EnableIndexOnlyScanForFindProject (the old behavior).
- * Added on v0.116, enabled on v0.116, remove after v1.2.
- */
-#define DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE true
-bool TrackIndexOnlyScanFindCandidate =
-	DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE;
-
-/* Added in v0.114, enabled on v0.113, remove after v1.1 */
-#define DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE true
-bool EmitEnableOrderedIndexFalseInResponse =
-	DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE;
-
 /* Added in v0.116, Pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING false
 bool EnableCompositeReducedCorrelatedBoundsPlanning =
@@ -395,7 +381,7 @@ bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 bool EnableDynamicCursorWithSkipLimit =
 	DEFAULT_ENABLE_DYNAMIC_CURSOR_WITH_SKIPLIMIT;
 
-/* Added in v1.0, pending stabilization, enable in v1.3 */
+/* Added in v1.0, pending stabilization, enable in v1.6 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_EARLY_INDEX_LOCK_RELEASE false
 bool EnableDynamicCursorEarlyIndexLockRelease =
 	DEFAULT_ENABLE_DYNAMIC_CURSOR_EARLY_INDEX_LOCK_RELEASE;
@@ -529,7 +515,7 @@ bool EnableSubqueryPushdownForMatchOnPersistedCursors =
 #define DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_GROUP false
 bool EnableSubqueryPushdownForGroup = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_GROUP;
 
-/* Added in v0.117, Pending stabilization, enable in v1.3 */
+/* Added in v0.117, Pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER false
 bool EnableRumIndexOnlyScanProjectionWrapper =
 	DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER;
@@ -673,7 +659,7 @@ bool EnableUpdateWorkerPlanCache =
 bool EnableUpdateWorkerSingleWriteNoSubTransaction =
 	DEFAULT_ENABLE_UPDATE_WORKER_SINGLE_WRITE_NO_SUB_TRANSACTION;
 
-/* Added in v1.2, pending stabilization, enable in v1.3 */
+/* Added in v1.2, pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_ARRAY_BSON_STATS_WITH_PLANNER_STATISTICS false
 bool EnableArrayBsonStatsWithPlannerStatistics =
 	DEFAULT_ENABLE_ARRAY_BSON_STATS_WITH_PLANNER_STATISTICS;
@@ -1438,15 +1424,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.track_index_only_scan_find_candidate", newGucPrefix),
-		gettext_noop(
-			"Whether to walk find projections to detect index-only scan candidates "
-			"while index only scan for find with project is disabled."),
-		NULL, &TrackIndexOnlyScanFindCandidate,
-		DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_composite_reduced_correlated_bounds_planning", newGucPrefix),
 		gettext_noop(
 			"Whether to prune reduced-correlated composite index quals during planning when per-path multi-key metadata is available."),
@@ -1609,16 +1586,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to schedule index builds via background worker jobs."),
 		NULL, &IndexBuildsScheduledOnBgWorker,
 		DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.emitEnableOrderedIndexFalseInResponse", newGucPrefix),
-		gettext_noop(
-			"When enabled, list index responses include \"enableOrderedIndex\": false "
-			"for indexes whose enableCompositeTerm was explicitly set to false (-1). "
-			"When disabled, the field is omitted for those indexes."),
-		NULL, &EmitEnableOrderedIndexFalseInResponse,
-		DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -52,7 +52,6 @@
 
 extern int MaxNumActiveUsersIndexBuilds;
 extern int IndexBuildScheduleInSec;
-extern bool EmitEnableOrderedIndexFalseInResponse;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -2805,14 +2804,9 @@ SerializeIndexSpec(const IndexSpec *indexSpec, bool isGetIndexes,
 
 					if (option == CustomIndexOption_False)
 					{
-						/* Only emit "enableOrderedIndex": false when the GUC is on. When
-						 * disabled, omit the field so callers don't see an explicit false. */
-						if (EmitEnableOrderedIndexFalseInResponse)
-						{
-							PgbsonWriterAppendBool(&storageEngineOptionsWriter,
-												   "enableOrderedIndex", 18,
-												   false);
-						}
+						PgbsonWriterAppendBool(&storageEngineOptionsWriter,
+											   "enableOrderedIndex", 18,
+											   false);
 					}
 					else if (option == CustomIndexOption_True ||
 							 option == CustomIndexOption_DefaultTrue)

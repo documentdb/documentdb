@@ -1419,7 +1419,7 @@ SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "comp_db.comp_equiv_d3", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "z" : { "$numberInt" : "1" } }, "name" : "z_idx_nocomp", "storageEngine" : { "enableOrderedIndex" : false } } }, "ok" : { "$numberDouble" : "1.0" } }
 (7 rows)
 
--- D11. Test emitEnableOrderedIndexFalseInResponse GUC
+-- D11. Verify ordered-index options in listIndexes responses.
 -- Create a collection with one composite (True) and one explicitly-false index.
 BEGIN;
 SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
@@ -1434,8 +1434,7 @@ NOTICE:  creating collection
 (1 row)
 
 END;
--- D11a. GUC ON (default): explicitly-false index emits "enableOrderedIndex": false
-SET documentdb.emitEnableOrderedIndexFalseInResponse TO on;
+-- An explicitly unordered index emits "enableOrderedIndex": false.
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
 FROM documentdb_api.list_indexes_cursor_first_page('comp_db', '{ "listIndexes": "comp_emit_guc" }')
 ORDER BY 1;
@@ -1446,17 +1445,3 @@ ORDER BY 1;
  { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "comp_db.comp_emit_guc", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" } }, "name" : "b_nocomp", "storageEngine" : { "enableOrderedIndex" : false } } }, "ok" : { "$numberDouble" : "1.0" } }
 (3 rows)
 
--- D11b. GUC OFF: explicitly-false index omits enableOrderedIndex entirely
-SET documentdb.emitEnableOrderedIndexFalseInResponse TO off;
-SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
-FROM documentdb_api.list_indexes_cursor_first_page('comp_db', '{ "listIndexes": "comp_emit_guc" }')
-ORDER BY 1;
-                                                                                                                                   bson_dollar_unwind                                                                                                                                   
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "comp_db.comp_emit_guc", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "comp_db.comp_emit_guc", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" } }, "name" : "a_comp", "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
- { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "comp_db.comp_emit_guc", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" } }, "name" : "b_nocomp" } }, "ok" : { "$numberDouble" : "1.0" } }
-(3 rows)
-
--- Reset to default
-SET documentdb.emitEnableOrderedIndexFalseInResponse TO on;

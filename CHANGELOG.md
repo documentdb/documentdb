@@ -1,4 +1,5 @@
 ### documentdb v1.4-0 (Unreleased) ###
+* Retire `emitEnableOrderedIndexFalseInResponse` and `track_index_only_scan_find_candidate`, retaining explicit unordered-index metadata and covered-projection candidate diagnostics, and defer planned enablement of the RUM projection wrapper, early cursor index-lock release, and array planner statistics. *[Refactor]*
 * Preserve remaining results when a dynamic cursor scans a secondary index backward and its saved, unemitted boundary key is deleted between pages. *[Bugfix]*
 * Support ordered secondary-index streaming cursors on non-multikey indexes, including equality and `$in` pagination, controlled by the default-off `documentdb.enable_index_scan_on_streaming_cursors` setting. When planner statistics or the composite-index planner are enabled, cost cursor markers as non-filtering with negligible per-tuple overhead. *[Feature]*
 * Add the default-off `documentdb.enable_delete_many_worker_pushdown` setting to execute sharded `deleteMany` requests on workers and aggregate their deleted counts. *[Perf]*

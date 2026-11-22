@@ -29,7 +29,6 @@ INSERT INTO documentdb_guc_naming_baseline (name) VALUES
     ('documentdb.defaultUniqueIndexKeyhashOverride'),
     ('documentdb.defaultUseCompositeOpClass'),
     ('documentdb.disableExtendedRumExplainPlans'),
-    ('documentdb.emitEnableOrderedIndexFalseInResponse'),
     ('documentdb.enableAddShardKeyOnlyOnPrimaryKeyFilters'),
     ('documentdb.enableBackgroundWorker'),
     ('documentdb.enableBackgroundWorkerInitJobs'),

@@ -39,7 +39,6 @@
 #include "aggregation/bson_aggregation_pipeline_private.h"
 
 
-extern bool EnableMoveCollection;
 extern bool AddNodePortToNodeName;
 
 PG_FUNCTION_INFO_V1(command_get_shard_map);
@@ -171,12 +170,6 @@ Datum
 documentdb_command_move_collection(PG_FUNCTION_ARGS)
 {
 	pgbson *moveSpec = PG_GETARG_PGBSON(0);
-
-	if (!EnableMoveCollection)
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-						errmsg("moveCollection is not supported yet")));
-	}
 
 	/*
 	 * moveCollection is not permitted inside a transaction block. The
