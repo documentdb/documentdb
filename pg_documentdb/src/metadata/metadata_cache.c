@@ -506,6 +506,7 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* Oid of the bson_full_scan function */
 	Oid BsonFullScanFunctionId;
+	Oid BsonIndexOptScanFunctionId;
 
 	/* Oid of the bson_dollar_distinct_exists function */
 	Oid BsonDistinctExistsFunctionId;
@@ -1332,6 +1333,9 @@ typedef struct DocumentDBApiOidCacheData
 
 	/* OIDs of the ApiInternalSchemaNameV2.update_bson_document overload with update description */
 	Oid UpdateBsonDocumentWithDescriptionFunctionOid;
+
+	/* OIDs of the ApiInternalSchemaName.schema_validation_against_update overloads */
+	Oid SchemaValidationAgainstUpdateFunctionOid;
 
 	/* OID of the ApiInternalSchemaNameV2.bson_update_returned_value function */
 	Oid BsonUpdateReturnedValueFunctionOid;
@@ -2227,6 +2231,19 @@ BsonRangeMatchFunctionId(void)
 	return GetSchemaFunctionIdWithNargs(&Cache.BsonRangeMatchFunctionId,
 										ApiCatalogToApiInternalSchemaName,
 										"bson_dollar_range", nargs, argTypes,
+										missingOk);
+}
+
+
+Oid
+BsonIndexOptScanFunctionOid(void)
+{
+	int nargs = 1;
+	Oid argTypes[1] = { BsonTypeId() };
+	bool missingOk = true;
+	return GetSchemaFunctionIdWithNargs(&Cache.BsonIndexOptScanFunctionId,
+										ApiInternalSchemaNameV2,
+										"bson_indexopt_scan", nargs, argTypes,
 										missingOk);
 }
 
@@ -3603,6 +3620,21 @@ UpdateBsonDocumentWithDescriptionFunctionOid(void)
 		ApiInternalSchemaNameV2,
 		"update_bson_document", nargs, argTypes,
 		missingOk);
+}
+
+
+Oid
+SchemaValidationAgainstUpdateFunctionOid(void)
+{
+	Oid bsonTypeId = BsonTypeId();
+	Oid argTypes[4] = { bsonTypeId, bsonTypeId, bsonTypeId, BOOLOID };
+	int nargs = 4;
+	bool missingOk = false;
+
+	return GetSchemaFunctionIdWithNargs(
+		&Cache.SchemaValidationAgainstUpdateFunctionOid,
+		ApiInternalSchemaName,
+		"schema_validation_against_update", nargs, argTypes, missingOk);
 }
 
 

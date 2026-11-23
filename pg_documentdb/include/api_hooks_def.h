@@ -206,6 +206,12 @@ extern RewriteListCollectionsQueryForDistribution_HookType
 	rewrite_list_collections_query_hook;
 
 typedef struct AggregationPipelineBuildContext AggregationPipelineBuildContext;
+
+/* Returns a guaranteed-empty collection for anchoring a source-free merge, or NULL. */
+typedef MongoCollection *(*GetEmptyMergeSourceCollection_HookType)(
+	MongoCollection *targetCollection);
+extern GetEmptyMergeSourceCollection_HookType get_empty_merge_source_collection_hook;
+
 typedef Query *(*RewriteListExtendedIndexesQuery_HookType)(const bson_value_t *specValue,
 														   Query *query,
 														   AggregationPipelineBuildContext

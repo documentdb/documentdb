@@ -57,6 +57,7 @@
  */
 extern int32_t MaxWorkerCursorSize;
 extern bool EnablePrimaryKeyCursorScan;
+extern bool EnableIndexScanOnStreamingCursors;
 extern bool UseFileBasedPersistedCursors;
 extern bool UseFileBasedPersistedDynamicCursors;
 extern bool EnableDebugQueryText;
@@ -107,6 +108,9 @@ typedef struct CursorContinuationEntry
 
 	/* The cursor entry. cursorEntry is specifically used with EnablePrimaryKeyCursorScan */
 	pgbson *cursorEntry;
+
+	/* The cursor entry. used for Secondary Index Scans. */
+	pgbson *secondaryEntry;
 } CursorContinuationEntry;
 
 
@@ -2425,6 +2429,7 @@ UpdateCursorInContinuationMapCore(bson_iter_t *singleContinuationDoc, HTAB *curs
 	bson_value_t continuationBinaryValue = { 0 };
 	CursorContinuationEntry searchEntry = { 0 };
 	bson_value_t primaryKeyValue = { 0 };
+	bson_value_t secondaryIndexValue = { 0 };
 	while (bson_iter_next(singleContinuationDoc))
 	{
 		StringView keyView = bson_iter_key_string_view(singleContinuationDoc);
@@ -2449,6 +2454,11 @@ UpdateCursorInContinuationMapCore(bson_iter_t *singleContinuationDoc, HTAB *curs
 				 StringViewEquals(&keyView, &ContinuationFields.PrimaryKey))
 		{
 			primaryKeyValue = *bson_iter_value(singleContinuationDoc);
+		}
+		else if (EnableIndexScanOnStreamingCursors &&
+				 StringViewEquals(&keyView, &ContinuationFields.SecondaryIndex))
+		{
+			secondaryIndexValue = *bson_iter_value(singleContinuationDoc);
 		}
 	}
 
@@ -2496,6 +2506,17 @@ UpdateCursorInContinuationMapCore(bson_iter_t *singleContinuationDoc, HTAB *curs
 		}
 
 		hashEntry->cursorEntry = BsonValueToDocumentPgbson(&primaryKeyValue);
+	}
+
+	if (EnableIndexScanOnStreamingCursors &&
+		secondaryIndexValue.value_type != BSON_TYPE_EOD)
+	{
+		if (hashEntry->secondaryEntry != NULL)
+		{
+			pfree(hashEntry->secondaryEntry);
+		}
+
+		hashEntry->secondaryEntry = BsonValueToDocumentPgbson(&secondaryIndexValue);
 	}
 }
 
@@ -2636,6 +2657,17 @@ SerializeContinuationsToWriter(pgbson_writer *writer, HTAB *cursorMap)
 			PgbsonToSinglePgbsonElement(entry->cursorEntry, &element);
 			PgbsonWriterAppendValue(&entryWriter, ContinuationFields.PrimaryKey.string,
 									ContinuationFields.PrimaryKey.length,
+									&element.bsonValue);
+		}
+
+		if (EnableIndexScanOnStreamingCursors &&
+			entry->secondaryEntry != NULL)
+		{
+			pgbsonelement element = { 0 };
+			PgbsonToSinglePgbsonElement(entry->secondaryEntry, &element);
+			PgbsonWriterAppendValue(&entryWriter,
+									ContinuationFields.SecondaryIndex.string,
+									ContinuationFields.SecondaryIndex.length,
 									&element.bsonValue);
 		}
 

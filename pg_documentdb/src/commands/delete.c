@@ -50,9 +50,11 @@
 #include "utils/index_utils.h"
 #include "utils/version_utils.h"
 #include "utils/query_utils.h"
+#include "utils/type_cache.h"
 #include "api_hooks.h"
 
 extern bool EnableCommutativeDeleteMany;
+extern bool EnableDeleteManyWorkerPushdown;
 
 
 /*
@@ -172,6 +174,13 @@ static uint64 DeleteAllMatchingDocuments(MongoCollection *collection, pgbson *qu
 										 const char *collationString,
 										 bool hasShardKeyValueFilter,
 										 int64 shardKeyHash);
+static uint64 CallDeleteWorkerForDeleteMany(MongoCollection *collection,
+											const DeleteOneParams *deleteManyParams,
+											bool hasShardKeyValueFilter,
+											int64 shardKeyHash);
+static pgbson * SerializeDeleteManyParams(const DeleteOneParams *deleteManyParams);
+static void DeserializeDeleteManyWorkerSpec(const bson_value_t *workerSpecValue,
+											DeleteOneParams *deleteManyParams);
 static void FormDeleteAllMatchingDocumentsQuery(MongoCollection *collection,
 												pgbson *queryDoc,
 												const bson_value_t *variableSpec,
@@ -670,8 +679,9 @@ BuildDeletionSpec(bson_iter_t *deletionIter, const bson_value_t *variableSpec)
 			else
 			{
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
-								errmsg("BSON field 'delete.deletes.collation' is not yet "
-									   "supported")));
+								errmsg(
+									"Collation support is disabled. "
+									"Enable it to use 'delete.deletes.collation'.")));
 			}
 		}
 		else if (strcmp(field, "hint") == 0)
@@ -974,11 +984,30 @@ ProcessDeletion(MongoCollection *collection, DeletionSpec *deletionSpec,
 		/*
 		 * Delete as many document as match the query. This is not a retryable
 		 * operation, so we ignore transactionId.
+		 *
+		 * When EnableDeleteManyWorkerPushdown is set and the collection is
+		 * distributed (sharded and not already on a local shard), push the
+		 * delete to workers via delete_worker. Each worker runs the DELETE
+		 * locally on its shard and returns the deleted count, avoiding CTE
+		 * intermediate result overhead on the coordinator.
 		 */
-		result = DeleteAllMatchingDocuments(collection, query,
-											deletionSpec->deleteOneParams.variableSpec,
-											collationString, hasShardKeyValueFilter,
-											shardKeyHash);
+		bool useWorkerPath = EnableDeleteManyWorkerPushdown &&
+							 collection->shardTableName[0] == '\0' &&
+							 collection->shardKey != NULL;
+		if (useWorkerPath)
+		{
+			result = CallDeleteWorkerForDeleteMany(
+				collection, &deletionSpec->deleteOneParams,
+				hasShardKeyValueFilter, shardKeyHash);
+		}
+		else
+		{
+			result = DeleteAllMatchingDocuments(
+				collection, query,
+				deletionSpec->deleteOneParams.variableSpec,
+				collationString, hasShardKeyValueFilter,
+				shardKeyHash);
+		}
 		pfree(query);
 		return result;
 	}
@@ -1266,6 +1295,194 @@ DeleteAllMatchingDocuments(MongoCollection *collection, pgbson *queryDoc,
 
 	pfree(state.deleteQuery.data);
 
+	SPI_finish();
+
+	return rowsDeleted;
+}
+
+
+/*
+ * SerializeDeleteManyParams serializes the parameters of a deleteMany operation
+ * into a BSON spec that is shipped to the delete worker.
+ *
+ * Format: {"deleteMany": {query: ..., collation: ..., variableSpec: ...}}
+ */
+static pgbson *
+SerializeDeleteManyParams(const DeleteOneParams *deleteManyParams)
+{
+	pgbson_writer commandWriter;
+	pgbson_writer writer;
+	PgbsonWriterInit(&commandWriter);
+
+	PgbsonWriterStartDocument(&commandWriter, "deleteMany", 10, &writer);
+
+	if (deleteManyParams->query != NULL)
+	{
+		PgbsonWriterAppendValue(&writer, "query", 5, deleteManyParams->query);
+	}
+
+	if (deleteManyParams->variableSpec != NULL &&
+		deleteManyParams->variableSpec->value_type == BSON_TYPE_DOCUMENT)
+	{
+		PgbsonWriterAppendValue(&writer, "variableSpec", 12,
+								deleteManyParams->variableSpec);
+	}
+
+	if (IsCollationApplicable(deleteManyParams->collationString))
+	{
+		PgbsonWriterAppendUtf8(&writer, "collation", 9,
+							   deleteManyParams->collationString);
+	}
+
+	PgbsonWriterEndDocument(&commandWriter, &writer);
+	return PgbsonWriterGetPgbson(&commandWriter);
+}
+
+
+/*
+ * DeserializeDeleteManyWorkerSpec reconstructs the deleteMany parameters from the
+ * BSON spec produced by SerializeDeleteManyParams on a worker node.
+ */
+static void
+DeserializeDeleteManyWorkerSpec(const bson_value_t *workerSpecValue,
+								DeleteOneParams *deleteManyParams)
+{
+	bson_iter_t commandIter;
+	BsonValueInitIterator(workerSpecValue, &commandIter);
+
+	while (bson_iter_next(&commandIter))
+	{
+		const char *key = bson_iter_key(&commandIter);
+		if (strcmp(key, "query") == 0)
+		{
+			deleteManyParams->query = CreateBsonValueCopy(bson_iter_value(
+															  &commandIter));
+		}
+		else if (strcmp(key, "variableSpec") == 0)
+		{
+			deleteManyParams->variableSpec = CreateBsonValueCopy(
+				bson_iter_value(&commandIter));
+		}
+		else if (strcmp(key, "collation") == 0)
+		{
+			const char *collationString = bson_iter_utf8(&commandIter, NULL);
+			if (IsCollationValid(collationString))
+			{
+				strlcpy((char *) deleteManyParams->collationString,
+						collationString,
+						sizeof(deleteManyParams->collationString));
+			}
+		}
+	}
+}
+
+
+/*
+ * CallDeleteWorkerForDeleteMany pushes a deleteMany operation to worker nodes
+ * via the delete_worker function. Each worker runs the DELETE locally on its
+ * shard and returns the deleted count. The coordinator sums the counts from all
+ * shards.
+ *
+ * When hasShardKeyValueFilter is true, the query is routed to a single shard.
+ * Otherwise, it fans out to all shards.
+ */
+static uint64
+CallDeleteWorkerForDeleteMany(MongoCollection *collection,
+							  const DeleteOneParams *deleteManyParams,
+							  bool hasShardKeyValueFilter,
+							  int64 shardKeyHash)
+{
+	uint64 rowsDeleted = 0;
+
+	int spiResult = SPI_connect();
+	if (spiResult != SPI_OK_CONNECT)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("Could not connect to SPI for deleteMany worker")));
+	}
+
+	pgbson *serializedSpec = SerializeDeleteManyParams(deleteManyParams);
+
+	int argCount = 6;
+	Datum argValues[6] = { 0 };
+	char argNulls[6] = { ' ', ' ', ' ', ' ', 'n', 'n' };
+	Oid argTypes[6] = {
+		INT8OID, INT8OID, REGCLASSOID, DocumentDBCoreBsonTypeId(),
+		BYTEAOID, TEXTOID
+	};
+
+	argValues[0] = UInt64GetDatum(collection->collectionId);
+	argValues[1] = Int64GetDatum(shardKeyHash);
+	argValues[2] = ObjectIdGetDatum(InvalidOid);
+	argValues[3] = PointerGetDatum(serializedSpec);
+
+	StringInfoData queryBuf;
+	initStringInfo(&queryBuf);
+
+	/* Keep the shard-OID placeholder constant so generic plans can replace it. */
+	appendStringInfo(&queryBuf,
+					 "SELECT %s.delete_worker($1, $2, 0::pg_catalog.regclass, $4::%s.bson,"
+					 " $5::%s.bsonsequence, $6) FROM %s.documents_"
+					 UINT64_FORMAT,
+					 DocumentDBApiInternalSchemaName,
+					 CoreSchemaNameV2, CoreSchemaNameV2,
+					 ApiDataSchemaName, collection->collectionId);
+
+	if (hasShardKeyValueFilter)
+	{
+		appendStringInfoString(&queryBuf, " WHERE shard_key_value = $2");
+	}
+
+	bool readOnly = false;
+	AllowNestedDistributionInCurrentTransaction();
+
+	if (hasShardKeyValueFilter)
+	{
+		SPIPlanPtr plan = GetSPIQueryPlan(collection->collectionId,
+										  QUERY_CALL_DELETE_MANY_WORKER_SHARDKEY,
+										  queryBuf.data, argTypes, argCount);
+		spiResult = SPI_execute_plan(plan, argValues, argNulls, readOnly, 0);
+	}
+	else
+	{
+		/* Fanout dispatch needs bound parameters during distributed planning. */
+		spiResult = SPI_execute_with_args(queryBuf.data, argCount, argTypes,
+										  argValues, argNulls, readOnly, 0);
+	}
+
+	if (spiResult != SPI_OK_SELECT)
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+						errmsg("deleteMany worker query failed with SPI result %d",
+							   spiResult)));
+	}
+
+	/* Aggregate deleted counts from all shards */
+	for (uint64 i = 0; i < SPI_processed; i++)
+	{
+		bool valIsNull = false;
+		Datum resultDatum = SPI_getbinval(SPI_tuptable->vals[i],
+										  SPI_tuptable->tupdesc, 1, &valIsNull);
+		if (valIsNull)
+		{
+			continue;
+		}
+
+		pgbson *resultBson = DatumGetPgBson(resultDatum);
+		pgbsonelement resultElement;
+		PgbsonToSinglePgbsonElement(resultBson, &resultElement);
+		if (strcmp(resultElement.path, "d") != 0 ||
+			resultElement.bsonValue.value_type != BSON_TYPE_INT64)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
+							errmsg(
+								"delete_worker returned an unexpected delete count")));
+		}
+
+		rowsDeleted += resultElement.bsonValue.value.v_int64;
+	}
+
+	pfree(queryBuf.data);
 	SPI_finish();
 
 	return rowsDeleted;
@@ -1662,6 +1879,32 @@ command_delete_worker(PG_FUNCTION_ARGS)
 
 		serializedResult = SerializeDeleteOneResult(&result);
 	}
+	else if (strcmp(commandElement.path, "deleteMany") == 0)
+	{
+		/*
+		 * deleteMany on worker: run the DELETE locally on this shard and return
+		 * the deleted count as BSON. The local shard table holds only this
+		 * shard's rows, so no shard_key_value filter is needed here.
+		 */
+		DeleteOneParams deleteManyParams = { 0 };
+		DeserializeDeleteManyWorkerSpec(&commandElement.bsonValue,
+										&deleteManyParams);
+
+		MongoCollection mongoCollection = { 0 };
+		UpdateMongoCollectionUsingIds(&mongoCollection, collectionId, shardOid);
+
+		pgbson *query = PgbsonInitFromDocumentBsonValue(deleteManyParams.query);
+		bool hasShardKeyValueFilter = false;
+		uint64 deletedCount = DeleteAllMatchingDocuments(
+			&mongoCollection, query, deleteManyParams.variableSpec,
+			deleteManyParams.collationString, hasShardKeyValueFilter,
+			shardKeyHash);
+
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		PgbsonWriterAppendInt64(&writer, "d", 1, (int64_t) deletedCount);
+		serializedResult = PgbsonWriterGetPgbson(&writer);
+	}
 	else if (strcmp(commandElement.path, "deleteUnsharded") == 0)
 	{
 		BatchDeletionSpec batchDeletionSpec = { 0 };
@@ -1699,7 +1942,7 @@ command_delete_worker(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_INTERNALERROR),
 						errmsg(
-							"Delete worker only supports deleteOne or deleteUnsharded call")));
+							"Delete worker only supports deleteOne, deleteMany or deleteUnsharded call")));
 	}
 
 	PG_RETURN_POINTER(serializedResult);

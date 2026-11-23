@@ -14,6 +14,9 @@
 #  check Verify the gateway can connect and extension is loaded
 
 set -euo pipefail
+# An inherited allexport, or an exported name a password local reuses (+x
+# below), would hand the password to every child.
+set +a
 umask 077
 
 readonly PROG="documentdb-gateway-admin"
@@ -381,8 +384,9 @@ Common options:
   --username NAME         User name (required for create/drop/reset)
   --password-file FILE    Password file (one of: --password-file, --password-stdin;
                           required for create-user and reset-password)
-                          The file must hold one line of printable ASCII;
-                          one trailing newline (LF or CRLF) is removed.
+                          The file must hold one line of UTF-8 text without
+                          control characters; one trailing newline (LF or
+                          CRLF) is removed.
   --password-stdin        Read the password from stdin (same rules). Best
                           practice for piping a secret without touching disk:
                             printf '%s' "$PW" | sudo documentdb-gateway-admin \
@@ -488,7 +492,7 @@ resolve_password_to_file() {
         # `echo secret > pwfile` adds a trailing newline (CRLF from a
         # Windows editor) that, stored verbatim, fails every login with
         # "Invalid key"; the shared contract drops exactly that.
-        local raw="" stripped
+        local +x raw="" stripped
         documentdb_read_password raw "Password file ${PASSWORD_FILE}" < "${PASSWORD_FILE}" \
             || die "Cannot use --password-file ${PASSWORD_FILE} (see above)."
         stripped="$(mktemp)" || die "Cannot create temp file."
@@ -506,7 +510,7 @@ resolve_password_to_file() {
         if [[ -t 0 ]]; then
             die "--password-stdin requires the password on stdin (e.g. 'printf %s \"\$PW\" | documentdb-gateway-admin ... --password-stdin'). Stdin is a TTY."
         fi
-        local tmp line=""
+        local +x tmp line=""
         documentdb_read_password line "The password on stdin" \
             || die "Cannot use the password from --password-stdin (see above)."
         tmp="$(mktemp)" || die "Cannot create temp file for stdin password."

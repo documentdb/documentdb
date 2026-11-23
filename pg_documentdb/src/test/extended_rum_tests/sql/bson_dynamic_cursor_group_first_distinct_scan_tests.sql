@@ -24,7 +24,6 @@ SET documentdb.next_collection_index_id TO 30010000;
 -- Composite op class is what lets the composite index expose the skip primitive
 -- the distinct scan is built on.
 SET documentdb.defaultUseCompositeOpClass TO on;
-SET documentdb.enableDistinctScanForGroupFirst TO on;
 SET documentdb.enable_distinct_scan_for_ordered_group_first TO on;
 SET documentdb.enable_distinct_skip_scan_on_key TO on;
 

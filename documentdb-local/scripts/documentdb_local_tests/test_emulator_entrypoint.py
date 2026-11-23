@@ -2757,6 +2757,71 @@ esac
                 finally:
                     self.data_dir.chmod(0o700)
 
+    def test_reserved_name_check_reads_markers_after_permission_repair(self):
+        # A restored volume's markers are unreadable until the repair, so the
+        # name check must not count the skipped seed as using the name.
+        self._configure_postgres_stubs()
+        (self.data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+        markers = self.data_dir / ".documentdb-local"
+        markers.mkdir(exist_ok=True)
+        (markers / "sample_data_initialized").touch()
+        user = getpass.getuser()
+        self.data_dir.chmod(0o000)
+        try:
+            result = self._run_entrypoint("--password", _TEST_PW, extra_env={
+                "START_POSTGRESQL": "true",
+                "DOCUMENTDB_RUNTIME_USER": user,
+                "DOCUMENTDB_RUNTIME_GROUP": user,
+                "USERNAME": "public",
+                "INIT_DATA": "true",
+            })
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Sample data already initialized", result.stdout)
+        finally:
+            self.data_dir.chmod(0o700)
+
+    @unittest.skipIf(os.geteuid() == 0, "directory access permissions do not restrict root")
+    def test_reserved_name_check_follows_the_recursive_repair(self):
+        # Only the recursive repair exposes a nested marker or seed directory.
+        self._configure_postgres_stubs()
+        (self.data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+        markers = self.data_dir / ".documentdb-local"
+        markers.mkdir(exist_ok=True)
+        (markers / "sample_data_initialized").touch()
+        seeds = self.data_dir / "seed"
+        seeds.mkdir()
+        (seeds / "00-seed.js").write_text("// seed\n", encoding="utf-8")
+        user = getpass.getuser()
+        env = {
+            "START_POSTGRESQL": "true",
+            "DOCUMENTDB_RUNTIME_USER": user,
+            "DOCUMENTDB_RUNTIME_GROUP": user,
+            "DOCUMENTDB_FORCE_OWNERSHIP_REPAIR": "true",
+            "USERNAME": "public",
+            "CREATE_USER": "false",
+        }
+        cases = [({"INIT_DATA": "true"}, markers, True),
+                 ({"INIT_DATA_PATH": str(seeds)}, seeds, False)]
+        for extra, hidden, starts in cases:
+            with self.subTest(hidden=hidden.name):
+                (self.data_dir / "postmaster.pid").unlink(missing_ok=True)
+                hidden.chmod(0o000)
+                try:
+                    result = self._run_entrypoint("--password", _TEST_PW,
+                                                  extra_env={**env, **extra})
+                finally:
+                    hidden.chmod(0o750)
+                output = result.stdout + result.stderr
+                if starts:
+                    self.assertEqual(result.returncode, 0, output)
+                    self.assertIn("Sample data already initialized", result.stdout)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("is reserved by PostgreSQL", output)
+                    self.assertNotIn("oss-server-stub-started", output)
+                    log = (self.logs_dir / "gateway_entrypoint.log").read_text(encoding="utf-8")
+                    self.assertIn("is reserved by PostgreSQL", log)
+
     @unittest.skipIf(os.geteuid() == 0, "directory access permissions do not restrict root")
     def test_directory_permission_repair_failure_aborts_startup(self):
         self._configure_postgres_stubs()
@@ -2831,6 +2896,47 @@ exec /bin/chmod "$@"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Setting ownership of", result.stdout)
 
+    def test_reserved_name_in_use_is_refused_before_repair(self):
+        # A created user needs no seed marker, and a searchable volume shows
+        # its markers, so a refused name must not first rewrite the volume.
+        self._configure_postgres_stubs()
+        (self.data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+        user = getpass.getuser()
+        for use in ({"CREATE_USER": "true"}, {"CREATE_USER": "false", "INIT_DATA": "true"}):
+            with self.subTest(**use):
+                self.data_dir.chmod(0o700)
+                result = self._run_entrypoint(
+                    extra_env={
+                        "START_POSTGRESQL": "true",
+                        "DOCUMENTDB_RUNTIME_USER": user,
+                        "DOCUMENTDB_RUNTIME_GROUP": user,
+                        "DOCUMENTDB_FORCE_OWNERSHIP_REPAIR": "true",
+                        "USERNAME": "public",
+                        **use,
+                    }
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("is reserved by PostgreSQL", result.stdout + result.stderr)
+                self.assertNotIn("Setting ownership of", result.stdout)
+                self.assertEqual(stat.S_IMODE(self.data_dir.stat().st_mode), 0o700)
+
+        # A marker path that is not a directory holds no markers either.
+        (self.data_dir / ".documentdb-local").write_text("", encoding="utf-8")
+        result = self._run_entrypoint(
+            extra_env={
+                "START_POSTGRESQL": "true",
+                "DOCUMENTDB_RUNTIME_USER": user,
+                "DOCUMENTDB_RUNTIME_GROUP": user,
+                "DOCUMENTDB_FORCE_OWNERSHIP_REPAIR": "true",
+                "USERNAME": "public",
+                "CREATE_USER": "false",
+                "INIT_DATA": "true",
+            }
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Setting ownership of", result.stdout)
+
     def test_custom_empty_data_path_is_populated_from_template(self):
         """Issue #480: an empty custom --data-path is instantiated by copying
         the pristine baked template instead of running full initialization;
@@ -2864,6 +2970,75 @@ exec /bin/chmod "$@"
         )
         args = args_capture.read_text(encoding="utf-8").splitlines()
         self.assertNotIn("-c", args)
+
+    def test_data_path_with_whitespace_is_rejected_before_touching_data(self):
+        """Whitespace or a glob character in the data path used to wipe a populated /data volume."""
+        sentinel = self.data_dir / "PG_VERSION"
+        sentinel.write_text("17\n", encoding="utf-8")
+        args_capture = self._configure_toast_stubs()
+
+        cases = (
+            ("env-trailing-space", (), {"DATA_PATH": f"{self.data_dir} "}),
+            ("flag-inner-space", ("--data-path", f"{self.data_dir} backup"), {}),
+            ("env-tab", (), {"DATA_PATH": f"{self.data_dir}\t"}),
+            ("env-newline", (), {"DATA_PATH": f"{self.data_dir}\n"}),
+            # START_POSTGRESQL is true by default and by flag, not only by environment.
+            ("start-pg-defaulted", (),
+             {"START_POSTGRESQL": None, "DATA_PATH": f"{self.data_dir} "}),
+            ("start-pg-flag", ("--start-pg", "true"),
+             {"START_POSTGRESQL": "false", "DATA_PATH": f"{self.data_dir} "}),
+            # The launcher also globs the path, and each of these matches the populated directory.
+            ("glob-star", (), {"DATA_PATH": f"{self.data_dir}*"}),
+            ("glob-question-mark", ("--data-path", f"{self.root}/dat?"), {}),
+            ("glob-bracket", (), {"DATA_PATH": f"{self.root}/[d]ata"}),
+            ("glob-backslash", (), {"DATA_PATH": f"{self.root}/dat\\a"}),
+        )
+        state_file = self.data_dir / "runtime.env"
+        log_dir = self.data_dir / "logs"
+        root_entries = sorted(p.name for p in self.root.iterdir())
+        for name, args, env in cases:
+            with self.subTest(name):
+                state_file.write_text("keep\n", encoding="utf-8")
+                result = self._run_entrypoint(
+                    *args, extra_env={"START_POSTGRESQL": "true",
+                                      "DOCUMENTDB_RUNTIME_STATE_FILE": str(state_file),
+                                      "DOCUMENTDB_LOG_DIR": str(log_dir), **env}
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                expected = "would expand" if name.startswith("glob-") else "contains whitespace"
+                self.assertIn(expected, result.stderr)
+                self.assertFalse(args_capture.exists(), "start_oss_server.sh must not run")
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "17\n")
+                self.assertEqual(state_file.read_text(encoding="utf-8"), "keep\n",
+                                 "nothing may be written before the refusal")
+                self.assertFalse(log_dir.exists(), "nothing may be written before the refusal")
+                self.assertEqual(
+                    sorted(p.name for p in self.root.iterdir()),
+                    root_entries,
+                    "no sibling directory may be created",
+                )
+
+        # Only the blanks a shell splits on are refused: this run reaches the
+        # (failing) launcher.
+        self._write_exec(self.gateway_scripts / "start_oss_server.sh", "#!/bin/sh\nexit 1\n")
+        result = self._run_entrypoint(
+            extra_env={"START_POSTGRESQL": "true", "DATA_PATH": f"{self.data_dir}\v"}
+        )
+        self.assertNotIn("contains whitespace", result.stderr)
+        self.assertIn("start_oss_server.sh failed", result.stderr)
+
+        # Without a local PostgreSQL the data path is not handed to the launcher, so it is not refused.
+        result = self._run_entrypoint(
+            extra_env={"START_POSTGRESQL": "false", "DATA_PATH": f"{self.data_dir} backup"}
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn("contains whitespace", result.stderr)
+
+    def test_usage_documents_the_data_path_restriction(self):
+        result = self._run_entrypoint("--help")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("backslashes or any of * ? [", result.stdout)
 
     def test_get_parameter_stub_returns_command_not_supported(self):
         sql_capture = self._configure_postgres_stubs()
@@ -3878,6 +4053,40 @@ exec "{real}" "$@"
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertNotIn("reserved prefix", result.stdout + result.stderr)
 
+    def test_reserved_name_is_checked_only_when_the_user_is_used(self):
+        # CREATE_USER=false without a seed that will run never creates or logs
+        # in as the name, so PostgreSQL's reserved names must not stop the
+        # container. A seed whose one-shot marker exists is skipped.
+        init_dir = self.root / "custom_init"
+        init_dir.mkdir()
+        (init_dir / "00-custom.js").write_text("// custom\n", encoding="utf-8")
+        markers = self.data_dir / ".documentdb-local"
+        custom = {"INIT_DATA_PATH": str(init_dir)}
+        cases = [
+            ({}, None, True),
+            ({"INIT_DATA": "true"}, "sample_data_initialized", True),
+            (custom, "custom_data_attempted", True),
+            ({"CREATE_USER": "true"}, None, False),
+            ({"INIT_DATA": "true"}, None, False),
+            (custom, None, False),
+        ]
+        for env, marker, starts in cases:
+            with self.subTest(env=env, marker=marker):
+                if markers.exists():
+                    shutil.rmtree(markers)
+                if marker:
+                    markers.mkdir(parents=True)
+                    (markers / marker).touch()
+                result = self._run_entrypoint(
+                    "--password", _TEST_PW, extra_env={"USERNAME": "public", **env}
+                )
+                output = result.stdout + result.stderr
+                if starts:
+                    self.assertEqual(result.returncode, 0, msg=output)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("is reserved by PostgreSQL", output)
+
     def test_all_configured_blocked_prefixes_are_rejected(self):
         prefixes = ["documentdb", "citus", "pg", "internal_role"]
         self._set_blocked_role_prefixes(prefixes)
@@ -4270,6 +4479,7 @@ raise SystemExit('Unsupported jq expression: ' + expr)
 
     def _run(self, username, config=None, gateway_home=None):
         env = os.environ.copy()
+        env.pop("USERNAME_IN_USE", None)
         env["PATH"] = f"{self.bin_dir}:{env['PATH']}"
         args = ["bash", str(self.VALIDATOR), username]
         if config is not None:
@@ -4993,6 +5203,7 @@ class PrepareDataDirectoryContractTests(unittest.TestCase):
             f'. "{LIB_DIR / "postgres.sh"}"\n'
             f'entrypoint_dir="{root}" DATA_PATH="{root / "data"}"\n'
             'DOCUMENTDB_RUNTIME_USER="$(id -un)" DOCUMENTDB_RUNTIME_GROUP="$(id -gn)"\n'
+            'CREATE_USER=true\n'  # the name check has its own tests
             'prepare_data_path 6>&2\n'
             'echo "reinit=[${force_reinit_args[*]}]"\n'
         )

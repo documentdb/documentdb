@@ -5286,7 +5286,7 @@ $cmd$);
 
 SELECT documentdb_api_internal.create_indexes_non_concurrently('coll_q_db',
   '{ "createIndexes": "single_field_binary", "indexes": [{ "key": {"a": 1, "b": 1}, "name": "gate_disabled_support", "collation": {"locale": "simple"} }] }', TRUE);
-ERROR:  Error in specification { "key" : { "a" : 1, "b" : 1 }, "name" : "gate_disabled_support", "collation" : { "locale" : "simple" } }:createIndex.collation is not implemented yet
+ERROR:  Error in specification { "key" : { "a" : 1, "b" : 1 }, "name" : "gate_disabled_support", "collation" : { "locale" : "simple" } }:Collation support for indexes is disabled. Enable it to use 'createIndexes.indexes.collation'.
 CONTEXT:  SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
 SQL statement "SELECT documentdb_api_internal.create_indexes_dispatch($1, $2, $3, $4)"
 SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
@@ -5294,7 +5294,7 @@ SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 SET documentdb_core.enableCollation TO off;
 SET documentdb.skipFailOnCollation TO off;
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"b": "apple"}, "collation": {"locale": "simple"} }');
-ERROR:  collation is not supported in the find command yet.
+ERROR:  Collation support is disabled. Enable it to use 'find.collation'.
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "single_field_binary", "filter": {"$expr": {"$eq": ["$a", "apple"]}} }')
 $cmd$);

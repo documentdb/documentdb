@@ -27,7 +27,9 @@ POSTGRES_15_REF="REL_15_14"
 # This contains the fix for supporting extended stats on expressions.
 CITUS_12_VERSION=cf0e6c359c07a0273e3946fadaed170e77fa5eea
 # Citus v14.2.0.
-CITUS_14_VERSION=58702e722c6efbae45e3cade885b476e4fddc7e1
+CITUS_14_2_VERSION=58702e722c6efbae45e3cade885b476e4fddc7e1
+# Citus v14.3.0.
+CITUS_14_3_VERSION=b960093dd67db2634778a807b414cab1cde2ffe2
 # This contains the PostgreSQL 18 orphan-cleanup snapshot fix.
 # ISSUE-TODO-CRITICAL-dmmelnik-2026/09/18: Update CITUS_14_VERSION to the official 14.3 release and drop 18 specific citus line
 # PG18 special version is required until we have a fix for https://github.com/citusdata/citus/pull/8676 (Keep orphan cleanup snapshot active on PostgreSQL 18)
@@ -78,15 +80,18 @@ function GetCitusVersion()
   local citusVersion=$1
   if [ "$PGVERSION" == "18" ]; then
     echo $CITUS_14_PG18_VERSION
+  elif [ "$citusVersion" == "14.3" ] || [ "$citusVersion" == "v14.3" ] || [ "$citusVersion" == "$CITUS_14_3_VERSION" ]; then
+    echo $CITUS_14_3_VERSION
   elif [ "$PGVERSION" == "17" ]; then
-    echo $CITUS_14_VERSION
-  elif [ "$citusVersion" == "14" ] || [ "$citusVersion" == "v14.0" ] || [ "$citusVersion" == "$CITUS_14_VERSION"  ]; then
-    echo $CITUS_14_VERSION
+    echo $CITUS_14_2_VERSION
+  # 14 and v14.0 are legacy aliases that resolve to the 14.2 line.
+  elif [ "$citusVersion" == "14.2" ] || [ "$citusVersion" == "v14.2" ] || [ "$citusVersion" == "14" ] || [ "$citusVersion" == "v14.0" ] || [ "$citusVersion" == "$CITUS_14_2_VERSION"  ]; then
+    echo $CITUS_14_2_VERSION
   # allow the caller to specify the version as 12 or v12.1 or v12.1.6 or v12.1.14
   elif [ "$citusVersion" == "12" ] || [ "$citusVersion" == "v12.1" ] || [ "$citusVersion" == "$CITUS_12_VERSION" ]; then
     echo $CITUS_12_VERSION
   else
-    echo "Invalid Citus version specified $citusVersion. Please use $CITUS_12_VERSION or $CITUS_14_VERSION."
+    echo "Invalid Citus version specified $citusVersion. Please use $CITUS_12_VERSION, $CITUS_14_2_VERSION, or $CITUS_14_3_VERSION."
     exit 1  
   fi
 }

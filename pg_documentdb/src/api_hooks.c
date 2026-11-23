@@ -58,6 +58,7 @@ HandleColocation_HookType handle_colocation_hook = NULL;
 RewriteListCollectionsQueryForDistribution_HookType rewrite_list_collections_query_hook =
 	NULL;
 RewriteListExtendedIndexesQuery_HookType rewrite_list_extended_indexes_query_hook = NULL;
+GetEmptyMergeSourceCollection_HookType get_empty_merge_source_collection_hook = NULL;
 RewriteConfigQueryForDistribution_HookType rewrite_config_shards_query_hook = NULL;
 RewriteConfigQueryForDistribution_HookType rewrite_config_chunks_query_hook = NULL;
 TryGetShardNameForUnshardedCollection_HookType
@@ -506,6 +507,18 @@ MutateListCollectionsQueryForDistribution(Query *listCollectionsQuery)
 	}
 
 	return listCollectionsQuery;
+}
+
+
+MongoCollection *
+GetEmptyMergeSourceCollection(MongoCollection *targetCollection)
+{
+	if (get_empty_merge_source_collection_hook != NULL)
+	{
+		return get_empty_merge_source_collection_hook(targetCollection);
+	}
+
+	return NULL;
 }
 
 

@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/requests/wire_request.rs
  *
  *-------------------------------------------------------------------------
@@ -19,7 +20,7 @@ use crate::{
     protocol::{bson_scanner, opcode::OpCode},
     requests::{
         common_fields::extract_info_from_document, info::StrictRequestInfo,
-        read_concern::ReadConcern, request_type::RequestType,
+        read_concern::ReadConcern, read_preference::ReadPreference, request_type::RequestType,
     },
 };
 
@@ -642,6 +643,12 @@ impl<'a> WireRequest<'a> {
         self.common.read_concern()
     }
 
+    /// Returns the validated preference, or `None` when the client did not specify one.
+    #[must_use]
+    pub const fn read_preference(&self) -> Option<ReadPreference> {
+        self.common.read_preference()
+    }
+
     /// Returns the request `comment` field when it is a string.
     #[must_use]
     pub fn comment(&self) -> Option<&str> {
@@ -657,9 +664,159 @@ impl<'a> WireRequest<'a> {
 
 #[cfg(test)]
 mod tests {
-    use bson::rawdoc;
+    use bson::{doc, rawdoc};
 
     use super::*;
+    use crate::{
+        protocol::reader,
+        requests::{read_preference::ReadPreferenceMode, RequestMessage},
+        testing::build_op_msg_parts,
+    };
+
+    #[test]
+    #[expect(deprecated, reason = "characterizes supported legacy command frames")]
+    fn wire_frames_and_owned_explain_paths_retain_the_outer_preference() {
+        for (command, execution_mode, target_type) in [
+            (
+                doc! { "find": "items" },
+                RequestExecutionMode::Normal,
+                RequestType::Find,
+            ),
+            (
+                doc! { "find": "items", "explain": true },
+                RequestExecutionMode::InlineExplain,
+                RequestType::Find,
+            ),
+            (
+                doc! { "explain": { "find": "items", "$readPreference": { "mode": "secondary" } } },
+                RequestExecutionMode::ExplainWrapper {
+                    target_type: RequestType::Find,
+                },
+                RequestType::Find,
+            ),
+        ] {
+            for preference in [
+                None,
+                Some(doc! { "mode": "primary" }),
+                Some(
+                    doc! { "mode": "nearest", "maxStalenessSeconds": 30, "hedge": { "enabled": false } },
+                ),
+            ] {
+                let mut command = command.clone();
+                command.insert("$db", "app");
+                if let Some(preference) = preference.as_ref() {
+                    command.insert("$readPreference", preference.clone());
+                }
+                let raw = RawDocumentBuf::from_document(&command).unwrap();
+                let borrowed = reader::parse_cmd(&raw, None, true, true).unwrap();
+                let owned = reader::parse_cmd_buf(raw.clone(), true, true).unwrap();
+                assert_eq!(borrowed.read_preference(), owned.read_preference());
+                assert_eq!(owned.execution_mode(), execution_mode);
+                assert_preference_metadata(&owned, preference.as_ref());
+
+                for (opcode, include_database) in [
+                    (OpCode::Msg, true),
+                    (OpCode::Query, true),
+                    (OpCode::Query, false),
+                ] {
+                    let body = if opcode == OpCode::Msg {
+                        build_op_msg_parts(&command, 17).1
+                    } else {
+                        let mut legacy_command = command.clone();
+                        if !include_database {
+                            legacy_command.remove("$db");
+                        }
+                        let raw = RawDocumentBuf::from_document(&legacy_command).unwrap();
+                        let mut body = 0_i32.to_le_bytes().to_vec();
+                        body.extend_from_slice(b"app.$cmd\0");
+                        body.extend_from_slice(&0_i32.to_le_bytes());
+                        body.extend_from_slice(&(-1_i32).to_le_bytes());
+                        body.extend_from_slice(raw.as_bytes());
+                        body
+                    };
+                    let message = RequestMessage::new(Bytes::from(body), opcode, 17, 0);
+                    let parsed = reader::parse_request(&message, &mut true, true, true).unwrap();
+                    assert_eq!(parsed.execution_mode(), execution_mode);
+                    assert_eq!(parsed.read_preference(), owned.read_preference());
+                    assert_eq!(parsed.db(), "app");
+                    if execution_mode != RequestExecutionMode::Normal {
+                        assert_eq!(parsed.explain_target().unwrap().request_type(), target_type);
+                        let collection = if execution_mode == RequestExecutionMode::InlineExplain {
+                            None
+                        } else {
+                            Some("items")
+                        };
+                        assert_eq!(parsed.explain_target().unwrap().collection(), collection);
+                    }
+                }
+            }
+        }
+    }
+
+    fn assert_preference_metadata(request: &WireRequest<'_>, preference: Option<&Document>) {
+        match preference {
+            None => assert_eq!(request.read_preference(), None),
+            Some(preference) if preference.get_str("mode") == Ok("primary") => {
+                let parsed = request.read_preference().unwrap();
+                assert_eq!(parsed.mode(), ReadPreferenceMode::Primary);
+                assert_eq!(parsed.max_staleness_seconds(), None);
+                assert_eq!(parsed.hedge_enabled(), None);
+            }
+            Some(_) => {
+                let parsed = request.read_preference().unwrap();
+                assert_eq!(parsed.mode(), ReadPreferenceMode::Nearest);
+                assert_eq!(parsed.max_staleness_seconds(), Some(30));
+                assert_eq!(parsed.hedge_enabled(), Some(false));
+            }
+        }
+    }
+
+    #[test]
+    fn borrowed_and_owned_requests_retain_read_preference() {
+        let doc = rawdoc! {
+            "find": "items",
+            "$db": "app",
+            "$readPreference": {
+                "mode": "secondaryPreferred",
+                "maxStalenessSeconds": 30,
+            },
+        };
+        let borrowed = reader::parse_cmd(&doc, None, true, true).unwrap();
+        let owned = WireRequest::from_owned_command_document(
+            RequestType::Find,
+            RequestExecutionMode::Normal,
+            None,
+            doc.clone(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(borrowed.read_preference(), owned.read_preference());
+        let preference = owned.read_preference().unwrap();
+        assert_eq!(preference.mode(), ReadPreferenceMode::SecondaryPreferred);
+        assert_eq!(preference.max_staleness_seconds(), Some(30));
+    }
+
+    #[test]
+    fn absent_read_preference_remains_distinct_from_explicit_primary() {
+        let unspecified =
+            reader::parse_cmd(&rawdoc! { "find": "items", "$db": "app" }, None, true, true)
+                .unwrap()
+                .read_preference();
+        assert_eq!(unspecified, None);
+        let doc = rawdoc! {
+            "find": "items",
+            "$db": "app",
+            "$readPreference": { "mode": "primary" },
+        };
+        assert_eq!(
+            reader::parse_cmd(&doc, None, true, true)
+                .unwrap()
+                .read_preference()
+                .unwrap()
+                .mode(),
+            ReadPreferenceMode::Primary
+        );
+    }
 
     #[test]
     fn wire_request_keeps_identity_separate_from_execution_mode() {

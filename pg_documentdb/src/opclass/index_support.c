@@ -202,7 +202,7 @@ typedef struct FieldCoverageState
 {
 	PlannerInfo *root;
 	Index expectedRti;
-	IndexPath *indexPath;
+	IndexOptInfo *indexInfo;
 	bool hasUncoveredField;
 	bool indexHasCollation;
 
@@ -347,7 +347,6 @@ extern bool EnableExtendedExplainPlans;
 extern bool EnableExplainScanIndexCosts;
 extern bool EnableOrderByIndexTerm;
 extern bool EnableMultiKeyFilterIndexOnlyScan;
-extern bool TrackIndexOnlyScanFindCandidate;
 extern bool EnableExtendedIndexes;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnableSupportFunctionIdPushdown;
@@ -362,12 +361,17 @@ extern bool EnableLookupJoinSelectivityFromStats;
 extern bool EnableFullScanCostAndSelectivity;
 extern bool EnableBtreeOrderByWithFilters;
 extern bool EnableCompositeRangeSelectivity;
+extern bool EnableNativePlannerIndexOnlyScan;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
 /* --------------------------------------------------------- */
 
 static Expr * HandleSupportRequestCondition(SupportRequestIndexCondition *req);
+static Expr * EvaluateIndexForIndexOnlyScan(SupportRequestIndexCondition *req);
+static void AddPrimaryKeyIndexOnlyScanPaths(PlannerInfo *root, RelOptInfo *rel,
+											List **paths, List **partialPaths);
+static Expr * TryRewriteObjectIndexRestrictionInfoFuncExpr(FuncExpr *funcExpr);
 static Path * ReplaceFunctionOperatorsInPlanPath(PlannerInfo *root, RelOptInfo *rel,
 												 Path *path, PlanParentType parentType,
 												 ReplaceExtensionFunctionContext *context);
@@ -409,6 +413,7 @@ static List * GetSortDetails(PlannerInfo *root, Index rti,
 static bool IsQueryCollationCompatibleWithIndex(const char *queryCollation,
 												bytea *indexOptions);
 static bool IsValidIndexPathForIdOrderBy(IndexPath *indexPath, List *sortDetails);
+static bool IsNativePlannerIndexOnlyScanSchemaSupported(void);
 
 static Expr * HandleSupportRequestForBtreeObjectIdCondition(
 	SupportRequestIndexCondition *req);
@@ -569,6 +574,23 @@ static const char *MergeSortInPrefixMarkerPath = "mergeSort";
  */
 static const char *MergeSortInPrefixMarkerKey = "mergeSortInPrefix";
 
+inline static IndexOptInfo *
+GetPrimaryKeyIndexOptInfo(RelOptInfo *rel)
+{
+	ListCell *index;
+	foreach(index, rel->indexlist)
+	{
+		IndexOptInfo *indexInfo = lfirst(index);
+		if (IsBtreePrimaryKeyIndex(indexInfo))
+		{
+			return indexInfo;
+		}
+	}
+
+	return NULL;
+}
+
+
 /* --------------------------------------------------------- */
 /* Top level exports */
 /* --------------------------------------------------------- */
@@ -576,6 +598,56 @@ PG_FUNCTION_INFO_V1(dollar_support);
 PG_FUNCTION_INFO_V1(dollar_support_object_id);
 PG_FUNCTION_INFO_V1(bson_dollar_lookup_filter_support);
 PG_FUNCTION_INFO_V1(bson_dollar_merge_filter_support);
+PG_FUNCTION_INFO_V1(bson_indexopt_scan_support);
+
+
+bool
+IsNativePlannerIndexOnlyScanEnabled(void)
+{
+	return EnableNativePlannerIndexOnlyScan &&
+		   IsNativePlannerIndexOnlyScanSchemaSupported() &&
+		   OidIsValid(BsonIndexOptScanFunctionOid());
+}
+
+
+Datum
+bson_indexopt_scan_support(PG_FUNCTION_ARGS)
+{
+	Node *supportRequest = (Node *) PG_GETARG_POINTER(0);
+	Pointer responsePointer = NULL;
+	if (IsA(supportRequest, SupportRequestSelectivity))
+	{
+		SupportRequestSelectivity *req = (SupportRequestSelectivity *) supportRequest;
+		req->selectivity = 1.0;
+		responsePointer = (Pointer) req;
+	}
+	else if (IsA(supportRequest, SupportRequestCost))
+	{
+		SupportRequestCost *req = (SupportRequestCost *) supportRequest;
+		req->startup = 0;
+		req->per_tuple = 1e-19;
+		responsePointer = (Pointer) req;
+	}
+	else if (IsA(supportRequest, SupportRequestIndexCondition))
+	{
+		SupportRequestIndexCondition *req =
+			(SupportRequestIndexCondition *) supportRequest;
+		if (IsNativePlannerIndexOnlyScanEnabled() &&
+			req->index->opfamily != NULL &&
+			IsCompositeOpFamilyOid(req->index->relam, req->index->opfamily[0]))
+		{
+			Expr *indexCondition = EvaluateIndexForIndexOnlyScan(req);
+			if (indexCondition != NULL)
+			{
+				req->lossy = false;
+				responsePointer = (Pointer) list_make1(indexCondition);
+			}
+		}
+	}
+
+	PG_RETURN_POINTER(responsePointer);
+}
+
 
 /*
  * Handles the Support functions for the dollar logical operators.
@@ -2204,11 +2276,27 @@ IsScalarArrayOpExprTrimmable(const ScalarArrayOpExpr *scalarArrayOpExpr)
 }
 
 
+/*
+ * Local function availability does not establish readiness on every node.
+ * Require the published cluster schema, with exact patch-line checks so
+ * unpatched intermediate schemas cannot enable the marker.
+ */
+static bool
+IsNativePlannerIndexOnlyScanSchemaSupported(void)
+{
+	return IsClusterVersionAtleast(DocDB_V1, 3, 0) ||
+		   IsClusterVersionAtLeastPatch(DocDB_V1, 2, 2) ||
+		   IsClusterVersionAtLeastPatch(DocDB_V1, 1, 3);
+}
+
+
 static inline bool
 IsFuncExprTrimmable(const FuncExpr *funcExpr)
 {
 	return funcExpr->funcid == BsonIndexHintFunctionOid() ||
 		   funcExpr->funcid == BsonFullScanFunctionOid() ||
+		   (IsNativePlannerIndexOnlyScanSchemaSupported() &&
+			funcExpr->funcid == BsonIndexOptScanFunctionOid()) ||
 		   (IsClusterVersionAtleast(DocDB_V0, 112, 1) &&
 			funcExpr->funcid == ApiCursorTrackerFunctionId()) ||
 		   (IsClusterVersionAtleast(DocDB_V0, 114, 1) &&
@@ -2837,12 +2925,12 @@ TryExtractFieldPathFromConst(Expr *expr)
 
 
 static inline bool
-IsCollatedIndexPath(const IndexPath *indexPath)
+IsCollatedIndexPath(const IndexOptInfo *indexInfo)
 {
 	const char *indexCollation = NULL;
 	uint32_t indexCollationLength = 0;
 	Get_Index_Collation_Option(
-		(BsonGinIndexOptionsBase *) indexPath->indexinfo->opclassoptions[0],
+		(BsonGinIndexOptionsBase *) indexInfo->opclassoptions[0],
 		collation, indexCollation, indexCollationLength);
 
 	return IsCollationValid(indexCollation);
@@ -2850,13 +2938,13 @@ IsCollatedIndexPath(const IndexPath *indexPath)
 
 
 static inline bool
-IsFieldPathCoveredByIndex(const char *fieldPath, IndexPath *indexPath,
+IsFieldPathCoveredByIndex(const char *fieldPath, IndexOptInfo *indexInfo,
 						  const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	int8_t sortDirectionIgnored = 0;
 	int32_t colNum = GetCompositeOpClassColumnNumber(
 		fieldPath,
-		indexPath->indexinfo->opclassoptions[0], /*[0] because there's only one column indexed (Document)*/
+		indexInfo->opclassoptions[0], /*[0] because there's only one column indexed (Document)*/
 		&sortDirectionIgnored);
 
 	/* Covered only when the column is in the index AND provably non-multi-key: a
@@ -2953,7 +3041,7 @@ IsProjectionCoveredByIndex(Expr *expr, const FieldCoverageState *state)
 
 		hasInclusion = true;
 
-		if (!IsFieldPathCoveredByIndex(fieldPath, state->indexPath,
+		if (!IsFieldPathCoveredByIndex(fieldPath, state->indexInfo,
 									   state->multiKeyState))
 		{
 			return false;
@@ -2968,7 +3056,7 @@ IsProjectionCoveredByIndex(Expr *expr, const FieldCoverageState *state)
 	}
 
 	if (isIdProjectedByDefault &&
-		!IsFieldPathCoveredByIndex("_id", state->indexPath, state->multiKeyState))
+		!IsFieldPathCoveredByIndex("_id", state->indexInfo, state->multiKeyState))
 	{
 		return false;
 	}
@@ -3098,7 +3186,7 @@ CheckFieldCoverage(Node *node, void *context)
 		if (sawDocumentVar && fieldPath != NULL)
 		{
 			if (state->indexHasCollation ||
-				!IsFieldPathCoveredByIndex(fieldPath, state->indexPath,
+				!IsFieldPathCoveredByIndex(fieldPath, state->indexInfo,
 										   state->multiKeyState))
 			{
 				/* Field path is not in this index so we can't do index-only. */
@@ -3154,9 +3242,7 @@ CheckFieldCoverage(Node *node, void *context)
 				{
 					fieldPath = TryExtractFieldPathFromConst(secondArg);
 				}
-				else if ((enableIndexOnlyScanForFindProject ||
-						  TrackIndexOnlyScanFindCandidate) &&
-						 IsProjectFunctionOid(funcExpr->funcid))
+				else if (IsProjectFunctionOid(funcExpr->funcid))
 				{
 					bool isProjectionCoveredByIndex = IsProjectionCoveredByIndex(
 						secondArg, state);
@@ -3197,7 +3283,7 @@ CheckFieldCoverage(Node *node, void *context)
 				}
 
 				if (fieldPath == NULL || state->indexHasCollation ||
-					!IsFieldPathCoveredByIndex(fieldPath, state->indexPath,
+					!IsFieldPathCoveredByIndex(fieldPath, state->indexInfo,
 											   state->multiKeyState))
 				{
 					/* Path is not in this index so we can't do index-only. */
@@ -3232,15 +3318,15 @@ CheckFieldCoverage(Node *node, void *context)
  * If any target contains a field reference outside those covered shapes, the function returns false.
  */
 static bool
-AreAllTargetsCoveredByIndex(PlannerInfo *root, IndexPath *indexPath,
+AreAllTargetsCoveredByIndex(PlannerInfo *root, IndexOptInfo *indexInfo,
 							const IndexOnlyScanMultiKeyState *multiKeyState)
 {
 	FieldCoverageState state = {
 		.hasUncoveredField = false,
-		.indexPath = indexPath,
-		.expectedRti = indexPath->path.parent->relid,
+		.indexInfo = indexInfo,
+		.expectedRti = indexInfo->rel->relid,
 		.root = root,
-		.indexHasCollation = IsCollatedIndexPath(indexPath),
+		.indexHasCollation = IsCollatedIndexPath(indexInfo),
 		.multiKeyState = multiKeyState
 	};
 
@@ -3321,7 +3407,7 @@ IsQueryEligibleForIndexOnlyScan(PlannerInfo *root, Index scanRti, bool *hasDocum
  * the multiKeyState is left unpopulated.
  */
 static bool
-IsCompositeIndexOnlyScanCandidate(const IndexPath *indexPath,
+IsCompositeIndexOnlyScanCandidate(const IndexOptInfo *indexInfo,
 								  const CompositeOpClassMetadataInfo *metadata,
 								  CompositeOpClassMetadataReadResult metadataResult,
 								  IndexOnlyScanMultiKeyState *multiKeyState)
@@ -3356,7 +3442,140 @@ IsCompositeIndexOnlyScanCandidate(const IndexPath *indexPath,
 		return false;
 	}
 
-	return CompositeIndexSupportsIndexOnlyScan(indexPath, hasPerPathMetadata);
+	return CompositeIndexSupportsIndexOnlyScan(indexInfo, hasPerPathMetadata);
+}
+
+
+/*
+ * Enables native IOS for eligible indexes and returns any extra clause for native clause matching.
+ */
+static Expr *
+EvaluateIndexForIndexOnlyScan(SupportRequestIndexCondition *req)
+{
+	IndexOptInfo *indexInfo = req->index;
+	if (!enable_indexonlyscan ||
+		!IsQueryEligibleForIndexOnlyScan(req->root, indexInfo->rel->relid, NULL))
+	{
+		return NULL;
+	}
+
+	IndexOnlyScanMultiKeyState multiKeyState = { 0 };
+	CompositeOpClassMetadataInfo indexMetadata = { 0 };
+	CompositeOpClassMetadataReadResult metadataResult =
+		TryGetCompositeOpClassMetadataInfo(indexInfo->indexoid, NoLock, &indexMetadata);
+
+	if (!IsCompositeIndexOnlyScanCandidate(indexInfo, &indexMetadata, metadataResult,
+										   &multiKeyState))
+	{
+		return NULL;
+	}
+
+	if (!AreAllTargetsCoveredByIndex(req->root, indexInfo, &multiKeyState))
+	{
+		return NULL;
+	}
+
+	ListCell *cell;
+	int32_t perPathMultiKeyQualsCount[INDEX_MAX_KEYS] = { 0 };
+	const RestrictInfo *shardKeyRestrictInfo = NULL;
+	int64 shardKeyValue = 0;
+	List *newIndexRestrictInfo = NIL;
+	FuncExpr *indexHint = NULL;
+	foreach(cell, indexInfo->indrestrictinfo)
+	{
+		CHECK_FOR_INTERRUPTS();
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
+		if (!IndexRestrictInfoSupportIndexOnlyScan(rinfo, indexInfo->opclassoptions[0],
+												   &shardKeyRestrictInfo, &shardKeyValue,
+												   &multiKeyState,
+												   perPathMultiKeyQualsCount))
+		{
+			return NULL;
+		}
+
+		/* Use the document equivalent so native IOS checks do not require object_id. */
+		if (IsA(rinfo->clause, FuncExpr))
+		{
+			FuncExpr *funcExpr = (FuncExpr *) rinfo->clause;
+			if (funcExpr->funcid == BsonIndexHintFunctionOid())
+			{
+				indexHint = funcExpr;
+			}
+			else
+			{
+				Expr *rewritten = TryRewriteObjectIndexRestrictionInfoFuncExpr(
+					(FuncExpr *) rinfo->clause);
+				if (rewritten != NULL)
+				{
+					RestrictInfo *rewrittenInfo = palloc(sizeof(RestrictInfo));
+					memcpy(rewrittenInfo, rinfo, sizeof(RestrictInfo));
+					rewrittenInfo->clause = rewritten;
+					rinfo = rewrittenInfo;
+				}
+			}
+		}
+
+		newIndexRestrictInfo = lappend(newIndexRestrictInfo, rinfo);
+	}
+
+	if (shardKeyRestrictInfo != NULL)
+	{
+		Oid relationOid = planner_rt_fetch(indexInfo->rel->relid, req->root)->relid;
+		uint64 collectionId = 0;
+		bool requireShardTable = false;
+		if (!TryGetCollectionIdByRelationOid(relationOid, &collectionId,
+											 requireShardTable))
+		{
+			return NULL;
+		}
+
+		/* We can only do unsharded because when sharded the shard key value is not present on the RUM _id index. */
+		if ((int64) collectionId != shardKeyValue)
+		{
+			return NULL;
+		}
+
+		/* Native predicate processing has finished; remove only the redundant routing qual. */
+		newIndexRestrictInfo = list_delete_ptr(newIndexRestrictInfo,
+											   (void *) shardKeyRestrictInfo);
+	}
+
+	/* Add $exists: true for sparse hinted indexes that might get index only scan by the native planner.
+	 * TODO: expand this to add a fullscan expr for indexes that are not sparse and for fully covered IDXOS with no quals. i.e, an unfiltered covered projection.
+	 */
+	Expr *indexCondition = NULL;
+	if (indexHint != NULL)
+	{
+		Node *sparseNode = lfourth(indexHint->args);
+		if (!IsA(sparseNode, Const) || ((Const *) sparseNode)->constisnull)
+		{
+			return NULL;
+		}
+
+		if (DatumGetBool(((Const *) sparseNode)->constvalue))
+		{
+			/*
+			 * Avoid a catalog name lookup per candidate: the relation path-list hook
+			 * enforces the hint and discards nonmatching paths. Use this candidate's
+			 * opclass options to build its inclusion bound.
+			 */
+			bool isWildCardIndex = false;
+			const char *firstIndexPath = GetFirstPathFromIndexOptionsIfApplicable(
+				indexInfo->opclassoptions[0], &isWildCardIndex);
+			if (firstIndexPath == NULL || isWildCardIndex)
+			{
+				return NULL;
+			}
+
+			indexCondition = (Expr *) CreateExistsTrueOpExpr(linitial(indexHint->args),
+															 firstIndexPath,
+															 strlen(firstIndexPath));
+		}
+	}
+
+	indexInfo->indrestrictinfo = newIndexRestrictInfo;
+	indexInfo->canreturn[0] = true;
+	return indexCondition;
 }
 
 
@@ -3393,11 +3612,24 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 	}
 
 	List *addedPaths = NIL;
+	List *addedPartialPaths = NIL;
 	ListCell *cell;
 	foreach(cell, rel->pathlist)
 	{
 		bool isBitmapPath = false;
 		Path *path = (Path *) lfirst(cell);
+		if (path->pathtype == T_SeqScan)
+		{
+			/* The bson_indexopt_scan might cause unfiltered queries to not consider an indexonlyscan on btree because it references the document var as a func arg. */
+			if (!hasDocumentVar && IsNativePlannerIndexOnlyScanEnabled())
+			{
+				AddPrimaryKeyIndexOnlyScanPaths(root, rel, &addedPaths,
+												&addedPartialPaths);
+			}
+
+			continue;
+		}
+
 		if (IsA(path, BitmapHeapPath))
 		{
 			BitmapHeapPath *bitmapPath = (BitmapHeapPath *) path;
@@ -3481,7 +3713,7 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 			CompositeOpClassMetadataReadResult metadataResult =
 				TryGetCompositeOpClassMetadataInfo(indexPath->indexinfo->indexoid,
 												   NoLock, &indexMetadata);
-			if (!IsCompositeIndexOnlyScanCandidate(indexPath, &indexMetadata,
+			if (!IsCompositeIndexOnlyScanCandidate(indexPath->indexinfo, &indexMetadata,
 												   metadataResult,
 												   &multiKeyState))
 			{
@@ -3494,7 +3726,7 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 				continue;
 			}
 
-			if (!AreAllTargetsCoveredByIndex(root, indexPath, &multiKeyState))
+			if (!AreAllTargetsCoveredByIndex(root, indexPath->indexinfo, &multiKeyState))
 			{
 				continue;
 			}
@@ -3533,11 +3765,11 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 	}
 
 	if (ForceIndexOnlyScanIfAvailable &&
-		list_length(addedPaths) > 0)
+		(list_length(addedPaths) > 0 || list_length(addedPartialPaths) > 0))
 	{
 		/* reset pathlist to only have these */
 		rel->pathlist = addedPaths;
-		rel->partial_pathlist = NIL;
+		rel->partial_pathlist = addedPartialPaths;
 	}
 	else
 	{
@@ -3549,25 +3781,63 @@ ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 			add_path(rel, newPath);
 		}
 
+		foreach(pathsToAddCell, addedPartialPaths)
+		{
+			Path *newPartialPath = lfirst(pathsToAddCell);
+			add_partial_path(rel, newPartialPath);
+		}
+
 		list_free(addedPaths);
+		list_free(addedPartialPaths);
 	}
 }
 
 
-inline static IndexOptInfo *
-GetPrimaryKeyIndexOptInfo(RelOptInfo *rel)
+static void
+AddPrimaryKeyIndexOnlyScanPaths(PlannerInfo *root, RelOptInfo *rel,
+								List **paths, List **partialPaths)
 {
-	ListCell *index;
-	foreach(index, rel->indexlist)
+	ListCell *cell;
+	foreach(cell, rel->baserestrictinfo)
 	{
-		IndexOptInfo *indexInfo = lfirst(index);
-		if (IsBtreePrimaryKeyIndex(indexInfo))
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, cell);
+		if (!IsA(rinfo->clause, FuncExpr) ||
+			!IsFuncExprTrimmable((FuncExpr *) rinfo->clause))
 		{
-			return indexInfo;
+			return;
 		}
 	}
 
-	return NULL;
+	IndexOptInfo *primaryKeyInfo = GetPrimaryKeyIndexOptInfo(rel);
+	if (primaryKeyInfo == NULL)
+	{
+		return;
+	}
+
+	bool indexOnly = true;
+	bool partialPath = false;
+	double loopCount = 1.0;
+	IndexPath *indexPath = create_index_path(root, primaryKeyInfo, NIL, NIL, NIL, NIL,
+											 ForwardScanDirection, indexOnly, NULL,
+											 loopCount, partialPath);
+	*paths = lappend(*paths, indexPath);
+
+	if (rel->consider_parallel && indexPath->indexinfo->amcanparallel)
+	{
+		partialPath = true;
+		IndexPath *parallelPath = create_index_path(root, indexPath->indexinfo,
+													indexPath->indexclauses,
+													indexPath->indexorderbys,
+													indexPath->indexorderbycols,
+													indexPath->path.pathkeys,
+													indexPath->indexscandir,
+													indexOnly, NULL, loopCount,
+													partialPath);
+		if (parallelPath->path.parallel_workers > 0)
+		{
+			*partialPaths = lappend(*partialPaths, parallelPath);
+		}
+	}
 }
 
 
@@ -3788,8 +4058,8 @@ documentdb_btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 		if (!hasOtherQuals)
 		{
 			*path = *modified;
+			convertedToIndexOnlyScan = path->path.pathtype != T_IndexOnlyScan;
 			path->path.pathtype = T_IndexOnlyScan;
-			convertedToIndexOnlyScan = true;
 		}
 
 		if (modified != path)
@@ -5581,11 +5851,11 @@ MergeSortInPrefixChildrenSupportIndexOnly(PlannerInfo *root, RelOptInfo *rel,
 	CompositeOpClassMetadataInfo indexMetadata = { 0 };
 	CompositeOpClassMetadataReadResult metadataResult =
 		TryGetCompositeOpClassMetadataInfo(indexInfo->indexoid, NoLock, &indexMetadata);
-	return IsCompositeIndexOnlyScanCandidate(childPath, &indexMetadata,
+	return IsCompositeIndexOnlyScanCandidate(childPath->indexinfo, &indexMetadata,
 											 metadataResult, &multiKeyState) &&
 		   IndexRestrictInfosSupportIndexOnlyScan(childPath, rel, context,
 												  &multiKeyState) &&
-		   AreAllTargetsCoveredByIndex(root, childPath, &multiKeyState);
+		   AreAllTargetsCoveredByIndex(root, childPath->indexinfo, &multiKeyState);
 }
 
 
@@ -5619,6 +5889,28 @@ MaybeMakeMergeSortInPrefixChildIndexOnly(PlannerInfo *root, IndexPath *childPath
 	bool partialPath = false;
 	double loopCount = 1.0;
 	cost_index(indexOnlyChild, root, loopCount, partialPath);
+
+	if (indexOnlyChild->path.total_cost > childPath->path.total_cost)
+	{
+		return childPath;
+	}
+
+	return indexOnlyChild;
+}
+
+
+/* Returnability is already established by the native planner support function. */
+static IndexPath *
+MakeMergeSortNativeIndexOnlyScan(PlannerInfo *root, IndexPath *childPath)
+{
+	bool indexOnlyScan = true;
+	bool partialPath = false;
+	double loopCount = 1.0;
+	IndexPath *indexOnlyChild = create_index_path(
+		root, childPath->indexinfo, childPath->indexclauses,
+		childPath->indexorderbys, childPath->indexorderbycols,
+		childPath->path.pathkeys, childPath->indexscandir,
+		indexOnlyScan, PATH_REQ_OUTER(&childPath->path), loopCount, partialPath);
 
 	if (indexOnlyChild->path.total_cost > childPath->path.total_cost)
 	{
@@ -6471,6 +6763,24 @@ ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 					}
 
 					continue;
+				}
+
+				/* When Native Planner IOS is enabled, we will no longer see IndexOnlyScan children paths
+				 * inside a Bitmap Or, so we should check if vanilla Index Paths, can be converted to IDOS
+				 * within the merge append path. */
+				if (IsNativePlannerIndexOnlyScanEnabled() &&
+					!mergeNeedsTidDedup && !bitmapOrNeedsDedup)
+				{
+					ListCell *childCell;
+					foreach(childCell, childPaths)
+					{
+						IndexPath *childPath = lfirst_node(IndexPath, childCell);
+						if (childPath->indexinfo->canreturn[0])
+						{
+							lfirst(childCell) = MakeMergeSortNativeIndexOnlyScan(
+								root, childPath);
+						}
+					}
 				}
 
 				markedPathsToRemove = lappend(markedPathsToRemove, sourcePath);
@@ -7936,7 +8246,8 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 		indexPath->indexinfo->relam, &indexCanOrder);
 
 	IndexOnlyScanMultiKeyState multiKeyState = { 0 };
-	bool indexOnlyScanPossible = enable_indexonlyscan &&
+	bool indexOnlyScanPossible = !IsNativePlannerIndexOnlyScanEnabled() &&
+								 enable_indexonlyscan &&
 								 indexPath->path.pathtype != T_IndexOnlyScan &&
 								 IsQueryEligibleForIndexOnlyScan(root,
 																 indexPath->path.parent->
@@ -7944,9 +8255,10 @@ TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct PlannerIn
 	if (indexOnlyScanPossible)
 	{
 		indexOnlyScanPossible =
-			IsCompositeIndexOnlyScanCandidate(indexPath, &indexMetadata, metadataResult,
+			IsCompositeIndexOnlyScanCandidate(indexPath->indexinfo, &indexMetadata,
+											  metadataResult,
 											  &multiKeyState) &&
-			AreAllTargetsCoveredByIndex(root, indexPath, &multiKeyState);
+			AreAllTargetsCoveredByIndex(root, indexPath->indexinfo, &multiKeyState);
 	}
 
 	bytea *indexOptions = indexPath->indexinfo->opclassoptions != NULL ?
@@ -9648,11 +9960,9 @@ static IndexPath *
 OptimizeIndexPathForFilters(IndexPath *indexPath,
 							ReplaceExtensionFunctionContext *context)
 {
-	/* For cases of partial filter expressions the base restrict info is "copied" into the index exprs
-	 * so in this case we need to do the restrictinfo changes here too.
-	 * see check_index_predicates on indxpath.c.
-	 */
-	if (indexPath->indexinfo->indpred == NIL)
+	/* Partial predicates and native index-only scans can own a separate restriction list. */
+	if (indexPath->indexinfo->indpred == NIL &&
+		indexPath->indexinfo->indrestrictinfo == indexPath->path.parent->baserestrictinfo)
 	{
 		return indexPath;
 	}
@@ -9660,6 +9970,11 @@ OptimizeIndexPathForFilters(IndexPath *indexPath,
 	indexPath->indexinfo->indrestrictinfo =
 		ReplaceExtensionFunctionOperatorsInRestrictionPaths(
 			indexPath->indexinfo->indrestrictinfo, context);
+
+	if (indexPath->indexinfo->indpred == NIL)
+	{
+		return indexPath;
+	}
 
 	/*
 	 * If there's a consideration of a bitmap path,

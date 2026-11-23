@@ -1,0 +1,44 @@
+[package]
+name = "deadpool-runtime"
+version = "0.3.1"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Michael P. Jung <michael.jung@terreon.de>"]
+description = "Dead simple async pool utilities for async runtimes"
+keywords = ["async", "database", "pool", "sync", "utils"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/deadpool-rs/deadpool"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+async-std_1 = ["dep:async-std_1"]
+smol_2 = [
+    "dep:smol_2_async-io",
+    "dep:smol_2_blocking",
+    "dep:smol_2_futures-lite",
+]
+tokio_1 = ["dep:tokio_1"]
+
+[dependencies]
+async-std_1 = { package = "async-std", version = "1.0", features = [
+    "unstable",
+], optional = true }
+smol_2_async-io = { package = "async-io", version = "2.0", features = [
+], optional = true }
+smol_2_blocking = { package = "blocking", version = "1.6", features = [
+], optional = true }
+smol_2_futures-lite = { package = "futures-lite", version = "2.6", features = [
+], optional = true }
+tokio_1 = { package = "tokio", version = "1.0", features = [
+    "time",
+    "rt",
+], optional = true }
+
+[dev-dependencies]
+tokio_1 = { package = "tokio", version = "1.0", features = ["rt", "macros"] }

@@ -105,18 +105,9 @@ fn pg_configuration(
 }
 
 /// Applies the per-connection buffer size to the `PostgreSQL` configuration.
-///
-/// Only compiled when the `pg_buffer_size` cfg is set, which requires a
-/// `tokio-postgres` build that exposes `Config::buffer_size`.
-#[cfg(pg_buffer_size)]
 fn set_connection_buffer_size(config: &mut tokio_postgres::Config, buffer_size: usize) {
     config.buffer_size(buffer_size);
 }
-
-/// No-op fallback when the `pg_buffer_size` cfg is not set: the default
-/// `tokio-postgres` does not expose a buffer size setting.
-#[cfg(not(pg_buffer_size))]
-const fn set_connection_buffer_size(_config: &mut tokio_postgres::Config, _buffer_size: usize) {}
 
 /// Nanoseconds since [`EpochClock::epoch`], the domain
 /// [`ConnectionPool::last_used`] decodes from. `almost_now_timestamp` is unix

@@ -1,0 +1,5 @@
+[patch.crates-io]
+tokio-postgres = { path = "pg_documentdb_gw/libs/tokio-postgres/crates/tokio-postgres" }
+deadpool = { path = "pg_documentdb_gw/libs/deadpool/crates/deadpool" }
+deadpool-postgres = { path = "pg_documentdb_gw/libs/deadpool/crates/deadpool-postgres" }
+deadpool-runtime = { path = "pg_documentdb_gw/libs/deadpool/crates/deadpool-runtime" }

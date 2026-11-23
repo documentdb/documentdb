@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/pg_documentdb_core.c
  *
@@ -12,6 +13,7 @@
 #include <utils/guc.h>
 
 #include "bson_init.h"
+#include "metadata/documentdb_core_extension_version.h"
 
 PG_MODULE_MAGIC;
 
@@ -19,6 +21,14 @@ void _PG_init(void);
 void _PG_fini(void);
 
 bool SkipDocumentDBCoreLoad = false;
+
+
+const char *
+GetDocumentDBCoreBinaryVersion(void)
+{
+	return EXTENSION_VERSION_STR;
+}
+
 
 /*
  * DocumentDBCore_InstallBsonMemVTablesLocal sets the libbson memory vtable

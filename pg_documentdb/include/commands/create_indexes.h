@@ -327,7 +327,7 @@ void UpdateIndexStatsForPostgresIndex(uint64 collectionId, List *indexIdList);
 IndexDef * MakeCollatedBuiltinIdIndexDef(const bson_value_t *collation,
 										 IndexSpec *indexSpec);
 void AcquireAdvisoryExclusiveLockForCreateIndexes(uint64 collectionId);
-IndexSpec MakeIndexSpecForIndexDef(IndexDef *indexDef);
+IndexSpec MakeIndexSpecFromIndexDef(IndexDef *indexDef);
 pgbson * MakeCreateIndexesMsg(CreateIndexesResult *result);
 bool WildcardProjDocsAreEquivalent(const pgbson *leftWPDocument,
 								   const pgbson *rightWPDocument);

@@ -108,6 +108,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_count('cou
          One-Time Filter: false
 (4 rows)
 
+-- Cache-resize diagnostics are normalized; suppress their query-position details.
+\set VERBOSITY terse
 BEGIN;
 set local client_min_messages to DEBUG1;
 set local documentdb.forceRunDiagnosticCommandInline to on;
@@ -167,6 +169,7 @@ DEBUG:  executing "SELECT array_agg((index_spec).index_name ORDER BY index_id) F
 (1 row)
 
 ROLLBACK;
+\set VERBOSITY default
 SELECT document FROM bson_aggregation_count('countdb', '{ "count": "countcoll", "query": {"value": {"$gt": 20}, "value": {"$lt": 150} } }');
                                 document                                
 ---------------------------------------------------------------------
@@ -201,7 +204,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
          Task Count: 8
          Tasks Shown: One of 8
          ->  Task
-               Query: SELECT worker_partial_agg('documentdb_api_internal.bsoncommandcount(integer)'::regprocedure, 1) AS document FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery))
+               Query: SELECT worker_partial_agg('documentdb_api_internal.bsoncommandcount(integer)'::regprocedure, 1) AS document FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_indexopt_scan(document))
                Node: host=localhost port=58070 dbname=regression
                ->  Aggregate
                      Output: worker_partial_agg('xxxx'::oid, 1)
@@ -220,7 +223,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
          Task Count: 8
          Tasks Shown: One of 8
          ->  Task
-               Query: SELECT worker_partial_agg('documentdb_api_internal.bsoncount(integer)'::regprocedure, 1) AS document FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery))
+               Query: SELECT worker_partial_agg('documentdb_api_internal.bsoncount(integer)'::regprocedure, 1) AS document FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_indexopt_scan(document))
                Node: host=localhost port=58070 dbname=regression
                ->  Aggregate
                      Output: worker_partial_agg('xxxx'::oid, 1)
@@ -240,7 +243,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bs
          Task Count: 8
          Tasks Shown: One of 8
          ->  Task
-               Query: SELECT worker_partial_agg('documentdb_api_internal.bsoncount(integer)'::regprocedure, 1) AS document, '{ "" : null }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery)) GROUP BY '{ "" : null }'::documentdb_core.bson
+               Query: SELECT worker_partial_agg('documentdb_api_internal.bsoncount(integer)'::regprocedure, 1) AS document, '{ "" : null }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "20" } }'::documentdb_core.bsonquery) AND (document OPERATOR(documentdb_api_catalog.#<) '{ "value" : { "$numberInt" : "150" } }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_indexopt_scan(document)) GROUP BY '{ "" : null }'::documentdb_core.bson
                Node: host=localhost port=58070 dbname=regression
                ->  GroupAggregate
                      Output: worker_partial_agg('xxxx'::oid, 1), ('{ "" : null }'::documentdb_core.bson)
@@ -264,7 +267,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
          Task Count: 8
          Tasks Shown: One of 8
          ->  Task
-               Query: SELECT pg_catalog.worker_partial_agg('documentdb_api_internal.bsonsumwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW('{ }'::documentdb_core.bson, '{ "" : {  } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document, '{ "" : "sumEmpty" }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumEmpty" }'::documentdb_core.bson
+               Query: SELECT pg_catalog.worker_partial_agg('documentdb_api_internal.bsonsumwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW('{ }'::documentdb_core.bson, '{ "" : {  } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document, '{ "" : "sumEmpty" }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_indexopt_scan(document)) GROUP BY '{ "" : "sumEmpty" }'::documentdb_core.bson
                Node: host=localhost port=58070 dbname=regression
                ->  GroupAggregate
                      Output: worker_partial_agg('xxxx'::oid, '("{ }","{ """" : {  } }","{ ""now"" : NOW_SYS_VARIABLE }",)'::record), ('{ "" : "sumEmpty" }'::documentdb_core.bson)
@@ -293,7 +296,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
          Task Count: 8
          Tasks Shown: One of 8
          ->  Task
-               Query: SELECT pg_catalog.worker_partial_agg('documentdb_api_internal.bsonsumwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW('{ }'::documentdb_core.bson, '{ "" : null }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document, '{ "" : "sumNull" }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumNull" }'::documentdb_core.bson
+               Query: SELECT pg_catalog.worker_partial_agg('documentdb_api_internal.bsonsumwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW('{ }'::documentdb_core.bson, '{ "" : null }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document, '{ "" : "sumNull" }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_indexopt_scan(document)) GROUP BY '{ "" : "sumNull" }'::documentdb_core.bson
                Node: host=localhost port=58070 dbname=regression
                ->  GroupAggregate
                      Output: worker_partial_agg('xxxx'::oid, '("{ }","{ """" : null }","{ ""now"" : NOW_SYS_VARIABLE }",)'::record), ('{ "" : "sumNull" }'::documentdb_core.bson)
@@ -322,7 +325,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF)
          Task Count: 8
          Tasks Shown: One of 8
          ->  Task
-               Query: SELECT pg_catalog.worker_partial_agg('documentdb_api_internal.bsonsumwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW('{ }'::documentdb_core.bson, '{ "" : "constant-non-numeric" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document, '{ "" : "sumUtf8" }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) GROUP BY '{ "" : "sumUtf8" }'::documentdb_core.bson
+               Query: SELECT pg_catalog.worker_partial_agg('documentdb_api_internal.bsonsumwithexpr(documentdb_core.bson,documentdb_core.bson,documentdb_core.bson,text)'::regprocedure, ROW('{ }'::documentdb_core.bson, '{ "" : "constant-non-numeric" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document, '{ "" : "sumUtf8" }'::documentdb_core.bson AS c2 FROM documentdb_data.documents_58001_58000004 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "value" : { "$numberInt" : "50" } }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_indexopt_scan(document)) GROUP BY '{ "" : "sumUtf8" }'::documentdb_core.bson
                Node: host=localhost port=58070 dbname=regression
                ->  GroupAggregate
                      Output: worker_partial_agg('xxxx'::oid, '("{ }","{ """" : ""constant-non-numeric"" }","{ ""now"" : NOW_SYS_VARIABLE }",)'::record), ('{ "" : "sumUtf8" }'::documentdb_core.bson)

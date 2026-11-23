@@ -84,7 +84,7 @@ $cmd$);
    Tuple data received from nodes: 55 bytes
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_4230_423000 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "2" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "2" }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '4230'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_4230_423000 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "2" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "2" }'::documentdb_core.bson) AND ((shard_key_value OPERATOR(pg_catalog.=) '4230'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)))
          Tuple data received from node: 55 bytes
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documentdb_data.documents_4230_423000 collection  (cost=0.00..0.00 rows=1 width=32) (actual rows=1 loops=1)

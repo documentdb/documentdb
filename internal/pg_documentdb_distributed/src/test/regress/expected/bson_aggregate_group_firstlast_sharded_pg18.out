@@ -224,7 +224,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
                                  Task Count: 8
                                  Tasks Shown: One of 8
                                  ->  Task
-                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?", documentdb_api_catalog.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::documentdb_core.bson) AS worker_column_5 FROM documentdb_data.documents_19852_19850064 collection WHERE true
+                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?", documentdb_api_catalog.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::documentdb_core.bson) AS worker_column_5 FROM documentdb_data.documents_19852_19850064 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
                                        Node: host=localhost port=58070 dbname=regression
                                        ->  Seq Scan on documentdb_data.documents_19852_19850064 collection
                                              Output: document, document, document, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), documentdb_api_catalog.bson_orderby(document, '{ "v" : { "$numberInt" : "1" } }'::documentdb_core.bson)
@@ -259,7 +259,7 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (C
                                  Task Count: 8
                                  Tasks Shown: One of 8
                                  ->  Task
-                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?" FROM documentdb_data.documents_19852_19850064 collection WHERE true
+                                       Query: SELECT document, document AS "firstVal", document AS "lastName", documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS "?partitionBy?" FROM documentdb_data.documents_19852_19850064 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
                                        Node: host=localhost port=58070 dbname=regression
                                        ->  Seq Scan on documentdb_data.documents_19852_19850064 collection
                                              Output: document, document, document, documentdb_api_internal.bson_expression_partition_get(document, '{ "" : "$g" }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -374,7 +374,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_sortgroup_dist');
 
 -- =============================================================================
 -- Test 5: Sharded $group with $first using an expression, exercising the
--- relpath distinct-scan path on worker shards (enableDistinctScanForGroupFirst).
+-- relpath distinct-scan path on worker shards.
 -- Use one document per category so $first on each group is deterministic
 -- regardless of shard-local row ordering.
 -- =============================================================================
@@ -407,7 +407,6 @@ set citus.propagate_set_commands to 'local';
 BEGIN;
 set local citus.max_adaptive_executor_pool_size to 1;
 set local citus.enable_local_execution to off;
-SET LOCAL documentdb.enableDistinctScanForGroupFirst TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_distinct_dist", "pipeline": [ { "$group": { "_id": "$category", "firstExpr": { "$first": { "$concat": ["$name", "-seen"] } } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                   document                   
 ---------------------------------------------------------------------
@@ -432,7 +431,7 @@ SELECT documentdb_api.drop_collection('db', 'fl_distinct_dist');
 -- partial aggregation aborts.
 -- =============================================================================
 SELECT documentdb_api.insert_one('db', 'fl_project_group_dist', '{ "_id": 1, "g": "A", "a": "alpha" }');
-psql:sql/bson_aggregate_group_firstlast_sharded.sql:172: NOTICE:  creating collection
+psql:sql/bson_aggregate_group_firstlast_sharded.sql:171: NOTICE:  creating collection
                               insert_one                              
 ---------------------------------------------------------------------
  { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }

@@ -471,7 +471,7 @@ pub async fn process_request(
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use bson::{rawdoc, spec::BinarySubtype, Binary, RawArrayBuf, RawDocumentBuf};
+    use bson::{rawdoc, spec::BinarySubtype, Binary, RawArrayBuf, RawDocumentBuf, Timestamp};
 
     use super::*;
     use crate::{
@@ -543,22 +543,43 @@ mod tests {
         assert_eq!(
             execute(&mut connection, &command)
                 .await
-                .expect_err("invalid readConcern")
+                .expect_err("strict readConcern by default")
                 .error_code(),
             ErrorCode::BadValue
         );
-        config.set_bool("enable_read_concern_validation", false);
-        execute(&mut connection, &command)
+
+        let null_command = rawdoc! {
+            "ping": 1, "$db": "admin", "readConcern": null,
+        };
+        execute(&mut connection, &null_command)
             .await
-            .expect("legacy readConcern");
-        config.set_bool("enable_read_concern_validation", true);
-        assert_eq!(
-            execute(&mut connection, &command)
+            .expect("null readConcern with default configuration");
+
+        let timestamp_command = rawdoc! {
+            "ping": 1, "$db": "admin",
+            "readConcern": { "afterClusterTime": Timestamp { time: 1, increment: 1 } },
+        };
+        execute(&mut connection, &timestamp_command)
+            .await
+            .expect("valid afterClusterTime with default configuration");
+        for enabled in [true, false, true] {
+            config.set_bool("enable_read_concern_validation", enabled);
+            let result = execute(&mut connection, &command).await;
+            if enabled {
+                assert_eq!(
+                    result.expect_err("invalid readConcern").error_code(),
+                    ErrorCode::BadValue
+                );
+            } else {
+                result.expect("legacy readConcern");
+            }
+            execute(&mut connection, &timestamp_command)
                 .await
-                .expect_err("invalid readConcern")
-                .error_code(),
-            ErrorCode::BadValue
-        );
+                .expect("valid afterClusterTime");
+            execute(&mut connection, &null_command)
+                .await
+                .expect("null readConcern with explicit configuration");
+        }
     }
 
     #[tokio::test]

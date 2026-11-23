@@ -547,7 +547,7 @@ END;
 -- D10. Verify both indexes coexist
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM documentdb_api.list_indexes_cursor_first_page('comp_db','{ "listIndexes": "comp_equiv_d3" }') ORDER BY 1;
 
--- D11. Test emitEnableOrderedIndexFalseInResponse GUC
+-- D11. Verify ordered-index options in listIndexes responses.
 -- Create a collection with one composite (True) and one explicitly-false index.
 BEGIN;
 SET LOCAL documentdb.defaultUseCompositeOpClass TO on;
@@ -557,17 +557,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('comp_db', '{"cre
 ]}', true);
 END;
 
--- D11a. GUC ON (default): explicitly-false index emits "enableOrderedIndex": false
-SET documentdb.emitEnableOrderedIndexFalseInResponse TO on;
+-- An explicitly unordered index emits "enableOrderedIndex": false.
 SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
 FROM documentdb_api.list_indexes_cursor_first_page('comp_db', '{ "listIndexes": "comp_emit_guc" }')
 ORDER BY 1;
-
--- D11b. GUC OFF: explicitly-false index omits enableOrderedIndex entirely
-SET documentdb.emitEnableOrderedIndexFalseInResponse TO off;
-SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
-FROM documentdb_api.list_indexes_cursor_first_page('comp_db', '{ "listIndexes": "comp_emit_guc" }')
-ORDER BY 1;
-
--- Reset to default
-SET documentdb.emitEnableOrderedIndexFalseInResponse TO on;

@@ -34,6 +34,8 @@ bool IsMetadataCoordinator(void);
  */
 bool IsClusterInitialized(void);
 
+MongoCollection * GetEmptyMergeSourceCollection(MongoCollection *targetCollection);
+
 
 /*
  * Invoked after collection metadata is invalidated so registered consumers can

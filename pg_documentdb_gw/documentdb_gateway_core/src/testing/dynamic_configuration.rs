@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/testing/dynamic_configuration.rs
  *
  * Shared dynamic-configuration helpers for unit tests.
@@ -34,6 +35,7 @@ pub struct TestDynamicConfiguration {
     i32_overrides: RwLock<HashMap<&'static str, i32>>,
     u64_overrides: RwLock<HashMap<&'static str, u64>>,
     send_shutdown_responses: AtomicBool,
+    defer_retries_to_caller: AtomicBool,
     allow_transaction_snapshot: AtomicBool,
     enable_role_crud: AtomicBool,
     enable_write_concern_validation: AtomicBool,
@@ -53,6 +55,7 @@ impl Default for TestDynamicConfiguration {
             i32_overrides: RwLock::new(HashMap::new()),
             u64_overrides: RwLock::new(HashMap::new()),
             send_shutdown_responses: AtomicBool::new(false),
+            defer_retries_to_caller: AtomicBool::new(false),
             allow_transaction_snapshot: AtomicBool::new(false),
             enable_role_crud: AtomicBool::new(false),
             enable_write_concern_validation: AtomicBool::new(true),
@@ -91,6 +94,10 @@ impl TestDynamicConfiguration {
 
     pub fn set_send_shutdown_responses(&self, value: bool) {
         self.send_shutdown_responses.store(value, Ordering::Relaxed);
+    }
+
+    pub fn set_defer_retries_to_caller(&self, value: bool) {
+        self.defer_retries_to_caller.store(value, Ordering::Relaxed);
     }
 
     pub fn set_enable_role_crud(&self, value: bool) {
@@ -137,6 +144,10 @@ impl TestDynamicConfiguration {
 }
 
 impl DynamicConfiguration for TestDynamicConfiguration {
+    fn defer_retries_to_caller(&self) -> bool {
+        self.defer_retries_to_caller.load(Ordering::Relaxed)
+    }
+
     fn get_str(&self, _: &str) -> Option<String> {
         None
     }

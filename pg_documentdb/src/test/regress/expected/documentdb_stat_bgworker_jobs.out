@@ -206,11 +206,11 @@ SELECT job_id, job_name, command, schedule_interval_seconds, timeout_seconds, en
        job_options
     FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
     ORDER BY job_id;
- job_id |                 job_name                 |                     command                      | schedule_interval_seconds | timeout_seconds | enabled |                                job_options                                 
---------+------------------------------------------+--------------------------------------------------+---------------------------+-----------------+---------+----------------------------------------------------------------------------
-     90 | documentdb_index_build_background_job_1  | documentdb_api_internal.build_index_background   |                        17 |             300 | t       | { "roleExecutionProfile" : "primaryOnly", "execCoordinatorOnly" : true }
-     91 | documentdb_index_build_background_job_2  | documentdb_api_internal.build_index_background   |                        17 |             300 | t       | { "roleExecutionProfile" : "primaryOnly", "execCoordinatorOnly" : true }
-     92 | documentdb_cursor_cleanup_background_job | documentdb_api_internal.cursor_directory_cleanup |                        60 |             300 | t       | { "roleExecutionProfile" : "recoveryOnly", "execCoordinatorOnly" : false }
+ job_id |                 job_name                 |                           command                           | schedule_interval_seconds | timeout_seconds | enabled |                                  job_options                                   
+--------+------------------------------------------+-------------------------------------------------------------+---------------------------+-----------------+---------+--------------------------------------------------------------------------------
+     90 | documentdb_index_build_background_job_1  | documentdb_api_internal.build_index_background              |                        17 |             300 | t       | { "roleExecutionProfile" : "primaryOnly", "execCoordinatorOnly" : true }
+     91 | documentdb_index_build_background_job_2  | documentdb_api_internal.build_index_background              |                        17 |             300 | t       | { "roleExecutionProfile" : "primaryOnly", "execCoordinatorOnly" : true }
+     92 | documentdb_cursor_cleanup_background_job | documentdb_api_internal.cursor_directory_cleanup_background |                        60 |             300 | f       | { "roleExecutionProfile" : "recoveryEligible", "execCoordinatorOnly" : false }
 (3 rows)
 
 -- The two hook-resolved columns are point-in-time lookups, not cached values: changing
@@ -237,6 +237,37 @@ SELECT job_id, enabled
 (1 row)
 
 RESET documentdb.enable_cursor_cleanup_in_recovery;
+SET documentdb.enable_cursor_cleanup_background TO true;
+SET documentdb.enable_bgworker_promotion_barrier TO false;
+SELECT job_id, enabled
+    FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
+    WHERE job_id = 92;
+ job_id | enabled 
+--------+---------
+     92 | f
+(1 row)
+
+SET documentdb.enable_bgworker_promotion_barrier TO true;
+SELECT job_id, enabled
+    FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
+    WHERE job_id = 92;
+ job_id | enabled 
+--------+---------
+     92 | t
+(1 row)
+
+SET documentdb.enableBackgroundWorkerJobs TO false;
+SELECT job_id, enabled
+    FROM documentdb_api_internal.documentdb_stat_bgworker_jobs
+    WHERE job_id = 92;
+ job_id | enabled 
+--------+---------
+     92 | f
+(1 row)
+
+RESET documentdb.enableBackgroundWorkerJobs;
+RESET documentdb.enable_bgworker_promotion_barrier;
+RESET documentdb.enable_cursor_cleanup_background;
 -- The reset entry point is C-backed so the later shared-state implementation can land
 -- without requiring another SQL definition.
 SELECT l.lanname AS language,

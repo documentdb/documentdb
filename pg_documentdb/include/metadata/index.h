@@ -90,7 +90,7 @@ typedef enum CustomIndexOption
  *  - IndexSpecGetDatum()
  *  - CopyIndexSpec()
  *  - IndexSpecOptionsAreEquivalent()
- *  - MakeIndexSpecForIndexDef()
+ *  - MakeIndexSpecFromIndexDef()
  * , and index_spec_type_internal type in documentdb_api.sql.
  */
 typedef struct IndexSpec

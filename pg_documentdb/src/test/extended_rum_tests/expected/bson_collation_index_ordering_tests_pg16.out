@@ -7560,9 +7560,8 @@ $cmd$);
                            scanType: ordered
                            scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 7)]
                            ->  Index Only Scan using idx_orderby_samefield_simple on documents_8127 collection (actual rows=7 loops=1)
-                                 Index Cond: (document @<> '{ "a" : { "fullScan" : true } }'::bson)
                                  Heap Fetches: 7
-(21 rows)
+(20 rows)
 
 -- 29ah: the matching collated index can provide the group ordering directly.
 SELECT document FROM bson_aggregation_pipeline(

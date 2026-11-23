@@ -614,3 +614,156 @@ SELECT * FROM aggregate_cursor_first_page('db', '{ "aggregate": "nativeSrc", "pi
 SELECT document FROM documentdb_api.collection('db', 'nativeTar');
 
 SET documentdb.enableNativeColocation=false;
+
+-- A collectionless $documents pipeline must write both documents to the $merge target.
+SET documentdb.enableNativeColocation = true;
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "a": 1 }, { "b": 1 } ] }, { "$merge": "other" } ], "cursor": {} }',
+    4294967294);
+
+SELECT count(*) AS merged_documents,
+       count(*) FILTER (WHERE object_id = bson_get_value(document, '_id')) AS consistent_ids,
+       count(*) FILTER (WHERE document @@ '{"a": 1}') AS matching_a,
+       count(*) FILTER (WHERE document @@ '{"b": 1}') AS matching_b
+FROM documentdb_api.collection('documents_merge_db', 'other');
+
+-- Collectionless sources also support matching existing documents by _id.
+SELECT documentdb_api.insert_one('documents_merge_db', 'existing', '{"_id": 1, "a": 0, "retained": true}');
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{ "aggregate": 1, "pipeline": [ { "$documents": [ { "_id": 1, "a": 1 }, { "_id": 2, "b": 1 } ] }, { "$merge": { "into": "existing" } } ], "cursor": {} }',
+    4294967294);
+SELECT document FROM documentdb_api.collection('documents_merge_db', 'existing') ORDER BY object_id;
+
+-- Empty input must not change an existing target.
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{ "aggregate": 1, "pipeline": [ { "$documents": [] }, { "$merge": "existing" } ], "cursor": {} }',
+    4294967294);
+SELECT document FROM documentdb_api.collection('documents_merge_db', 'existing') ORDER BY object_id;
+
+-- A missing named source still produces no target documents.
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{ "aggregate": "missing", "pipeline": [ { "$merge": "empty_target" } ], "cursor": {} }',
+    4294967294);
+SELECT count(*) FROM documentdb_api.collection('documents_merge_db', 'empty_target');
+
+-- A union can supply input even when the original named source is missing.
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{ "aggregate": "missing", "pipeline": [ { "$unionWith": "existing" }, { "$merge": "union_target" } ], "cursor": {} }',
+    4294967294);
+SELECT document FROM documentdb_api.collection('documents_merge_db', 'union_target') ORDER BY object_id;
+
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{ "aggregate": "missing", "pipeline": [ { "$unionWith": { "coll": "existing", "pipeline": [ { "$match": { "a": 1 } } ] } }, { "$merge": "filtered_union_target" } ], "cursor": {} }',
+    4294967294);
+SELECT document FROM documentdb_api.collection('documents_merge_db', 'filtered_union_target') ORDER BY object_id;
+
+-- Propagate input supplied by a nested collectionless union.
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{ "aggregate": "missing", "pipeline": [ { "$unionWith": { "coll": "also_missing", "pipeline": [ { "$unionWith": { "pipeline": [ { "$documents": [ { "_id": 3, "c": 1 } ] } ] } } ] } }, { "$merge": "nested_union_target" } ], "cursor": {} }',
+    4294967294);
+SELECT document FROM documentdb_api.collection('documents_merge_db', 'nested_union_target') ORDER BY object_id;
+
+-- Only inputs without a collection source need an empty relation anchor.
+SELECT bool_or(plan LIKE '%merge_source_anchor%') AS named_source_has_anchor
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($query$
+    EXPLAIN (VERBOSE, COSTS OFF)
+    SELECT document FROM bson_aggregation_pipeline('documents_merge_db',
+        '{"aggregate":"existing","pipeline":[{"$merge":"union_target"}]}')
+$query$) AS plan;
+SELECT bool_or(plan LIKE '%merge_source_anchor%') AS collectionless_source_has_anchor
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($query$
+    EXPLAIN (VERBOSE, COSTS OFF)
+    SELECT document FROM bson_aggregation_pipeline('documents_merge_db',
+        '{"aggregate":1,"pipeline":[{"$documents":[{"_id":4}]},{"$merge":"existing"}]}')
+$query$) AS plan;
+SELECT bool_or(plan LIKE '%merge_source_anchor%') AS collection_union_has_anchor
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($query$
+    EXPLAIN (VERBOSE, COSTS OFF)
+    SELECT document FROM bson_aggregation_pipeline('documents_merge_db',
+        '{"aggregate":1,"pipeline":[{"$documents":[{"_id":4}]},{"$unionWith":"existing"},{"$merge":"union_target"}]}')
+$query$) AS plan;
+SELECT bool_or(plan LIKE '%merge_source_anchor%') AS lookup_source_has_anchor
+FROM documentdb_distributed_test_helpers.run_explain_and_trim($query$
+    EXPLAIN (VERBOSE, COSTS OFF)
+    SELECT document FROM bson_aggregation_pipeline('documents_merge_db',
+        '{"aggregate":1,"pipeline":[{"$documents":[{"_id":1}]},{"$lookup":{"from":"existing","localField":"_id","foreignField":"_id","as":"matches"}},{"$merge":"union_target"}]}')
+$query$) AS plan;
+
+-- Resolve the anchor in the target database and preserve source ordering and limits.
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_source_db',
+    '{"aggregate":1,"pipeline":[{"$documents":[{"_id":5,"word":"b"},{"_id":6,"word":"A"}]},{"$sort":{"word":-1}},{"$limit":1},{"$match":{"word":"b"}},{"$merge":{"into":{"db":"documents_merge_db","coll":"existing"}}}],"cursor":{}}',
+    4294967294);
+SELECT document FROM documentdb_api.collection('documents_merge_db', 'existing')
+WHERE document @@ '{"word":"b"}';
+
+-- The empty anchor retains ordinary collection read permissions.
+CREATE ROLE merge_anchor_writer LOGIN;
+DO $$
+BEGIN
+    EXECUTE (
+        SELECT format('GRANT USAGE ON SCHEMA %s TO merge_anchor_writer',
+                      string_agg(quote_ident(nspname), ', ' ORDER BY nspname))
+        FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname <> 'information_schema');
+END;
+$$;
+GRANT SELECT ON documentdb_api_catalog.collections TO merge_anchor_writer;
+SELECT format('GRANT SELECT, INSERT, UPDATE ON documentdb_data.documents_%s TO merge_anchor_writer', collection_id)
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'documents_merge_db' AND collection_name = 'existing' \gexec
+SELECT NOT has_table_privilege('merge_anchor_writer',
+           format('documentdb_data.documents_%s', collection_id), 'SELECT') AS no_anchor_read_grant
+FROM documentdb_api_catalog.collections
+WHERE database_name = 'documents_merge_db' AND collection_name = 'system.dbSentinel';
+SET citus.enable_local_execution = off;
+SET ROLE merge_anchor_writer;
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{"aggregate":1,"pipeline":[{"$documents":[{"_id":4,"from_writer":true}]},{"$merge":"existing"}],"cursor":{}}',
+    4294967294);
+RESET ROLE;
+RESET citus.enable_local_execution;
+SELECT count(*) AS inserted_without_anchor_read FROM documentdb_api.collection('documents_merge_db', 'existing')
+WHERE document @@ '{"from_writer":true}';
+DROP OWNED BY merge_anchor_writer;
+DROP ROLE merge_anchor_writer;
+
+-- Collectionless input must not bypass the existing sharded-target restriction.
+SELECT documentdb_api.shard_collection('documents_merge_db', 'sharded_target', '{"_id":"hashed"}', false);
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{"aggregate":1,"pipeline":[{"$documents":[{"_id":1}]},{"$merge":"sharded_target"}],"cursor":{}}',
+    4294967294);
+
+-- Disabling agnostic-source writes leaves collection-backed $merge enabled.
+SET documentdb.enable_dollar_merge_on_agnostic_sources = off;
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{"aggregate":"existing","pipeline":[{"$set":{"flag_disabled":true}},{"$merge":"existing"}],"cursor":{}}',
+    4294967294);
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{"aggregate":1,"pipeline":[{"$documents":[{"_id":9}]},{"$merge":"disabled_target"}],"cursor":{}}',
+    4294967294);
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{"aggregate":"missing","pipeline":[{"$merge":"disabled_target"}],"cursor":{}}',
+    4294967294);
+SELECT count(*) = 0 AS target_not_created FROM documentdb_api_catalog.collections
+WHERE database_name = 'documents_merge_db' AND collection_name = 'disabled_target';
+SELECT bool_and(document @@ '{"flag_disabled":true}') AS collection_merge_still_enabled
+FROM documentdb_api.collection('documents_merge_db', 'existing');
+RESET documentdb.enable_dollar_merge_on_agnostic_sources;
+SELECT cursorpage FROM documentdb_api.aggregate_cursor_first_page(
+    'documents_merge_db',
+    '{"aggregate":1,"pipeline":[{"$documents":[{"_id":9}]},{"$merge":"disabled_target"}],"cursor":{}}',
+    4294967294);
+SELECT document FROM documentdb_api.collection('documents_merge_db', 'disabled_target');
+SET documentdb.enableNativeColocation = false;

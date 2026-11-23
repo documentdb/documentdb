@@ -36,6 +36,7 @@
 #include <catalog/pg_aggregate.h>
 #include <catalog/pg_operator.h>
 #include <catalog/pg_class.h>
+#include <optimizer/cost.h>
 #include <parser/parsetree.h>
 #include <utils/array.h>
 #include <utils/builtins.h>
@@ -51,6 +52,7 @@
 #include "io/bson_core.h"
 #include "types/decimal128.h"
 #include "metadata/metadata_cache.h"
+#include "opclass/bson_index_support.h"
 #include "query/query_operator.h"
 #include "planner/documentdb_planner.h"
 #include "planner/mongo_query_operator.h"
@@ -1999,7 +2001,8 @@ ParseAggregationQueryAndLookupCollection(text *database, pgbson *aggregationSpec
 			{
 				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								errmsg(
-									"collation is not supported in the aggregate command yet.")));
+									"Collation support is disabled. "
+									"Enable it to use 'aggregate.collation'.")));
 			}
 		}
 		else if (setStatementTimeout &&
@@ -2399,7 +2402,8 @@ ParseFindQuery(pgbson *findSpec, QueryData *queryData,
 					{
 						ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 										errmsg(
-											"collation is not supported in the find command yet.")));
+											"Collation support is disabled. "
+											"Enable it to use 'find.collation'.")));
 					}
 					continue;
 				}
@@ -3233,7 +3237,8 @@ GenerateCountQuery(text *databaseDatum, pgbson *countSpec, bool setStatementTime
 			{
 				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								errmsg(
-									"collation is not supported in the count command yet.")));
+									"Collation support is disabled. "
+									"Enable it to use 'count.collation'.")));
 			}
 		}
 		else if (StringViewEqualsCString(&keyView, "$db"))
@@ -3462,8 +3467,8 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 		else if (StringViewEqualsCString(&keyView, "collation"))
 		{
 			ReportFeatureUsage(FEATURE_COLLATION);
-			if (EnableCollation &&
-				IsClusterVersionAtleast(DocDB_V1, 1, 0))
+			bool isCollationSchemaSupported = IsClusterVersionAtleast(DocDB_V1, 1, 0);
+			if (EnableCollation && isCollationSchemaSupported)
 			{
 				if (EnsureTopLevelFieldIsDocumentNullOrEmptyOk(
 						"collation", &distinctIter))
@@ -3474,9 +3479,17 @@ GenerateDistinctQuery(text *databaseDatum, pgbson *distinctSpec, bool setStateme
 			}
 			else if (!SkipFailOnCollation)
 			{
+				if (!isCollationSchemaSupported)
+				{
+					ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+									errmsg(
+										"collation is not supported in the distinct command yet.")));
+				}
+
 				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								errmsg(
-									"collation is not supported in the distinct command yet.")));
+									"Collation support is disabled. "
+									"Enable it to use 'distinct.collation'.")));
 			}
 		}
 		else if (StringViewEqualsCString(&keyView, "$db"))
@@ -9924,6 +9937,7 @@ GenerateBaseTableQueryAndGetStages(text *databaseDatum, const
 	query->querySource = QSRC_ORIGINAL;
 	query->canSetTag = true;
 	context->collectionNameView = *collectionNameView;
+	context->hasIndependentSource = false;
 	context->namespaceName = CreateNamespaceName(databaseDatum,
 												 collectionNameView);
 	Datum collectionNameDatum = PointerGetDatum(
@@ -10077,6 +10091,19 @@ GenerateBaseTableQueryAndGetStages(text *databaseDatum, const
 
 		/* add the filter to WHERE */
 		query->jointree->quals = (Node *) zeroShardKeyFilter;
+	}
+
+	if (collection != NULL &&
+		enable_indexonlyscan &&
+		IsNativePlannerIndexOnlyScanEnabled())
+	{
+		Oid indexOptScanFunctionOid = BsonIndexOptScanFunctionOid();
+		FuncExpr *indexOptScanExpr = makeFuncExpr(
+			indexOptScanFunctionOid, BOOLOID, list_make1(documentEntry),
+			InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+		List *quals = make_ands_implicit((Expr *) query->jointree->quals);
+		quals = lappend(quals, indexOptScanExpr);
+		query->jointree->quals = (Node *) make_ands_explicit(quals);
 	}
 
 	/* Before applying the view stages, apply the hint on the base table */
@@ -10699,6 +10726,12 @@ IsSampleScanEligibleJoinTree(Node *node)
 		if (EnableSampleScanPushdownForDynamicCursor &&
 			IsA(qual, FuncExpr) &&
 			((FuncExpr *) qual)->funcid == ApiCursorTrackerFunctionId())
+		{
+			continue;
+		}
+
+		if (IsA(qual, FuncExpr) &&
+			((FuncExpr *) qual)->funcid == BsonIndexOptScanFunctionOid())
 		{
 			continue;
 		}

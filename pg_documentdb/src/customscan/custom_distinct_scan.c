@@ -128,9 +128,7 @@ static bool HasOnlySafeGroupFirstAggrefs(PlannerInfo *root,
 										 bool *hasOrderBy);
 
 extern bool EnableDistinctCustomScan;
-extern bool EnableDistinctScanForGroupFirst;
 extern bool EnableDistinctScanForOrderedGroupFirst;
-extern bool EnableGroupByDistinctScan;
 extern bool EnableDistinctSkipScanOnKey;
 
 /* --------------------------------------------------------- */
@@ -232,14 +230,12 @@ AddDistinctCustomScanWrapper(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 							root->distinct_pathkeys != NIL &&
 							list_length(root->distinct_pathkeys) == list_length(
 		root->query_pathkeys);
-	bool groupScenario = EnableGroupByDistinctScan &&
-						 root->group_pathkeys != NIL && root->query_pathkeys != NIL &&
+	bool groupScenario = root->group_pathkeys != NIL && root->query_pathkeys != NIL &&
 						 list_length(root->group_pathkeys) == list_length(
 		root->query_pathkeys) &&
 						 !contain_aggs_of_level((Node *) root->parse->targetList, 0);
 	bool hasOrderedGroupFirst = false;
-	bool groupFirstScenario = EnableDistinctScanForGroupFirst &&
-							  root->group_pathkeys != NIL &&
+	bool groupFirstScenario = root->group_pathkeys != NIL &&
 							  root->parse->havingQual == NULL &&
 							  HasOnlySafeGroupFirstAggrefs(root,
 														   &hasOrderedGroupFirst);

@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/postgres/mod.rs
  *
  *-------------------------------------------------------------------------
@@ -14,7 +15,10 @@ mod query_catalog;
 mod scoped_transaction;
 mod transaction;
 
-pub use data_client::{privileged_connection_status_request, PgDataClient};
+pub use data_client::{
+    bounded_by_deadline, privileged_connection_status_request, resolve_connection_source,
+    run_query_with_default_source, PgDataClient,
+};
 pub use document::PgDocument;
 pub use documentdb_data_client::{remap_error, DocumentDBDataClient};
 pub use query_catalog::{create_query_catalog, QueryCatalog};

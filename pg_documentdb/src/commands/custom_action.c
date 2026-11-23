@@ -93,8 +93,16 @@ documentdb_custom_action(PG_FUNCTION_ARGS)
 	CustomActionFunction function = FindCustomAction(args.actionName);
 	if (function == NULL)
 	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTFOUND),
 						errmsg("customAction is not supported")));
+	}
+
+	if (args.databaseName.string == NULL ||
+		!StringViewEqualsCString(&args.databaseName, "admin"))
+	{
+		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
+						errmsg(
+							"customAction may only be run against the admin database")));
 	}
 
 	pgbson *response = function(spec);
@@ -170,13 +178,5 @@ ParseCustomActionSpec(pgbson *spec, CustomActionArgs *args)
 	{
 		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_FAILEDTOPARSE),
 						errmsg("customAction is required")));
-	}
-
-	if (args->databaseName.string == NULL ||
-		!StringViewEqualsCString(&args->databaseName, "admin"))
-	{
-		ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_BADVALUE),
-						errmsg(
-							"customAction may only be run against the admin database")));
 	}
 }

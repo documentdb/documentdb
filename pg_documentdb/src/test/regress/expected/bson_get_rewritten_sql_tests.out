@@ -18,11 +18,11 @@ SELECT documentdb_api.insert_one('db', 'rewrite_sql_test', '{ "_id": 2, "country
 -- Test aggregate with $match
 SELECT documentdb_api_internal.bson_get_rewritten_sql('db',
   '{ "aggregate": "rewrite_sql_test", "pipeline": [{ "$match": { "country": "Mexico" } }], "cursor": {} }'::documentdb_core.bson);
-                                         bson_get_rewritten_sql                                          
----------------------------------------------------------------------------------------------------------
-  SELECT document                                                                                       +
-    FROM documentdb_data.documents_1984000 collection                                                   +
-   WHERE ((document #= '{ "country" : "Mexico" }'::bsonquery) AND (shard_key_value = '1984000'::bigint))
+                                                           bson_get_rewritten_sql                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT document                                                                                                                          +
+    FROM documentdb_data.documents_1984000 collection                                                                                      +
+   WHERE ((document #= '{ "country" : "Mexico" }'::bsonquery) AND ((shard_key_value = '1984000'::bigint) AND bson_indexopt_scan(document)))
 (1 row)
 
 -- Test aggregate with $project and $limit
@@ -32,29 +32,29 @@ SELECT documentdb_api_internal.bson_get_rewritten_sql('db',
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------
   SELECT bson_dollar_project(document, '{ "country" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) AS document+
     FROM documentdb_data.documents_1984000 collection                                                                                                                    +
-   WHERE (shard_key_value = '1984000'::bigint)                                                                                                                           +
+   WHERE ((shard_key_value = '1984000'::bigint) AND bson_indexopt_scan(document))                                                                                        +
   LIMIT '10'::bigint
 (1 row)
 
 -- Test find with filter
 SELECT documentdb_api_internal.bson_get_rewritten_sql('db',
   '{ "find": "rewrite_sql_test", "filter": { "country": "Mexico" } }'::documentdb_core.bson);
-                                         bson_get_rewritten_sql                                          
----------------------------------------------------------------------------------------------------------
-  SELECT document                                                                                       +
-    FROM documentdb_data.documents_1984000 collection                                                   +
-   WHERE ((document #= '{ "country" : "Mexico" }'::bsonquery) AND (shard_key_value = '1984000'::bigint))
+                                                           bson_get_rewritten_sql                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT document                                                                                                                          +
+    FROM documentdb_data.documents_1984000 collection                                                                                      +
+   WHERE ((document #= '{ "country" : "Mexico" }'::bsonquery) AND ((shard_key_value = '1984000'::bigint) AND bson_indexopt_scan(document)))
 (1 row)
 
 -- Test find with filter, projection, sort, skip, limit
 SELECT documentdb_api_internal.bson_get_rewritten_sql('db',
   '{ "find": "rewrite_sql_test", "filter": { "_id": { "$gt": 0 } }, "projection": { "country": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }'::documentdb_core.bson);
-                                                                                                                                                      bson_get_rewritten_sql                                                                                                                                                       
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-  SELECT bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "0" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) AS document                                                                                            +
-    FROM documentdb_data.documents_1984000 collection                                                                                                                                                                                                                                                                             +
-   WHERE ((document #> '{ "_id" : { "$numberInt" : "0" } }'::bsonquery) AND ((object_id > '{ "" : { "$numberInt" : "0" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson)) AND (shard_key_value = '1984000'::bigint) AND bson_dollar_fullscan(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))+
-   ORDER BY (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST                                                                                                                                                                                                                                      +
+                                                                                                                                                                        bson_get_rewritten_sql                                                                                                                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "0" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) AS document                                                                                                                               +
+    FROM documentdb_data.documents_1984000 collection                                                                                                                                                                                                                                                                                                                +
+   WHERE ((document #> '{ "_id" : { "$numberInt" : "0" } }'::bsonquery) AND ((object_id > '{ "" : { "$numberInt" : "0" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson)) AND ((shard_key_value = '1984000'::bigint) AND bson_indexopt_scan(document)) AND bson_dollar_fullscan(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))+
+   ORDER BY (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST                                                                                                                                                                                                                                                                         +
   LIMIT '5'::bigint
 (1 row)
 
@@ -70,23 +70,23 @@ SELECT documentdb_api_internal.bson_get_rewritten_sql('db',
 -- Test count with query filter
 SELECT documentdb_api_internal.bson_get_rewritten_sql('db',
   '{ "count": "rewrite_sql_test", "query": { "country": "Mexico" } }'::documentdb_core.bson);
-                                                               bson_get_rewritten_sql                                                               
-----------------------------------------------------------------------------------------------------------------------------------------------------
-  SELECT bsoncommandcount(1) AS document                                                                                                           +
-    FROM ( SELECT collection.document                                                                                                              +
-            FROM documentdb_data.documents_1984000 collection                                                                                      +
-           WHERE ((collection.document #= '{ "country" : "Mexico" }'::bsonquery) AND (collection.shard_key_value = '1984000'::bigint))) agg_stage_1
+                                                                                      bson_get_rewritten_sql                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT bsoncommandcount(1) AS document                                                                                                                                                         +
+    FROM ( SELECT collection.document                                                                                                                                                            +
+            FROM documentdb_data.documents_1984000 collection                                                                                                                                    +
+           WHERE ((collection.document #= '{ "country" : "Mexico" }'::bsonquery) AND ((collection.shard_key_value = '1984000'::bigint) AND bson_indexopt_scan(collection.document)))) agg_stage_1
 (1 row)
 
 -- Test distinct
 SELECT documentdb_api_internal.bson_get_rewritten_sql('db',
   '{ "distinct": "rewrite_sql_test", "key": "country" }'::documentdb_core.bson);
-                                                                                                                      bson_get_rewritten_sql                                                                                                                      
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-  SELECT bson_distinct_agg(document) AS document                                                                                                                                                                                                                 +
-    FROM ( SELECT DISTINCT bson_distinct_unwind(collection.document, 'country'::text) AS document                                                                                                                                                                +
-            FROM documentdb_data.documents_1984000 collection                                                                                                                                                                                                    +
-           WHERE ((collection.shard_key_value = '1984000'::bigint) AND bson_dollar_fullscan(collection.document, '{ "country" : { "$numberInt" : "1" } }'::bson) AND bson_dollar_distinct_exists(collection.document, '{ "country" : true }'::bson))) agg_stage_0
+                                                                                                                                            bson_get_rewritten_sql                                                                                                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT bson_distinct_agg(document) AS document                                                                                                                                                                                                                                                             +
+    FROM ( SELECT DISTINCT bson_distinct_unwind(collection.document, 'country'::text) AS document                                                                                                                                                                                                            +
+            FROM documentdb_data.documents_1984000 collection                                                                                                                                                                                                                                                +
+           WHERE ((collection.shard_key_value = '1984000'::bigint) AND bson_indexopt_scan(collection.document) AND bson_dollar_fullscan(collection.document, '{ "country" : { "$numberInt" : "1" } }'::bson) AND bson_dollar_distinct_exists(collection.document, '{ "country" : true }'::bson))) agg_stage_0
 (1 row)
 
 -- Test error on unsupported command type

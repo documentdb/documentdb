@@ -30,7 +30,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "a_coll_guc_off_idx", "collation" : { "locale" : "en", "strength" : 1 } }:createIndex.collation is not implemented yet
+ERROR:  Error in specification { "key" : { "a" : 1 }, "name" : "a_coll_guc_off_idx", "collation" : { "locale" : "en", "strength" : 1 } }:Collation support for indexes is disabled. Enable it to use 'createIndexes.indexes.collation'.
 SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 -- unique ordered index with collation should fail
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
@@ -46,7 +46,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
   }',
   TRUE
 );
-ERROR:  Collation is not yet supported for unique indexes
+ERROR:  Collation support for unique indexes is disabled. Enable it to use 'createIndexes.indexes.collation'.
 -- non-ordered index with collation should fail
 SET documentdb.defaultUseCompositeOpClass TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently(
@@ -260,9 +260,9 @@ ERROR:  Collation specification is missing the required 'locale' field.
 -- Omitted forms do not bypass the update collation feature gate.
 SET documentdb_core.enableCollation TO off;
 SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": null } ] }');
-ERROR:  BSON field 'update.updates.collation' is not yet supported
+ERROR:  Collation support is disabled. Enable it to use 'update.updates.collation'.
 SELECT documentdb_api.update('collation_basic_db', '{ "update": "coll_null_empty", "updates": [ { "q": { "s": "a" }, "u": { "$set": { "selected": 1 } }, "collation": {} } ] }');
-ERROR:  BSON field 'update.updates.collation' is not yet supported
+ERROR:  Collation support is disabled. Enable it to use 'update.updates.collation'.
 SET documentdb_core.enableCollation TO on;
 -- Strength conversion preserves BSON numeric types without narrowing overflow.
 SELECT document FROM bson_aggregation_find('collation_basic_db', '{ "find": "coll_null_empty", "filter": { "s": "a" }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": { "$numberLong": "1" } } }');

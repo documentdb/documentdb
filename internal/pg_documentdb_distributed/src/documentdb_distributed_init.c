@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/documentdb_distributed_init.c
  *
@@ -11,6 +12,7 @@
 #include <utils/guc.h>
 
 #include "documentdb_distributed_init.h"
+#include "metadata/documentdb_distributed_extension_version.h"
 
 
 /* --------------------------------------------------------- */
@@ -35,11 +37,6 @@ bool EnableRebalancerRawProgress = DEFAULT_ENABLE_REBALANCER_RAW_PROGRESS;
 char *ClusterAdminRole = DEFAULT_CLUSTER_ADMIN_ROLE;
 
 /* FeatureFlag */
-/* Added in v0.114, enabled in v0.114, remove after v1.1 */
-#define DEFAULT_ENABLE_MOVE_COLLECTION true
-bool EnableMoveCollection = DEFAULT_ENABLE_MOVE_COLLECTION;
-
-/* FeatureFlag */
 /* Added in v1.2, Pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_NON_BLOCKING_UNIQUE_INDEX_BUILD_ON_MULTI_NODE false
 bool EnableNonBlockingUniqueIndexBuildOnMultiNode =
@@ -57,6 +54,13 @@ bool AddNodePortToNodeName = DEFAULT_ADD_NODE_PORT_TO_NODE_NAME;
 /* --------------------------------------------------------- */
 /* Top level exports */
 /* --------------------------------------------------------- */
+
+const char *
+GetDocumentDBDistributedBinaryVersion(void)
+{
+	return EXTENSION_VERSION_STR;
+}
+
 
 /*
  * Initializes core configurations pertaining to documentdb distributed.
@@ -84,13 +88,6 @@ InitDocumentDBDistributedConfigurations(const char *prefix)
 			"Determines whether rebalancer status includes the raw per-shard move "
 			"progress and whether that progress is emitted to telemetry."),
 		NULL, &EnableRebalancerRawProgress, DEFAULT_ENABLE_REBALANCER_RAW_PROGRESS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_move_collection", prefix),
-		gettext_noop(
-			"Determines whether or not to enable move collection."),
-		NULL, &EnableMoveCollection, DEFAULT_ENABLE_MOVE_COLLECTION,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -3,13 +3,6 @@ SET documentdb.next_collection_id TO 6960;
 SET documentdb.next_collection_index_id TO 6960;
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
 
--- enableGroupByDistinctScan and enableDistinctScanForGroupFirst are enabled by
--- default starting in v116. Pin them off here so this suite keeps exercising the
--- non-distinct-scan (index-only-scan gated) plan shapes. Remove these pins when
--- the flags are retired.
-SET documentdb.enableGroupByDistinctScan TO off;
-SET documentdb.enableDistinctScanForGroupFirst TO off;
-
 SET documentdb.enableExtendedExplainPlans TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 
@@ -602,15 +595,6 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 SELECT count(*) * 0 AS reset FROM documentdb_api_internal.command_feature_counter_stats(true);
 SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }');
 SELECT feature_name, usage_count FROM documentdb_api_internal.command_feature_counter_stats(false) WHERE feature_name = 'index_only_scan_for_find_project_candidate';
-
--- With both the feature and the candidate tracking switch off we neither perform
--- the index-only scan nor record the candidate (the prior fully-guarded behavior).
-SET documentdb.track_index_only_scan_find_candidate TO off;
-SELECT count(*) * 0 AS reset FROM documentdb_api_internal.command_feature_counter_stats(true);
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }')$$, p_ignore_heap_fetches => true);
-SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }');
-SELECT feature_name, usage_count FROM documentdb_api_internal.command_feature_counter_stats(false) WHERE feature_name = 'index_only_scan_for_find_project_candidate';
-RESET documentdb.track_index_only_scan_find_candidate;
 
 -- With the feature enabled we perform the Index Only Scan and do not record the
 -- candidate (it is only meant to flag accounts while the feature is disabled).

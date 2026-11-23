@@ -5,7 +5,15 @@
  *
  * src/commands/current_op.c
  *
- * Implementation of the current_op command.
+ * The command and aggregation entry points share CurrentOpAggregateCore:
+ * collect and enrich activity on each node, merge the BSON replies, then add
+ * coordinator-owned queued/failed index builds. Relation OIDs, locks, and
+ * progress views must be resolved on the node owning the activity.
+ *
+ * Backend admission, logical command identity, and progress are independent:
+ * admitting a backend does not supply the namespace/index metadata needed
+ * for result filtering. In particular, background unique validation runs in
+ * the job session after physical creation has finished on a helper connection.
  *-------------------------------------------------------------------------
  */
 #include <math.h>
@@ -14,6 +22,7 @@
 #include <fmgr.h>
 #include <funcapi.h>
 #include <utils/builtins.h>
+#include <utils/lsyscache.h>
 #include <utils/tuplestore.h>
 #include <catalog/namespace.h>
 #include <catalog/pg_am_d.h>
@@ -38,8 +47,10 @@
 
 
 /*
- * Options to the CurrentOp command. Mirrors the superset
- * of the aggregation stage and command.
+ * Options shared by the aggregation stage and command adapter. allUsers and
+ * idleCursors are parsed but do not implement user filtering or separate cursor
+ * enumeration here. idleConnections and idleSessions jointly control whether
+ * non-active activity is retained; they do not select separate session types.
  */
 typedef struct
 {
@@ -155,6 +166,9 @@ typedef struct
 
 	/* Index spec for running create Index */
 	IndexSpec *indexSpec;
+
+	/* Index reported by pg_stat_progress_create_index. */
+	Oid progressIndexOid;
 } SingleWorkerActivity;
 
 PG_FUNCTION_INFO_V1(command_current_op);
@@ -183,6 +197,8 @@ static const char * WriteMappedCommand(const char *query,
 									   int mappingCount);
 static void DetectMongoCollection(SingleWorkerActivity *activity);
 static IndexSpec * GetIndexSpecForShardedCreateIndexQuery(SingleWorkerActivity *activity);
+static IndexSpec * GetIndexSpecForIndexName(const char *relationName,
+											SingleWorkerActivity *activity);
 static void AddIndexBuilds(TupleDesc descriptor, Tuplestorestate *tupleStore);
 static const char * WriteIndexBuildProgressAndGetMessage(SingleWorkerActivity *activity,
 														 pgbson_writer *writer);
@@ -291,6 +307,12 @@ const char *FirstLockingPidQuery =
 	"SELECT array_agg( (($2 / " SINGLE_NODE_ID_STR ") * " SINGLE_NODE_ID_STR
 	") + pid::integer) FROM unnest(pg_blocking_pids($1::integer)) pid LIMIT 1";
 
+/*
+ * Normalize vacuum, analyze, and full-vacuum progress for a local PID. Preserve
+ * the existing output name num_dead_tuples across the PG17 counter rename.
+ * The selected row determines the current maintenance phase, which can differ
+ * from the initial SQL classification while VACUUM ANALYZE advances.
+ */
 static const char *MaintenanceProgressQuery =
 	"SELECT maintenance_type, phase, blocks_done, blocks_total,"
 	" stats_computed, stats_total, num_dead_tuples, index_vacuum_count FROM ("
@@ -346,6 +368,11 @@ command_current_op(PG_FUNCTION_ARGS)
 }
 
 
+/*
+ * Apply command predicates after collecting operation documents. An active/ns
+ * predicate filters the response, not the backend admission query. COALESCE
+ * preserves an empty inprog array when no operation matches.
+ */
 Datum
 current_op(pgbson *commandSpec)
 {
@@ -424,7 +451,9 @@ command_current_op_worker(PG_FUNCTION_ARGS)
 
 
 /*
- * Core implementation logic for currentOp on the query Coordinator.
+ * Collect live activity locally or across nodes before adding synthetic queue
+ * entries once on the coordinator. localOps changes activity collection only;
+ * it does not omit the coordinator's queued and failed index-build records.
  */
 static void
 CurrentOpAggregateCore(pgbson *spec, TupleDesc descriptor,
@@ -459,7 +488,8 @@ CurrentOpAggregateCore(pgbson *spec, TupleDesc descriptor,
 
 
 /*
- * Populates the CurrentOp options based on the command spec.
+ * Parse boolean-like options without implying full support for their semantics.
+ * backtrace is accepted and ignored; see CurrentOpOptions for parsed-only fields.
  */
 static void
 PopulateCurrentOpOptions(pgbson *spec, CurrentOpOptions *options)
@@ -502,7 +532,10 @@ PopulateCurrentOpOptions(pgbson *spec, CurrentOpOptions *options)
 
 
 /*
- * Logic that builds the currentOp responses (only runs on query coordinator)
+ * Append worker activities without deduplicating related job/helper/parallel
+ * processes or promising row order. Consumers must select the desired identity
+ * and progress phase rather than assuming the first active row is their build.
+ * Worker errors fail the request instead of returning a successful partial view.
  */
 static void
 MergeWorkerBsons(List *workerBsons, TupleDesc descriptor, Tuplestorestate *tupleStore)
@@ -563,7 +596,10 @@ MergeWorkerBsons(List *workerBsons, TupleDesc descriptor, Tuplestorestate *tuple
 
 
 /*
- * Core data gathering logic in the worker nodes (executes on all workers + coordinator)
+ * Enrich activity before sending it to the coordinator: progress and relation
+ * catalogs are node-local. Omit version-refresh traffic and, unless either idle
+ * option is enabled, non-active sessions. Activity and progress are separate
+ * samples, so an operation may finish before its counters are read.
  */
 static pgbson *
 CurrentOpWorkerCore(void *specPointer)
@@ -618,12 +654,13 @@ CurrentOpWorkerCore(void *specPointer)
 
 
 /*
- * Extracts necessary information in the worker from pg_stat_activity.
- * pg_stat_activity has a PID, we also get the opid, global_pid, lock info,
- * running information, and join it with pg_locks to get any tables being
- * accessed by this query.
- * Each activity is parsed into a SingleWorkerActivity struct to be processed
- * later in the WriteOneActivityToDocument function
+ * Collect local activity, one candidate collection from its locks, and index
+ * progress. The lock lookup is not an enumeration of every collection touched.
+ *
+ * SELECT positions are a contract with the numbered SPI_getbinval calls below:
+ * append selectors and extract them in matching attribute order. opid combines
+ * global_pid with query-start microseconds; the PID alone identifies a backend,
+ * not a particular query executed by a reused session.
  */
 static List *
 WorkerGetBaseActivities(void)
@@ -648,7 +685,8 @@ WorkerGetBaseActivities(void)
 						   " pa.groupid AS shard_id, "
 						   " pa.backend_type AS backend_type, "
 						   " pa.leader_pid::bigint AS leaderPid, "
-						   " index_progress.pid IS NOT NULL AS has_index_build_progress "
+						   " index_progress.pid IS NOT NULL AS has_index_build_progress, "
+						   " index_progress.index_relid AS progress_index_oid "
 						   " FROM (");
 
 	appendStringInfoString(queryInfo, DistributedOperationsQuery);
@@ -671,6 +709,13 @@ WorkerGetBaseActivities(void)
 					 " WHERE (NOT query LIKE '%%%s.current_op%%') ",
 					 ApiToApiInternalSchemaName);
 
+	/*
+	 * Keep background-build admission on the existing application-name path:
+	 * the job sets CurrentOpApplicationName around its core work. Admitting any
+	 * backend merely because it has index progress would broaden this filter
+	 * to unrelated indexes, and still would not recover logical command identity.
+	 * Automatic maintenance instead requires a current-database data relation.
+	 */
 	if (CurrentOpApplicationName != NULL &&
 		strlen(CurrentOpApplicationName) > 0)
 	{
@@ -685,7 +730,10 @@ WorkerGetBaseActivities(void)
 							 DistributedApplicationNamePrefix);
 		}
 
-		appendStringInfoString(queryInfo, ") ");
+		appendStringInfoString(queryInfo,
+							   " OR (pa.backend_type = 'autovacuum worker'"
+							   " AND pa.datname = current_database()"
+							   " AND collectionRawName IS NOT NULL)) ");
 	}
 
 	List *workerActivities = NIL;
@@ -695,6 +743,8 @@ WorkerGetBaseActivities(void)
 		.cursorOptions = 0,
 		.params = NULL
 	};
+
+	/* Activities and retained strings must survive cursor fetches and SPI_finish. */
 	MemoryContext priorMemoryContext = CurrentMemoryContext;
 	SPI_connect();
 
@@ -875,6 +925,23 @@ WorkerGetBaseActivities(void)
 			activity->processedBuildIndexStatProgress = DatumGetBool(resultDatum);
 		}
 
+		/* progress_index_oid (Attr 15) */
+		Datum progressIndexDatum = SPI_getbinval(SPI_tuptable->vals[0],
+												 SPI_tuptable->tupdesc, 15, &isNull);
+		Oid progressIndexOid = isNull ? InvalidOid : DatumGetObjectId(progressIndexDatum);
+
+		/*
+		 * Interpret progress OIDs locally under the current-database assumption.
+		 * SQL catalog scans can hide physical indexes, so use the native lookup
+		 * and the cached data-namespace accessor instead of another catalog join.
+		 */
+		if (OidIsValid(progressIndexOid) &&
+			get_rel_namespace(progressIndexOid) != ApiDataNamespaceOid())
+		{
+			progressIndexOid = InvalidOid;
+		}
+		activity->progressIndexOid = progressIndexOid;
+
 		spiContext = MemoryContextSwitchTo(priorMemoryContext);
 		workerActivities = lappend(workerActivities, activity);
 		MemoryContextSwitchTo(spiContext);
@@ -888,9 +955,14 @@ WorkerGetBaseActivities(void)
 
 
 /*
- * Given an activity on a worker node via SingleWorkerActivity,
- * writes the activity to the target pgbson_writer. The activity
- * is written in a format compatible with the currentOp command output.
+ * Resolve logical identity before command classification. Namespace, command,
+ * and running time describe active queries; idle rows report time since state
+ * change instead. currentOpTime derives from query start, not sampling time.
+ *
+ * op_prefix is the global backend PID used for blocker correlation, whereas
+ * opid also identifies the query start. leaderOpPattern remains a local leader
+ * PID, not a complete opid. Index progress takes precedence over maintenance
+ * progress, and raw SQL is emitted only when CurrentOpAddSqlCommand is enabled.
  */
 static void
 WriteOneActivityToDocument(SingleWorkerActivity *workerActivity,
@@ -1084,6 +1156,11 @@ DetectApiInternalSchemaCommand(const char *topLevelQuery, const char *schemaName
 }
 
 
+/*
+ * Map a recognized function prefix to its command key, value kind, and op type.
+ * The value kind preserves collection/database names versus numeric sentinels;
+ * this is prefix recognition, not general SQL parsing.
+ */
 static const char *
 WriteMappedCommand(const char *query, SingleWorkerActivity *activity,
 				   pgbson_writer *commandWriter,
@@ -1143,6 +1220,9 @@ WriteMappedCommand(const char *query, SingleWorkerActivity *activity,
  * writer.
  * Note that beyond standard commands, we add a "workerCommand" type for internal
  * queries e.g. the actual CREATE INDEX or ALTER TABLE, or the update_one calls.
+ *
+ * Preserve precedence: recognized EXPLAIN/API commands win over physical SQL
+ * and the progress-based fallback. A progress row must not relabel collMod.
  * TODO: Can we figure out a way to do a binary search for this code?
  */
 static const char *
@@ -1199,11 +1279,14 @@ WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 		}
 	}
 
+	const char *compactCommandName =
+		activity->backendType != NULL &&
+		strcmp(activity->backendType, "autovacuum worker") == 0 ?
+		"autocompact" : "compact";
+
 	if (strstr(query, "CREATE INDEX") != NULL ||
 		strstr(query, "CREATE  INDEX") != NULL)
 	{
-		PgbsonWriterAppendUtf8(commandWriter, "createIndexes", 13,
-							   activity->processedMongoCollection);
 		WriteIndexSpec(activity, commandWriter);
 		activity->processedBuildIndexStatProgress = true;
 		return "workerCommand";
@@ -1218,10 +1301,8 @@ WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 	else if (strstr(query, "ALTER TABLE") != NULL &&
 			 strstr(query, "ADD CONSTRAINT") != NULL)
 	{
-		PgbsonWriterAppendUtf8(commandWriter, "createIndexes", 13,
-							   activity->processedMongoCollection);
-		PgbsonWriterAppendBool(commandWriter, "unique", 6, true);
 		WriteIndexSpec(activity, commandWriter);
+		PgbsonWriterAppendBool(commandWriter, "unique", 6, true);
 		activity->processedBuildIndexStatProgress = true;
 		return "workerCommand";
 	}
@@ -1234,7 +1315,8 @@ WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 	}
 	else if (strstr(query, "VACUUM") != NULL)
 	{
-		PgbsonWriterAppendUtf8(commandWriter, "compact", 7,
+		PgbsonWriterAppendUtf8(commandWriter, compactCommandName,
+							   strlen(compactCommandName),
 							   activity->processedMongoCollection);
 		if (strstr(query, "VACUUM FULL") != NULL)
 		{
@@ -1254,7 +1336,8 @@ WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 	}
 	else if (strstr(query, "ANALYZE") != NULL)
 	{
-		PgbsonWriterAppendUtf8(commandWriter, "compact", 7,
+		PgbsonWriterAppendUtf8(commandWriter, compactCommandName,
+							   strlen(compactCommandName),
 							   activity->processedMongoCollection);
 		PgbsonWriterAppendUtf8(commandWriter, "mode", 4, "updateStats");
 		activity->maintenanceProgressType = MAINTENANCE_PROGRESS_ANALYZE;
@@ -1262,20 +1345,40 @@ WriteCommandAndGetQueryType(const char *query, SingleWorkerActivity *activity,
 	}
 	else
 	{
+		/*
+		 * Unique validation can leave the background job call as its query,
+		 * with no CREATE INDEX text. Require resolved index metadata as well as
+		 * progress so an arbitrary progress row is not a collection command.
+		 */
+		if (activity->processedBuildIndexStatProgress && activity->indexSpec != NULL)
+		{
+			WriteIndexSpec(activity, commandWriter);
+			return "workerCommand";
+		}
+
 		return "command";
 	}
 }
 
 
 /*
- * Looks at the "raw" Mongo collection and extracts the
- * actual Mongo database/collection.
+ * Resolve logical names from collection metadata, not from activity SQL.
+ * During background validation, the progress index can recover collection and
+ * index identity even when the lock-based relation lookup found nothing.
+ * A name alone is insufficient: the index must resolve through our metadata.
  */
 static void
 DetectMongoCollection(SingleWorkerActivity *activity)
 {
 	activity->processedMongoDatabase = "";
 	activity->processedMongoCollection = "";
+	if (OidIsValid(activity->progressIndexOid))
+	{
+		activity->indexSpec = GetIndexSpecForIndexName(get_rel_name(
+														   activity->progressIndexOid),
+													   activity);
+	}
+
 	if (activity->rawMongoTable == NULL &&
 		(strstr(activity->query, "CREATE INDEX") != NULL))
 	{
@@ -1358,6 +1461,19 @@ GetIndexSpecForShardedCreateIndexQuery(SingleWorkerActivity *activity)
 	}
 	char *relationName = text_to_cstring(DatumGetTextP(result));
 
+	return GetIndexSpecForIndexName(relationName, activity);
+}
+
+
+/*
+ * Share physical index-name decoding between helper-connection discovery and
+ * progress-index discovery. Names may include a shard suffix; a dropped relation
+ * can yield NULL. Do not require the logical index to be valid yet, since that
+ * is only recorded after the build and unique validation complete.
+ */
+static IndexSpec *
+GetIndexSpecForIndexName(const char *relationName, SingleWorkerActivity *activity)
+{
 	int indexId = 0;
 	int prefixLength = strlen(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT_PREFIX);
 
@@ -1401,8 +1517,10 @@ GetIndexSpecForShardedCreateIndexQuery(SingleWorkerActivity *activity)
 
 
 /*
- * Port from the current_op 1.8 SQL file - tracks the index build failures from background index
- * build status and updates the currentOp document for it.
+ * Add coordinator-owned queued/failed create-index records as inactive
+ * operations with index metadata and a status message. These are synthetic
+ * records, not the live in-progress build: they have neither a PID-derived opid
+ * nor progress counters and cannot substitute for observing unique validation.
  */
 static void
 AddIndexBuilds(TupleDesc descriptor, Tuplestorestate *tupleStore)
@@ -1671,8 +1789,12 @@ PhaseToUserMessage(const char *phaseString)
 
 
 /*
- * Gets the index progress data from pg_stat_progress_create_index and writes it out to the
- * "progress" document as well as builds a message for the top level currentOp.
+ * Collect progress for the global operation, not just one local PID: a build
+ * may use several helper connections. Preserve those records in progress.builds
+ * and translate their phases for both the array and the top-level message.
+ * Raw index-validation phases map to "Validating index.", not table-building
+ * phases. A fast-path validation can finish without publishing a table walk.
+ * Zero totals omit percentages rather than dividing by zero.
  * TODO: Remove citus dependency here.
  */
 static const char *
@@ -1780,6 +1902,13 @@ WriteIndexBuildProgressAndGetMessage(SingleWorkerActivity *activity,
 }
 
 
+/*
+ * Maintenance uses fields directly under progress, unlike progress.builds for
+ * indexes. Vacuum emits dead-item/index-vacuum counters; analyze emits extended
+ * statistics counters. Keep the existing capitalized Progress percentage key.
+ * If the operation has not published a phase, report waiting to start with the
+ * zero-initialized counters rather than inventing completed work.
+ */
 static const char *
 WriteMaintenanceProgressAndGetMessage(SingleWorkerActivity *activity,
 									  pgbson_writer *writer)
@@ -1901,7 +2030,10 @@ WriteMaintenanceProgressAndGetMessage(SingleWorkerActivity *activity,
 
 
 /*
- * Given an activity that's waiting on a lock, gets the process that currently holds that lock.
+ * Correlate local blocking PIDs with global op_prefix values. waitingForLock
+ * also covers Extension/LWLock waits that need not yield a blocker here.
+ * writeConflicts is the returned blocker-array length, not a cumulative count
+ * of conflicting writes; locking_op_prefixes is not a list of complete opids.
  */
 static void
 WriteGlobalPidOfLockingProcess(SingleWorkerActivity *activity, pgbson_writer *writer)
@@ -1959,7 +2091,10 @@ WriteGlobalPidOfLockingProcess(SingleWorkerActivity *activity, pgbson_writer *wr
 
 
 /*
- * Given an indexSpec, write the index detail
+ * Own the createIndexes field in both the full-spec and collection-only cases.
+ * Callers must not also append it: recovering a spec during progress reporting
+ * otherwise introduces duplicate BSON command fields. Keep the fallback for
+ * physical builds whose index metadata is temporarily unavailable.
  */
 static void
 WriteIndexSpec(SingleWorkerActivity *activity,
@@ -1967,6 +2102,8 @@ WriteIndexSpec(SingleWorkerActivity *activity,
 {
 	if (activity->indexSpec == NULL)
 	{
+		PgbsonWriterAppendUtf8(commandWriter, "createIndexes", 13,
+							   activity->processedMongoCollection);
 		return;
 	}
 	WriteIndexSpecAsCurrentOpCommand(commandWriter, activity->processedMongoDatabase,
@@ -1975,6 +2112,12 @@ WriteIndexSpec(SingleWorkerActivity *activity,
 }
 
 
+/*
+ * Adapt command syntax to aggregation options plus a separate result predicate.
+ * The command includes idle sessions and lets predicates such as active filter
+ * the finished documents. $all supplies allUsers; $ownOps is validated but its
+ * ownership semantics are not implemented here.
+ */
 static pgbson *
 BuildAggregateSpecFromCommandSpec(pgbson *commandSpec, pgbson **filterSpec)
 {

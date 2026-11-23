@@ -102,6 +102,7 @@ Oid BsonLessThanEqualMatchIndexFunctionId(void);
 Oid BsonRangeMatchFunctionId(void);
 Oid BsonRangeMatchOperatorOid(void);
 Oid BsonFullScanFunctionOid(void);
+Oid BsonIndexOptScanFunctionOid(void);
 Oid BsonDollarDistinctExistsFunctionOid(void);
 Oid BsonIndexHintFunctionOid(void);
 Oid BsonInMatchFunctionId(void);
@@ -513,6 +514,7 @@ Oid CatalogCollectionsTableId(void);
 /* CRUD functions */
 Oid UpdateBsonDocumentFunctionOid(void);
 Oid UpdateBsonDocumentWithDescriptionFunctionOid(void);
+Oid SchemaValidationAgainstUpdateFunctionOid(void);
 Oid BsonUpdateReturnedValueFunctionOid(void);
 Oid UpdateWorkerFunctionOid(void);
 Oid InsertWorkerFunctionOid(void);

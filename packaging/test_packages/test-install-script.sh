@@ -294,6 +294,10 @@ test_arguments() {
     expect_success "--help" env sh "${INSTALLER}" --help
     assert_has "--help prints usage" "Usage: install.sh [OPTIONS]"
     assert_has "--help documents the supported flags" "--accept-external-listen"
+    assert_has "--help documents --stable" "--stable                    Same as --version stable."
+    assert_has "--help names the default" "Release selection (default: the channel this"
+    expect_failure "empty release value" "--version requires a value" \
+        run_installer "${root}" --version ""
 
     local args
     while IFS='|' read -r name expected args; do
@@ -305,16 +309,35 @@ unknown option|Unknown option: --bogus|--bogus
 positional argument|Unexpected positional arguments|-- extra
 missing pg-major value|--pg-major requires a value|--pg-major
 missing release value|--version requires a value|--version
-stable release tag|--version must be stable or an RC such as|--version v0.117-0
-moving release name|--version must be stable or an RC such as|--version latest
-RC suffix|--version must be stable or an RC such as|--version v1.0-RC1x
-RC without minor|--version must be stable or an RC such as|--version v1-RC1
-RC non-numeric version|--version must be stable or an RC such as|--version v1garbage-RC1
-release path traversal|--version must be stable or an RC such as|--version ../latest
-RC zero|--version must be stable or an RC such as|--version 1.0-rc0
-RC leading zero|--version must be stable or an RC such as|--version 01.0-rc2
-RC of a patch release|--version must be stable or an RC such as|--version 1.0.1-rc2
-RC double tilde|--version must be stable or an RC such as|--version 1.0~~rc2
+pre-1.0 release tag|--version 0.117.0 is older than 1.0.0|--version v0.117-0
+pre-1.0 release|--version 0.117.0 is older than 1.0.0|--version 0.117.0
+pre-1.0 extension version|--version 0.117.0 is older than 1.0.0|--version 0.117-0
+pre-1.0 shorthand|--version 0.117.0 is older than 1.0.0|--version 0.117
+zero release|--version 0.0.0 is older than 1.0.0|--version 0.0.0
+channel name case|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version Latest
+tag with a dotted patch|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version v1.2.0
+tag without a patch|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version v1.2
+capital tag prefix|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version V1.2-0
+major only|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1
+four components|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1.2.0.0
+package revision|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1.2.0-1
+leading-zero minor|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1.02.0
+leading-zero patch|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1.2.00
+tilde patch|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1.2~0
+trailing separator|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1.2-
+underscore|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1.2_0
+RC suffix|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version v1.0-RC1x
+RC without minor|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version v1-RC1
+RC non-numeric version|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version v1garbage-RC1
+release path traversal|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version ../latest
+RC zero|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1.0-rc0
+RC leading zero|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 01.0-rc2
+RC of a patch release|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1.0.1-rc2
+RC double tilde|--version must be latest, stable, a release such as 1.2.0, or an RC such as|--version 1.0~~rc2
+--stable with latest|--stable selects the stable channel and cannot be combined with --version latest|--stable --version latest
+--stable with a release|--stable selects the stable channel and cannot be combined with --version 1.2.0|--version 1.2.0 --stable
+--stable with a tag|--stable selects the stable channel and cannot be combined with --version v1.2-0|--stable --version v1.2-0
+--stable with an RC|--stable selects the stable channel and cannot be combined with --version 1.0-rc2|--version 1.0-rc2 --stable
 missing admin-user value|--admin-user requires a value|--admin-user
 missing password-file value|--admin-password-file requires a value|--admin-password-file
 missing listen-port value|--listen-port requires a value|--listen-port
@@ -380,6 +403,18 @@ PORTS
         expect_success "--admin-user ${value}" \
             run_installer "${root}" --admin-user "${value}"
     done
+    # A configured host only reports status, so the name is never used.
+    local configured
+    configured="$(new_root ubuntu 24.04)"
+    write_state_file "${configured}" 18 setup.conf
+    installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES="${PACKAGES_18}"
+    expect_success "configured host ignores a reserved --admin-user" \
+        run_installer "${configured}" --admin-user root
+    installer_env
+    # --packages-only prints the name in its documentdb-setup next step.
+    expect_failure "--packages-only refuses a reserved --admin-user" \
+        "is reserved by PostgreSQL or DocumentDB" \
+        run_installer "${root}" --packages-only --admin-user root
 }
 
 test_release_selection() {
@@ -404,9 +439,12 @@ test_release_selection() {
                 expect_success "${id} ${arch} pg${pg} RC selection" \
                     run_installer "${root}" --version v1.0-RC1 --pg-major "${pg}"
                 assert_has "RC warning" "No RC maintenance or supported upgrades."
+                assert_has "RC plan names the RC" "Release:          1.0-rc1"$'\n'
+                assert_lacks "RC plan states no channel" "Updates:"
                 assert_has "RC URL" "releases/download/v1.0-RC1/SHA256SUMS"
-                assert_lacks "RC never subscribes to stable repository" "https://documentdb.io/"
-                assert_lacks "RC does not request stable package" "install -y documentdb-${pg}"
+                assert_has "RC records its origin" "/etc/documentdb/installer-release-candidate (mode 0644):"$'\n'"    1.0-rc1"
+                assert_lacks "RC never subscribes to a DocumentDB repository" "https://documentdb.io/"
+                assert_lacks "RC does not request a repository package" "install -y documentdb-${pg}"
                 assert_has "RC runs setup" "documentdb-setup --yes --pg-version ${pg}"
                 assert_no_mutation "RC dry run"
                 # A release that cannot be downloaded must leave no repository behind.
@@ -429,6 +467,7 @@ test_release_selection() {
     expect_success "explicit stable" run_installer "${root}" --version stable
     assert_has "stable transaction unchanged" "install -y documentdb-18"
     assert_lacks "stable never downloads RC" "v1.0-RC1"
+    assert_lacks "stable records no RC origin" "installer-release-candidate"
     rc_root="$(new_root ubuntu 24.04)"
     expect_success "RC as users type it" run_installer "${rc_root}" --version 1.0-rc2
     assert_has "1.0-rc2 downloads release v1.0-RC2" "releases/download/v1.0-RC2/SHA256SUMS"
@@ -471,15 +510,277 @@ test_release_selection() {
     root="$(new_root ubuntu 24.04)"
     mkdir -p "${root}/etc/documentdb"
     printf 'v1.0-RC1\n' > "${root}/etc/documentdb/installer-release-candidate"
-    for version in stable v1.0-RC1; do
+    for version in latest stable 1.2.0 v1.0-RC1; do
         expect_failure "${version} refuses recorded RC without packages or data" \
-            "cannot upgrade or adopt an RC" run_installer "${root}" --version "${version}"
+            "rerunning this installer, with any release selection, cannot upgrade or adopt an RC" \
+            run_installer "${root}" --version "${version}"
+    done
+    expect_failure "--stable refuses recorded RC" "cannot upgrade or adopt an RC" \
+        run_installer "${root}" --stable
+    expect_failure "default refuses recorded RC" "cannot upgrade or adopt an RC" \
+        run_installer "${root}"
+    local channel
+    for channel in stable latest; do
+        root="$(new_root ubuntu 24.04)"
+        printf 'deb [arch=amd64 signed-by=/usr/share/keyrings/documentdb-archive-keyring.gpg] https://documentdb.io/deb %s ubuntu24\n' \
+            "${channel}" > "${root}/etc/apt/sources.list.d/documentdb.list"
+        expect_failure "RC refuses preconfigured ${channel} repository" \
+            "RC installation requires a clean host without a DocumentDB repository" \
+            run_installer "${root}" --version v1.0-RC1
+    done
+}
+
+# --------------------------------------------------------------------------
+# The latest and stable channels, and pinned GA releases.
+# --------------------------------------------------------------------------
+test_release_channels() {
+    section "release channels"
+    local root args id upgrade
+    local apt_prefix='deb [arch=amd64 signed-by=/usr/share/keyrings/documentdb-archive-keyring.gpg] https://documentdb.io/deb'
+    for args in "" "--version latest"; do
+        root="$(new_root ubuntu 24.04)"
+        # shellcheck disable=SC2086 # an empty value selects the default.
+        expect_success "apt latest (${args:-default})" run_installer "${root}" ${args}
+        assert_has "latest plan names the channel" "Release:          latest channel"$'\n'
+        assert_has "latest plan says upgrades follow it" \
+            "Updates:          apt upgrade follows the latest channel"
+        assert_has "latest apt source" \
+            "documentdb.list (mode 0644):"$'\n'"    ${apt_prefix} latest ubuntu24"$'\n'
+        assert_has "latest installs from the repository" \
+            "apt-get -o DPkg::Lock::Timeout=120 install -y documentdb-18"
+        assert_lacks "latest downloads no release" "releases/download"
+        assert_lacks "latest is not an RC" "disposable testing"
+        assert_no_mutation "latest dry run"
+    done
+    for args in "--stable" "--version stable" "--stable --version stable"; do
+        root="$(new_root ubuntu 24.04)"
+        # shellcheck disable=SC2086 # the value supplies words.
+        expect_success "apt stable (${args})" run_installer "${root}" ${args}
+        assert_has "stable plan names the channel" "Release:          stable channel"$'\n'
+        assert_has "stable plan says upgrades follow it" \
+            "Updates:          apt upgrade follows the stable channel"
+        assert_has "stable apt source is the 1.0 installer's" \
+            "documentdb.list (mode 0644):"$'\n'"    ${apt_prefix} stable ubuntu24"$'\n'
+        assert_has "stable installs from the repository" \
+            "apt-get -o DPkg::Lock::Timeout=120 install -y documentdb-18"
+        assert_lacks "stable downloads no release" "releases/download"
+        assert_no_mutation "stable dry run"
+    done
+
+    local rpm_repo=$'    [documentdb]\n    name=DocumentDB Repository\n    baseurl=%s\n    enabled=1\n    gpgcheck=1\n    repo_gpgcheck=1\n    gpgkey=file://%s/etc/pki/rpm-gpg/RPM-GPG-KEY-documentdb\n'
+    root="$(new_root rocky 9.4)"
+    expect_success "dnf latest" run_installer "${root}"
+    assert_has "dnf latest plan" "Updates:          dnf upgrade follows the latest channel"
+    # shellcheck disable=SC2059 # the format is the expected repository file.
+    assert_has "dnf latest repository" "documentdb.repo (mode 0644):"$'\n'"$(printf "${rpm_repo}" https://documentdb.io/rpm/latest/rhel9 "${root}")"
+    assert_has "dnf latest installs from the repository" "dnf install -y documentdb-18"
+    root="$(new_root rocky 9.4)"
+    expect_success "dnf stable" run_installer "${root}" --stable
+    assert_has "dnf stable plan" "Updates:          dnf upgrade follows the stable channel"
+    # shellcheck disable=SC2059 # the format is the expected repository file.
+    assert_has "dnf stable repository is the 1.0 installer's" "documentdb.repo (mode 0644):"$'\n'"$(printf "${rpm_repo}" https://documentdb.io/rpm/rhel9 "${root}")"
+    assert_has "dnf stable installs from the repository" "dnf install -y documentdb-18"
+
+    section "pinned releases"
+    local spelling
+    for spelling in 1.2.0 1.2-0 v1.2-0 1.2; do
+        root="$(new_root ubuntu 24.04)"
+        expect_success "pinned ${spelling}" run_installer "${root}" --version "${spelling}"
+        assert_has "${spelling} downloads release v1.2-0" "releases/download/v1.2-0/SHA256SUMS"
+        assert_has "${spelling} plan names the pin" \
+            "Release:          1.2.0, pinned (GitHub release v1.2-0)"
     done
     root="$(new_root ubuntu 24.04)"
-    printf 'deb [arch=amd64 signed-by=/usr/share/keyrings/documentdb-archive-keyring.gpg] https://documentdb.io/deb stable ubuntu24\n' \
-        > "${root}/etc/apt/sources.list.d/documentdb.list"
-    expect_failure "RC refuses preconfigured stable repository" "without a DocumentDB stable repository" \
-        run_installer "${root}" --version v1.0-RC1
+    expect_success "pinned 1.0" run_installer "${root}" --version 1.0
+    assert_has "1.0 is release v1.0-0" "releases/download/v1.0-0/SHA256SUMS"
+    root="$(new_root ubuntu 24.04)"
+    expect_success "pinned multi-digit release" run_installer "${root}" --version 10.20.30
+    assert_has "10.20.30 is release v10.20-30" "releases/download/v10.20-30/SHA256SUMS"
+    for id in ubuntu rocky; do
+        if [[ "${id}" == ubuntu ]]; then
+            root="$(new_root ubuntu 24.04)"
+            upgrade="apt upgrade"
+        else
+            root="$(new_root rocky 9.4)"
+            upgrade="dnf upgrade"
+        fi
+        expect_success "${id} pinned release" run_installer "${root}" --version 1.2.0
+        assert_has "${id} pinned plan says nothing upgrades it" \
+            "Updates:          none; no DocumentDB repository is configured, so ${upgrade} will not upgrade it"
+        assert_lacks "${id} pinned configures no DocumentDB repository" "https://documentdb.io/"
+        assert_lacks "${id} pinned writes no DocumentDB source" "Would write ${root}/etc/apt/sources.list.d/documentdb.list"
+        assert_lacks "${id} pinned writes no DocumentDB repository" "Would write ${root}/etc/yum.repos.d/documentdb.repo"
+        assert_lacks "${id} pinned is not an RC" "disposable testing"
+        assert_lacks "${id} pinned records no RC origin" "installer-release-candidate"
+        assert_lacks "${id} pinned installs no repository package" "install -y documentdb-18"
+        assert_has "${id} pinned runs setup" "documentdb-setup --yes --pg-version 18"
+        if [[ "${id}" == ubuntu ]]; then
+            assert_before "pinned is fetched before PGDG is configured" \
+                "SHA256SUMS" "/usr/share/keyrings/postgresql.gpg"
+        else
+            assert_before "pinned is fetched before repositories are configured" \
+                "SHA256SUMS" "dnf install -y ca-certificates"
+        fi
+        assert_no_mutation "${id} pinned dry run"
+    done
+
+    section "release state"
+    local key="usr/share/keyrings/documentdb-archive-keyring.gpg"
+    local published=$'[documentdb]\nname=DocumentDB Repository\nbaseurl=%s\nenabled=1\ngpgcheck=1\ngpgkey=https://documentdb.io/documentdb-archive-keyring.gpg\n'
+    # A host keeps the channel it was configured for; the other one is refused, never rewritten.
+    root="$(new_root ubuntu 24.04)"
+    printf '%s stable ubuntu24\n' "${apt_prefix}" > "${root}/etc/apt/sources.list.d/documentdb.list"
+    expect_failure "latest refuses a stable apt source" \
+        "${root}/etc/apt/sources.list.d/documentdb.list configures the DocumentDB stable channel, but the latest channel was selected. Rerun with --stable to keep it, or remove that file to switch channels; the installer never rewrites it." \
+        run_installer "${root}" --version latest
+    assert_no_mutation "apt channel refusal"
+    mkdir -p "$(dirname "${root}/${key}")"
+    printf '\x99\x02' > "${root}/${key}"
+    expect_success "--stable reuses the stable apt source" run_installer "${root}" --stable
+    assert_has "stable apt source is reused" "Reusing the existing DocumentDB APT repository configuration"
+    expect_success "the default follows a stable apt source" run_installer "${root}"
+    assert_has "the default keeps the host's channel" "Release:          stable channel"$'\n'
+    assert_has "the default reuses the stable apt source" "Reusing the existing DocumentDB APT repository configuration"
+    root="$(new_root ubuntu 24.04)"
+    printf '%s latest ubuntu24\n' "${apt_prefix}" > "${root}/etc/apt/sources.list.d/documentdb.list"
+    expect_failure "--stable refuses a latest apt source" \
+        "configures the DocumentDB latest channel, but the stable channel was selected. Rerun with --version latest to keep it" \
+        run_installer "${root}" --stable
+    expect_failure "--version stable refuses a latest apt source" \
+        "configures the DocumentDB latest channel, but the stable channel was selected" \
+        run_installer "${root}" --version stable
+    root="$(new_root rocky 9.4)"
+    # shellcheck disable=SC2059 # the format is the repository file.
+    printf "${published}" https://documentdb.io/rpm/rhel9 > "${root}/etc/yum.repos.d/documentdb.repo"
+    expect_failure "latest refuses the published stable dnf repository" \
+        "${root}/etc/yum.repos.d/documentdb.repo configures the DocumentDB stable channel, but the latest channel was selected. Rerun with --stable to keep it" \
+        run_installer "${root}" --version latest
+    assert_no_mutation "dnf channel refusal"
+    expect_success "the default follows the published stable dnf repository" run_installer "${root}"
+    assert_has "the default keeps the dnf host's channel" "Updates:          dnf upgrade follows the stable channel"
+    root="$(new_root rocky 9.4)"
+    # shellcheck disable=SC2059 # the format is the expected repository file.
+    printf "${rpm_repo}" https://documentdb.io/rpm/latest/rhel9 "${root}" | sed 's/^    //' \
+        > "${root}/etc/yum.repos.d/documentdb.repo"
+    expect_failure "--stable refuses this installer's latest dnf repository" \
+        "documentdb.repo configures the DocumentDB latest channel, but the stable channel was selected. Rerun with --version latest to keep it" \
+        run_installer "${root}" --stable
+    expect_success "latest reuses its dnf repository" run_installer "${root}"
+    assert_has "latest dnf repository is reused" "Reusing the existing DocumentDB DNF repository configuration"
+
+    # A pinned release has no repository, or the package manager would upgrade it.
+    local channel
+    for channel in stable latest; do
+        root="$(new_root ubuntu 24.04)"
+        printf '%s %s ubuntu24\n' "${apt_prefix}" "${channel}" > "${root}/etc/apt/sources.list.d/documentdb.list"
+        expect_failure "pinned refuses the ${channel} apt source" \
+            "Pinned installation requires a host without a DocumentDB repository, because the package manager would upgrade 1.2.0 from the ${channel} channel in ${root}/etc/apt/sources.list.d/documentdb.list. Existing repository configuration is not removed; remove that file to pin this host, or rerun with --version ${channel} to follow the channel." \
+            run_installer "${root}" --version 1.2.0
+        assert_lacks "pinned refusal downloads nothing" "releases/download"
+    done
+    root="$(new_root rocky 9.4)"
+    # shellcheck disable=SC2059 # the format is the repository file.
+    printf "${published}" https://documentdb.io/rpm/latest/rhel9 > "${root}/etc/yum.repos.d/documentdb.repo"
+    expect_failure "pinned refuses the published latest dnf repository" \
+        "upgrade 1.2.0 from the latest channel in ${root}/etc/yum.repos.d/documentdb.repo" \
+        run_installer "${root}" --version 1.2.0
+    expect_success "latest reuses the published latest dnf repository" run_installer "${root}"
+    assert_has "published latest dnf repository is reused" \
+        "Reusing the existing DocumentDB DNF repository configuration"
+
+    # Installed packages are never upgraded or downgraded to meet a pin.
+    root="$(new_root ubuntu 24.04)"
+    installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES="${PACKAGES_18}" \
+        DOCUMENTDB_INSTALLER_TEST_PACKAGE_VERSION=1.0.0
+    expect_failure "pinned refuses another installed version" \
+        "documentdb-18 1.0.0 is already installed, not the pinned 1.2.0. This bootstrap never upgrades or downgrades packages; change it with the package manager first." \
+        run_installer "${root}" --version 1.2.0
+    expect_success "a channel ignores the installed version" run_installer "${root}"
+    assert_has "a channel reuses any installed version" "Reusing the installed documentdb-18 package"
+    assert_has "a reused package states no channel" \
+        "Updates:          unchanged; this run configures no repository"
+    write_state_file "${root}" 18 setup.conf
+    expect_failure "pinned refuses another version on a configured host" \
+        "documentdb-18 1.0.0 is already installed, not the pinned 1.2.0" \
+        run_installer "${root}" --version v1.2-0
+    installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES="${PACKAGES_18}"
+    expect_failure "pinned refuses an unknown installed version" \
+        "documentdb-18 of an unknown version is already installed, not the pinned 1.2.0" \
+        run_installer "${root}" --version 1.2.0
+    installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES="${PACKAGES_18}" \
+        DOCUMENTDB_INSTALLER_TEST_PACKAGE_VERSION=1.2.0
+    expect_success "pinned reuses the same configured version" run_installer "${root}" --version 1.2
+    assert_has "pinned configured host reports status" "documentdb-setup --status --pg-version 18"
+    assert_lacks "pinned configured host downloads nothing" "releases/download"
+    rm "${root}/etc/documentdb/local/18/setup.conf"
+    expect_success "pinned reuses the same installed version" run_installer "${root}" --version 1.2.0
+    assert_has "pinned reuse is reported" "Reusing the installed documentdb-18 package"
+    assert_has "pinned reuse has no repository to upgrade it" \
+        "Updates:          none; no DocumentDB repository is configured"
+    assert_has "pinned reuse runs setup" "documentdb-setup --yes --pg-version 18"
+    assert_lacks "pinned reuse downloads nothing" "releases/download"
+    # Reuse still holds the selection to the repository the host follows.
+    printf '%s latest ubuntu24\n' "${apt_prefix}" > "${root}/etc/apt/sources.list.d/documentdb.list"
+    expect_failure "pinned reuse refuses the latest apt source" \
+        "Pinned installation requires a host without a DocumentDB repository, because the package manager would upgrade 1.2.0 from the latest channel" \
+        run_installer "${root}" --version 1.2.0
+    expect_failure "--stable reuse refuses the latest apt source" \
+        "configures the DocumentDB latest channel, but the stable channel was selected. Rerun with --version latest to keep it, or to switch, change that file to the stable channel's definition yourself" \
+        run_installer "${root}" --stable
+    expect_success "latest reuses with its apt source" run_installer "${root}"
+    assert_has "latest reuse follows its channel" "Updates:          apt upgrade follows the latest channel"
+    mv "${root}/etc/apt/sources.list.d/documentdb.list" "${root}/documentdb.list"
+    ln -s "${root}/documentdb.list" "${root}/etc/apt/sources.list.d/documentdb.list"
+    expect_failure "reuse refuses a linked DocumentDB source" \
+        "DocumentDB repository file ${root}/etc/apt/sources.list.d/documentdb.list must not be a symbolic link." \
+        run_installer "${root}"
+    mv -f "${root}/documentdb.list" "${root}/etc/apt/sources.list.d/documentdb.list"
+    printf '%s stable ubuntu24\n' "${apt_prefix}" > "${root}/etc/apt/sources.list.d/extra.list"
+    expect_failure "reuse refuses a second DocumentDB source" \
+        "Conflicting DocumentDB repository configuration found in ${root}/etc/apt/sources.list.d/extra.list, beside ${root}/etc/apt/sources.list.d/documentdb.list." \
+        run_installer "${root}"
+    rm "${root}/etc/apt/sources.list.d/extra.list"
+    write_state_file "${root}" 18 setup.conf
+    expect_failure "pinned refuses the latest apt source on a configured host" \
+        "upgrade 1.2.0 from the latest channel" \
+        run_installer "${root}" --version 1.2.0
+    expect_failure "--stable refuses the latest apt source on a configured host" \
+        "but the stable channel was selected" \
+        run_installer "${root}" --stable
+    # A host the 1.0 installer set up reruns its original command unchanged.
+    printf '%s stable ubuntu24\n' "${apt_prefix}" > "${root}/etc/apt/sources.list.d/documentdb.list"
+    expect_success "a stable configured host reruns with no selection" run_installer "${root}"
+    assert_has "a stable configured host reports status" "documentdb-setup --status --pg-version 18"
+    expect_failure "an explicit latest still refuses a stable configured host" \
+        "but the latest channel was selected" \
+        run_installer "${root}" --version latest
+    rm "${root}/etc/documentdb/local/18/setup.conf"
+    printf '%s latest ubuntu24\n' "deb https://documentdb.io/deb" > "${root}/etc/apt/sources.list.d/custom.list"
+    rm "${root}/etc/apt/sources.list.d/documentdb.list"
+    expect_failure "pinned reuse refuses an unrecognised DocumentDB source" \
+        "Pinned installation requires a host without a DocumentDB repository, but ${root}/etc/apt/sources.list.d/custom.list configures one" \
+        run_installer "${root}" --version 1.2.0
+    printf '%s latest ubuntu24\n' "deb https://DOCUMENTDB.IO/deb" > "${root}/etc/apt/sources.list.d/custom.list"
+    expect_failure "pinned reuse matches the host in any case" \
+        "${root}/etc/apt/sources.list.d/custom.list configures one" \
+        run_installer "${root}" --version 1.2.0
+    expect_success "a channel reuses beside an unrecognised source" run_installer "${root}"
+    assert_has "an unknown source claims no channel" \
+        "Updates:          unchanged; this run configures no repository"
+    root="$(new_root rocky 9.4)"
+    installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES=$'documentdb-18\ndocumentdb-common\ndocumentdb-postgresql-tools\ndocumentdb-gateway\npostgresql18-documentdb' \
+        DOCUMENTDB_INSTALLER_TEST_PACKAGE_VERSION=1.2.0
+    expect_failure "dnf pinned refuses another installed version" \
+        "documentdb-18 1.2.0 is already installed, not the pinned 1.0.0" \
+        run_installer "${root}" --version 1.0.0
+    # Without documentdb-18, the pin's local packages would still replace these.
+    installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES=$'documentdb-common\ndocumentdb-gateway' \
+        DOCUMENTDB_INSTALLER_TEST_PACKAGE_VERSION=1.2.0
+    expect_failure "dnf pinned refuses other DocumentDB packages at another version" \
+        "documentdb-common 1.2.0 is already installed, not the pinned 1.0.0" \
+        run_installer "${root}" --version 1.0.0
+    assert_lacks "pinned refusal installs nothing" "dnf install"
+    installer_env
 }
 
 test_release_package_states() {
@@ -502,6 +803,126 @@ MOCK
         assert_has "stable ignores ${state}" "installed=[]"
         assert_has "RC sees ${state}" "any=[documentdb-postgresql-tools]"
     done
+
+    # The pinned-version check reads the package managers' own version fields.
+    local query_bin="${WORK_DIR}/version-bin" family
+    mkdir -p "${query_bin}"
+    cat > "${query_bin}/dpkg-query" <<'MOCK'
+#!/bin/sh
+if [ "$2" = '-f=${Version}' ]; then
+    case "$3" in
+        *17*) printf '1.0.0' ;;
+        postgresql-*-documentdb) printf '%s-%s' "${PACKAGE_VERSION%.*}" "${PACKAGE_VERSION##*.}" ;;
+        *) printf '%s' "${PACKAGE_VERSION}" ;;
+    esac
+    exit 0
+fi
+printf "${LIST_STATE:-ii}  %s\n" documentdb-18 documentdb-common documentdb-postgresql-tools \
+    documentdb-gateway postgresql-18-documentdb ${OTHER_MAJOR}
+MOCK
+    cat > "${query_bin}/rpm" <<'MOCK'
+#!/bin/sh
+if [ "$1 $2 $3" = '-q --qf %{VERSION}' ]; then
+    printf '%s' "${PACKAGE_VERSION}"
+    exit 0
+fi
+printf '%s\n' documentdb-18 documentdb-common documentdb-postgresql-tools \
+    documentdb-gateway postgresql18-documentdb
+MOCK
+    chmod 0755 "${query_bin}/dpkg-query" "${query_bin}/rpm"
+    for family in apt rpm; do
+        for state in 1.0.0 1.2.0; do
+            # shellcheck disable=SC2016 # expanded by the inner shell.
+            LAST_OUTPUT="$(env PATH="${query_bin}:${PATH}" PACKAGE_VERSION="${state}" sh -c '
+                . "$1"
+                SYSTEM_ROOT="$2"; PACKAGE_FAMILY="$3"; PG_MAJOR=18
+                RELEASE_KIND=pinned; RELEASE_VERSION=1.2.0
+                detect_installation_state
+                printf "reused=%s\n" "${SELECTED_PACKAGE_INSTALLED}"
+            ' _ "${library}" "$(new_root ubuntu 24.04)" "${family}" 2>&1)"
+            if [[ "${state}" == 1.2.0 ]]; then
+                assert_has "${family} reuses an installed 1.2.0" "reused=true"
+            else
+                assert_has "${family} refuses an installed 1.0.0" \
+                    "documentdb-18 1.0.0 is already installed, not the pinned 1.2.0"
+            fi
+        done
+    done
+    # Unpacked or half-configured packages would be replaced too.
+    for state in iU iF; do
+        # shellcheck disable=SC2016 # expanded by the inner shell.
+        LAST_OUTPUT="$(env PATH="${query_bin}:${PATH}" PACKAGE_VERSION=1.0.0 LIST_STATE="${state}" sh -c '
+            . "$1"
+            SYSTEM_ROOT="$2"; PACKAGE_FAMILY=apt; PG_MAJOR=18
+            RELEASE_KIND=pinned; RELEASE_VERSION=1.2.0
+            detect_installation_state
+        ' _ "${library}" "$(new_root ubuntu 24.04)" 2>&1)"
+        assert_has "a pin refuses ${state} packages at another version" \
+            "1.0.0 is already installed, not the pinned 1.2.0"
+    done
+    # Another major's packages are refused as for channels, not by the pin.
+    # shellcheck disable=SC2016 # expanded by the inner shell.
+    LAST_OUTPUT="$(env PATH="${query_bin}:${PATH}" PACKAGE_VERSION=1.2.0 \
+        OTHER_MAJOR="documentdb-17 postgresql-17-documentdb" sh -c '
+            . "$1"
+            SYSTEM_ROOT="$2"; PACKAGE_FAMILY=apt; PG_MAJOR=18
+            RELEASE_KIND=pinned; RELEASE_VERSION=1.2.0
+            detect_installation_state
+        ' _ "${library}" "$(new_root ubuntu 24.04)" 2>&1)"
+    assert_lacks "a pin skips another major's packages" "already installed, not the pinned"
+    assert_has "another major is still refused" "DocumentDB stand-alone packages for PostgreSQL 17"
+}
+
+RACE_LIBRARY="${WORK_DIR}/race-library.sh"
+
+# Runs main without --dry-run; the stubbed lock leaves what a concurrent run
+# wrote: a documentdb.list ($2) and installed packages ($3).
+run_after_lock() {
+    local root="$1" source="$2" packages="$3"
+    shift 3
+    # shellcheck disable=SC2016 # expanded by the inner shell.
+    env PATH="${MOCK_BIN}:${PATH}" DOCUMENTDB_TEST_MUTATION_LOG="${MUTATION_LOG}" \
+        DOCUMENTDB_INSTALLER_TESTING=true DOCUMENTDB_INSTALLER_TEST_ROOT="${root}" \
+        DOCUMENTDB_INSTALLER_TEST_PACKAGE_VERSION=1.2.0 SOURCE="${source}" PACKAGES="${packages}" sh -c '
+            . "$1"; shift
+            initialize_environment() { SYSTEM_ROOT="${DOCUMENTDB_INSTALLER_TEST_ROOT}"; }
+            acquire_privileges() { :; }
+            acquire_install_lock() {
+                [ -z "${SOURCE}" ] ||
+                    printf "%s\n" "${SOURCE}" > "${SYSTEM_ROOT}/etc/apt/sources.list.d/documentdb.list"
+                DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES="${PACKAGES}"
+            }
+            confirm_plan() { :; }
+            perform_installation() { echo "installation proceeded"; }
+            main "$@"
+        ' _ "${RACE_LIBRARY}" --yes --packages-only "$@" 2>&1
+}
+
+test_release_lock_race() {
+    section "release source after the lock"
+    local root prefix='deb [arch=amd64 signed-by=/usr/share/keyrings/documentdb-archive-keyring.gpg] https://documentdb.io/deb'
+    sed '/^# BEGIN EXECUTION BARRIER$/,$d' "${INSTALLER}" > "${RACE_LIBRARY}"
+    # The other run installed from latest.
+    expect_failure "a pin rechecks reused packages after the lock" \
+        "would upgrade 1.2.0 from the latest channel" \
+        run_after_lock "$(new_root ubuntu 24.04)" "${prefix} latest ubuntu24" "${PACKAGES_18}" --version 1.2.0
+    expect_failure "--stable rechecks reused packages after the lock" \
+        "configures the DocumentDB latest channel, but the stable channel was selected" \
+        run_after_lock "$(new_root ubuntu 24.04)" "${prefix} latest ubuntu24" "${PACKAGES_18}" --stable
+    # The other run wrote stable's source, then failed before installing.
+    expect_failure "latest rechecks a fresh host after the lock" \
+        "configures the DocumentDB stable channel, but the latest channel was selected. Rerun with --stable to keep it, or remove that file to switch channels" \
+        run_after_lock "$(new_root ubuntu 24.04)" "${prefix} stable ubuntu24" ""
+    expect_failure "a pin rechecks a fresh host after the lock" \
+        "would upgrade 1.2.0 from the stable channel" \
+        run_after_lock "$(new_root ubuntu 24.04)" "${prefix} stable ubuntu24" "" --version 1.2.0
+    # Nothing changed: the second preflight accepts the PGDG source the first one did.
+    root="$(new_root ubuntu 24.04)"
+    printf '%s\n' "${DESIRED_PGDG}" > "${root}/etc/apt/sources.list.d/pgdg.list"
+    mkdir -p "${root}/usr/share/keyrings"
+    printf '\x99\x02' > "${root}/usr/share/keyrings/postgresql.gpg"
+    expect_success "an unchanged host passes both preflights" run_after_lock "${root}" "" ""
+    assert_has "an unchanged host installs" "installation proceeded"
 }
 
 test_release_checksums() {
@@ -526,7 +947,13 @@ set -eu
 . "$1"
 fixture="$2"
 mode="$3"
+RELEASE_KIND="${RELEASE_TEST_KIND:-rc}"
 RELEASE_VERSION=1.0-rc2
+RELEASE_TAG=v1.0-RC2
+if [ "${RELEASE_KIND}" = pinned ]; then
+    RELEASE_VERSION=1.0.0
+    RELEASE_TAG=v1.0-0
+fi
 PACKAGE_FAMILY="${RELEASE_TEST_FAMILY:-apt}"
 APT_ARCH=arm64
 RPM_ARCH=x86_64
@@ -534,6 +961,7 @@ PG_MAJOR="${RELEASE_TEST_PG:-18}"
 TMP_DIR="$(mktemp -d)"
 strict_curl() {
     name="${1##*/}"
+    [ "${name}" != SHA256SUMS ] || printf 'FETCH %s\n' "$1"
     [ "${mode}:${name}" != "missing:ubuntu24.04-documentdb-common_1.0-rc2_all.deb" ] || return 22
     [ "${mode}:${name}" != "missing-manifest:SHA256SUMS" ] || return 22
     cp "${fixture}/${name}" "$2"
@@ -577,8 +1005,26 @@ RUNNER
     done
     (cd "${rc1}" && sha256sum ./*.deb ./*.rpm | sed 's|  ./|  |' > SHA256SUMS)
     expect_success "RC1-shaped assets still selected" sh "${runner}" "${library}" "${rc1}" good
+    assert_has "RC downloads its RC release" \
+        "FETCH https://github.com/documentdb/documentdb/releases/download/v1.0-RC2/SHA256SUMS"
     assert_has "apt arm64 pg18 selects RC1-shaped packages" \
         "<install> <-y> <ubuntu24.04-documentdb-18_1.0.0_all.deb> <ubuntu24.04-documentdb-common_1.0.0_all.deb> <ubuntu24.04-documentdb-postgresql-tools_1.0.0_all.deb> <ubuntu24.04-documentdb-gateway_1.0.0_arm64.deb> <ubuntu24.04-postgresql-18-documentdb_1.0-0_arm64.deb>"
+    # GA assets have the same shape; a pinned release installs them without the RC marker.
+    expect_success "pinned GA assets selected" env RELEASE_TEST_KIND=pinned \
+        sh "${runner}" "${library}" "${rc1}" good
+    assert_has "pinned downloads its GA release" \
+        "FETCH https://github.com/documentdb/documentdb/releases/download/v1.0-0/SHA256SUMS"
+    assert_has "pinned apt selects exactly its packages" \
+        "<install> <-y> <ubuntu24.04-documentdb-18_1.0.0_all.deb> <ubuntu24.04-documentdb-common_1.0.0_all.deb> <ubuntu24.04-documentdb-postgresql-tools_1.0.0_all.deb> <ubuntu24.04-documentdb-gateway_1.0.0_arm64.deb> <ubuntu24.04-postgresql-18-documentdb_1.0-0_arm64.deb>"
+    assert_lacks "pinned records no RC origin" "RC-MARKER"
+    expect_success "pinned rpm selection" env RELEASE_TEST_KIND=pinned RELEASE_TEST_FAMILY=rpm \
+        sh "${runner}" "${library}" "${rc1}" good
+    assert_has "pinned rpm selects exactly its packages" \
+        "<install> <-y> <documentdb-18-1.0.0-1.noarch.rpm> <documentdb-common-1.0.0-1.noarch.rpm> <documentdb-postgresql-tools-1.0.0-1.noarch.rpm> <documentdb-gateway-1.0.0-1.el9.x86_64.rpm> <rhel9-postgresql18-documentdb-1.0.0-1.el9.x86_64.rpm>"
+    assert_lacks "pinned rpm records no RC origin" "RC-MARKER"
+    expect_failure "pinned missing release download" "Cannot download 1.0.0 checksums; there is no repository fallback." \
+        env RELEASE_TEST_KIND=pinned sh "${runner}" "${library}" "${rc1}" missing-manifest
+    assert_lacks "pinned missing release never installs" "TRANSACTION"
     expect_success "rpm x86_64 pg17 RC1-shaped selection" env RELEASE_TEST_FAMILY=rpm RELEASE_TEST_PG=17 \
         sh "${runner}" "${library}" "${rc1}" good
     assert_has "rpm x86_64 pg17 selects RC1-shaped packages" \
@@ -693,6 +1139,11 @@ test_derived_state() {
     expect_failure "rpm instance missing its extension" \
         "Repair with 'sudo dnf install postgresql18-documentdb'" \
         run_installer "${root}"
+    installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES=$'documentdb-18\ndocumentdb-common\ndocumentdb-postgresql-tools\ndocumentdb-gateway' \
+        DOCUMENTDB_INSTALLER_TEST_PACKAGE_VERSION=1.2.0
+    expect_failure "a pinned host repairs from its release" \
+        "Missing or not fully installed: postgresql18-documentdb. Reinstall them from the v1.2-0 GitHub release files, then rerun this installer." \
+        run_installer "${root}" --version 1.2.0
 
     root="$(new_root ubuntu 24.04)"
     installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES=documentdb-17
@@ -936,27 +1387,36 @@ unrelated documentdb.repo|rocky|9.4|etc/yum.repos.d/documentdb.repo|[other]\nbas
 REPOS
 
     section "repository reuse"
-    root="$(new_root ubuntu 24.04)"
-    printf 'deb [signed-by=/usr/share/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt noble-pgdg main\n' \
-        > "${root}/etc/apt/sources.list.d/pgdg.list"
-    printf '# managed by the installer\ndeb [arch=amd64 signed-by=/usr/share/keyrings/documentdb-archive-keyring.gpg] https://documentdb.io/deb stable ubuntu24\n' \
-        > "${root}/etc/apt/sources.list.d/documentdb.list"
-    # The first apt-get update reads a reused source's key before the
-    # installer can fetch one, so a missing key stops the run up front.
-    mkdir -p "${root}/usr/share/keyrings"
-    expect_failure "reused PGDG source without its key" \
-        "signed by /usr/share/keyrings/postgresql.gpg, which is missing" run_installer "${root}"
-    printf '\x99\x02' > "${root}/usr/share/keyrings/postgresql.gpg"
-    expect_failure "reused DocumentDB source without its key" \
-        "signed by /usr/share/keyrings/documentdb-archive-keyring.gpg, which is missing" \
-        run_installer "${root}"
-    printf '\x99\x02' > "${root}/usr/share/keyrings/documentdb-archive-keyring.gpg"
-    expect_success "exact apt sources are reused" run_installer "${root}"
-    assert_has "exact PGDG source is reused" \
-        "Reusing the existing PGDG APT repository configuration"
-    assert_has "exact DocumentDB source is reused" \
-        "Reusing the existing DocumentDB APT repository configuration"
-    assert_lacks "reused sources are not rewritten" "Would write ${root}/etc/apt"
+    local channel channel_args
+    for channel in stable latest; do
+        channel_args=()
+        [[ "${channel}" == latest ]] || channel_args=(--stable)
+        root="$(new_root ubuntu 24.04)"
+        printf 'deb [signed-by=/usr/share/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt noble-pgdg main\n' \
+            > "${root}/etc/apt/sources.list.d/pgdg.list"
+        printf '# managed by the installer\ndeb [arch=amd64 signed-by=/usr/share/keyrings/documentdb-archive-keyring.gpg] https://documentdb.io/deb %s ubuntu24\n' \
+            "${channel}" > "${root}/etc/apt/sources.list.d/documentdb.list"
+        # The first apt-get update reads a reused source's key before the
+        # installer can fetch one, so a missing key stops the run up front.
+        mkdir -p "${root}/usr/share/keyrings"
+        expect_failure "reused PGDG source without its key (${channel})" \
+            "signed by /usr/share/keyrings/postgresql.gpg, which is missing" \
+            run_installer "${root}" ${channel_args[@]+"${channel_args[@]}"}
+        printf '\x99\x02' > "${root}/usr/share/keyrings/postgresql.gpg"
+        expect_failure "reused ${channel} DocumentDB source without its key" \
+            "signed by /usr/share/keyrings/documentdb-archive-keyring.gpg, which is missing" \
+            run_installer "${root}" ${channel_args[@]+"${channel_args[@]}"}
+        printf '\x99\x02' > "${root}/usr/share/keyrings/documentdb-archive-keyring.gpg"
+        expect_success "exact ${channel} apt sources are reused" \
+            run_installer "${root}" ${channel_args[@]+"${channel_args[@]}"}
+        assert_has "exact PGDG source is reused" \
+            "Reusing the existing PGDG APT repository configuration"
+        assert_has "exact ${channel} DocumentDB source is reused" \
+            "Reusing the existing DocumentDB APT repository configuration"
+        assert_has "reused ${channel} source is the plan's channel" \
+            "Updates:          apt upgrade follows the ${channel} channel"
+        assert_lacks "reused sources are not rewritten" "Would write ${root}/etc/apt"
+    done
 
     # postgresql-common's apt.postgresql.org.sh writes this pgdg.sources.
     local helper_key="usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg"
@@ -981,34 +1441,44 @@ REPOS
     expect_failure "two PGDG definitions" "Conflicting PGDG repository configuration" \
         run_installer "${root}"
 
-    root="$(new_root rocky 9.4)"
-    printf '[pgdg-common]\nbaseurl=https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-x86_64\n' \
-        > "${root}/etc/yum.repos.d/pgdg-redhat-all.repo"
-    printf '[documentdb]\nname=DocumentDB Repository\nbaseurl=https://documentdb.io/rpm/rhel9\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file://%s/etc/pki/rpm-gpg/RPM-GPG-KEY-documentdb\n' \
-        "${root}" > "${root}/etc/yum.repos.d/documentdb.repo"
-    expect_success "exact dnf repositories are reused" run_installer "${root}"
-    assert_has "canonical PGDG repository file is reused" \
-        "Reusing the existing PGDG DNF repository configuration"
-    assert_has "exact DocumentDB repository file is reused" \
-        "Reusing the existing DocumentDB DNF repository configuration"
-    assert_has "reused PGDG repository is fixed before the first dnf call" \
-        "rhel-9.4 is not published."$'\n'"  + sudo dnf install -y ca-certificates"
+    local rpm_url
+    for channel in stable latest; do
+        channel_args=()
+        rpm_url=https://documentdb.io/rpm/latest/rhel9
+        if [[ "${channel}" == stable ]]; then
+            channel_args=(--stable)
+            rpm_url=https://documentdb.io/rpm/rhel9
+        fi
+        root="$(new_root rocky 9.4)"
+        printf '[pgdg-common]\nbaseurl=https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-x86_64\n' \
+            > "${root}/etc/yum.repos.d/pgdg-redhat-all.repo"
+        printf '[documentdb]\nname=DocumentDB Repository\nbaseurl=%s\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file://%s/etc/pki/rpm-gpg/RPM-GPG-KEY-documentdb\n' \
+            "${rpm_url}" "${root}" > "${root}/etc/yum.repos.d/documentdb.repo"
+        expect_success "exact ${channel} dnf repositories are reused" \
+            run_installer "${root}" ${channel_args[@]+"${channel_args[@]}"}
+        assert_has "canonical PGDG repository file is reused" \
+            "Reusing the existing PGDG DNF repository configuration"
+        assert_has "exact ${channel} DocumentDB repository file is reused" \
+            "Reusing the existing DocumentDB DNF repository configuration"
+        assert_has "reused PGDG repository is fixed before the first dnf call" \
+            "rhel-9.4 is not published."$'\n'"  + sudo dnf install -y ca-certificates"
 
-    root="$(new_root rocky 9.4)"
-    printf '[pgdg-common]\nbaseurl=https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-x86_64\n' \
-        > "${root}/etc/yum.repos.d/pgdg-redhat-all.repo"
-    printf '%s\n' \
-        '[documentdb]' \
-        'name=DocumentDB Repository' \
-        'baseurl=https://documentdb.io/rpm/rhel9' \
-        'enabled=1' \
-        'gpgcheck=1' \
-        'gpgkey=https://documentdb.io/documentdb-archive-keyring.gpg' \
-        > "${root}/etc/yum.repos.d/documentdb.repo"
-    expect_success "published DocumentDB dnf repository is reused" \
-        run_installer "${root}"
-    assert_has "published DocumentDB repository is reported as reused" \
-        "Reusing the existing DocumentDB DNF repository configuration"
+        root="$(new_root rocky 9.4)"
+        printf '[pgdg-common]\nbaseurl=https://download.postgresql.org/pub/repos/yum/common/redhat/rhel-9-x86_64\n' \
+            > "${root}/etc/yum.repos.d/pgdg-redhat-all.repo"
+        printf '%s\n' \
+            '[documentdb]' \
+            'name=DocumentDB Repository' \
+            "baseurl=${rpm_url}" \
+            'enabled=1' \
+            'gpgcheck=1' \
+            'gpgkey=https://documentdb.io/documentdb-archive-keyring.gpg' \
+            > "${root}/etc/yum.repos.d/documentdb.repo"
+        expect_success "published ${channel} DocumentDB dnf repository is reused" \
+            run_installer "${root}" ${channel_args[@]+"${channel_args[@]}"}
+        assert_has "published ${channel} DocumentDB repository is reported as reused" \
+            "Reusing the existing DocumentDB DNF repository configuration"
+    done
 
     installer_env DOCUMENTDB_INSTALLER_TEST_RPM_INSTALLED=epel-release
     expect_success "installed EPEL is reused" run_installer "${root}"
@@ -1078,27 +1548,41 @@ REPOS
         DOCUMENTDB_INSTALLER_TEST_KEY_FINGERPRINT=0123456789abcdef0123456789abcdef01234567
     expect_success "test apt repository" run_installer "${root}"
     assert_has "test apt source is selected" \
-        "https://127.0.0.1:8443/deb stable ubuntu24"
+        "https://127.0.0.1:8443/deb latest ubuntu24"
     assert_has "test key URL is selected" \
         "https://127.0.0.1:8443/documentdb-archive-keyring.gpg"
     assert_has "test fingerprint is normalized" \
         "0123456789ABCDEF0123456789ABCDEF01234567"
+    expect_success "test apt stable repository" run_installer "${root}" --stable
+    assert_has "test apt stable source is selected" \
+        "https://127.0.0.1:8443/deb stable ubuntu24"
     printf 'deb [arch=amd64 signed-by=/usr/share/keyrings/documentdb-archive-keyring.gpg] https://127.0.0.1:8443/deb stable ubuntu24\n' \
         > "${root}/etc/apt/sources.list.d/documentdb.list"
     mkdir -p "${root}/usr/share/keyrings"
     printf '\x99\x02' > "${root}/usr/share/keyrings/documentdb-archive-keyring.gpg"
-    expect_success "test apt repository is reusable" run_installer "${root}"
+    expect_success "test apt repository is reusable" run_installer "${root}" --stable
     assert_has "test apt repository reuse is reported" \
         "Reusing the existing DocumentDB APT repository configuration"
+    expect_failure "test apt stable repository is not the latest channel" \
+        "configures the DocumentDB stable channel, but the latest channel was selected" \
+        run_installer "${root}" --version latest
 
     root="$(new_root rocky 9.4)"
     expect_success "test rpm repository" run_installer "${root}"
-    assert_has "test rpm source is selected" \
+    assert_has "test rpm latest source is beside the stable one" \
+        "baseurl=https://127.0.0.1:8443/rpm/latest/rhel9"
+    expect_success "test rpm stable repository" run_installer "${root}" --stable
+    assert_has "test rpm stable source is the hook URL" \
         "baseurl=https://127.0.0.1:8443/rpm/rhel9"
     printf '[documentdb]\nname=DocumentDB Repository\nbaseurl=https://127.0.0.1:8443/rpm/rhel9\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file://%s/etc/pki/rpm-gpg/RPM-GPG-KEY-documentdb\n' \
         "${root}" > "${root}/etc/yum.repos.d/documentdb.repo"
-    expect_success "test rpm repository is reusable" run_installer "${root}"
+    expect_success "test rpm repository is reusable" run_installer "${root}" --stable
     assert_has "test rpm repository reuse is reported" \
+        "Reusing the existing DocumentDB DNF repository configuration"
+    printf '[documentdb]\nname=DocumentDB Repository\nbaseurl=https://127.0.0.1:8443/rpm/latest/rhel9\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file://%s/etc/pki/rpm-gpg/RPM-GPG-KEY-documentdb\n' \
+        "${root}" > "${root}/etc/yum.repos.d/documentdb.repo"
+    expect_success "test rpm latest repository is reusable" run_installer "${root}"
+    assert_has "test rpm latest repository reuse is reported" \
         "Reusing the existing DocumentDB DNF repository configuration"
     installer_env
 
@@ -1164,7 +1648,8 @@ test_password_metadata() {
     ln "${secrets}/linked" "${secrets}/linked-alias"
     ln -s "${secrets}/good" "${secrets}/symlink"
     # documentdb-setup's password-file contract, checked before any package
-    # is installed: one line of printable ASCII, one trailing LF or CRLF.
+    # is installed: one line of UTF-8 text without control characters, one
+    # trailing LF or CRLF.
     local file content
     while IFS='|' read -r file content; do
         printf "${content}" > "${secrets}/${file}"
@@ -1184,6 +1669,13 @@ escape|sup3r\033secret
 nul|sup3r\000secret
 emoji|Valid\360\237\247\252Pass123!
 latin1|p\303\244ssword
+c1|Valid\302\205Pass
+bad-utf8|p\303ssword
+overlong|Valid\300\257Pass
+max-code-point|Valid\364\217\277\277Pass
+above-max|Valid\364\220\200\200Pass
+five-byte|Valid\370\210\200\200\200Pass
+six-byte|Valid\374\204\200\200\200\200Pass
 CONTENTS
 
     validation_run() {
@@ -1194,13 +1686,13 @@ CONTENTS
             DOCUMENTDB_INSTALLER_TEST_ROOT="${root}" \
             ${INSTALLER_ENV[@]+"${INSTALLER_ENV[@]}"} \
             sh "${INSTALLER}" --yes --accept-external-listen \
-            --admin-password-file "$1" 2>&1
+            --admin-password-file "$1" "${@:2}" 2>&1
     }
 
     expect_success "owner-only password file" validation_run "${secrets}/good"
     assert_lacks "password contents never reach the output" "sup3r-secret"
     assert_no_mutation "password validation"
-    for file in no-newline crlf spaces; do
+    for file in no-newline crlf spaces latin1 emoji max-code-point; do
         expect_success "password file '${file}'" validation_run "${secrets}/${file}"
     done
 
@@ -1223,8 +1715,12 @@ password file ending in CR CR LF|cr-cr-lf|one non-empty line
 password with a tab|tab|one non-empty line
 password with an escape|escape|one non-empty line
 password with a NUL byte|nul|one non-empty line
-password with an emoji|emoji|one non-empty line
-password with a non-ASCII letter|latin1|one non-empty line
+password with a C1 control|c1|one non-empty line
+password with invalid UTF-8|bad-utf8|one non-empty line
+password with an overlong UTF-8 form|overlong|one non-empty line
+password above U+10FFFF|above-max|one non-empty line
+password with a 5-byte UTF-8 form|five-byte|one non-empty line
+password with a 6-byte UTF-8 form|six-byte|one non-empty line
 PASSWORDS
 
     # A configured host only reports status and never reads the password.
@@ -1233,9 +1729,11 @@ PASSWORDS
     write_state_file "${root}" 18 setup.conf
     installer_env DOCUMENTDB_INSTALLER_TEST_EXISTING_PACKAGES="${PACKAGES_18}"
     expect_success "configured host skips the password content rule" \
-        validation_run "${secrets}/latin1"
+        validation_run "${secrets}/tab"
     installer_env
     root="${fresh_root}"
+    expect_success "--packages-only skips the password content rule" \
+        validation_run "${secrets}/tab" --packages-only
 
     # The staged copy lives in the installer's private directory and is removed.
     if compgen -G "${WORK_DIR}/documentdb-install.*" > /dev/null; then
@@ -1340,7 +1838,9 @@ test_supported_matrix
 test_unsupported_hosts
 test_arguments
 test_release_selection
+test_release_channels
 test_release_package_states
+test_release_lock_race
 test_release_checksums
 test_derived_state
 test_brownfield_refusal

@@ -183,6 +183,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
 BEGIN;
 SET LOCAL enable_seqscan = off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 5, "path": "v", "efSearch": 1 }  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
+COMMIT;
+
+BEGIN;
+SET LOCAL enable_seqscan = off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 5, "path": "v", "efSearch": 1 }  } } ], "cursor": {} }');
 COMMIT;
 
@@ -190,6 +194,10 @@ COMMIT;
 BEGIN;
 SET LOCAL enable_seqscan = off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 5, "path": "v", "efSearch": 3 }  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
+COMMIT;
+
+BEGIN;
+SET LOCAL enable_seqscan = off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 5, "path": "v", "efSearch": 3 }  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
 COMMIT;
 
@@ -207,6 +215,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -215,6 +228,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }}}, { "$project": { "rank": {"$round":[{"$multiply": [{"$meta": "searchScore" }, 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }}}, { "$project": { "rank": {"$round":[{"$multiply": [{"$meta": "searchScore" }, 100000]}]} } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -226,6 +244,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -234,6 +257,12 @@ SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SET LOCAL documentdb.enableVectorCalculateDefaultSearchParam = off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
+SET LOCAL documentdb.enableVectorCalculateDefaultSearchParam = off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -246,6 +275,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -254,6 +288,12 @@ SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SET LOCAL documentdb.enableVectorCalculateDefaultSearchParam = off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
+SET LOCAL documentdb.enableVectorCalculateDefaultSearchParam = off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -350,6 +390,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a": [ { "b" : 3 } ]}, "efSearch": 100 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a": [ { "b" : 3 } ]}, "efSearch": 100 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -358,6 +403,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta": { "a" : [ { "b" : 3 } ] } }, "efSearch": 100 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta": { "a" : [ { "b" : 3 } ] } }, "efSearch": 100 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -366,6 +416,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a.b": 3 }, "efSearch": 100 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a.b": 3 }, "efSearch": 100 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -375,6 +430,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a": "some sentence"} }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a": "some sentence"} }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -383,6 +443,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$and": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 3 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$and": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 3 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -391,6 +456,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$and": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 1 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$and": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 1 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -399,6 +469,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 3 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 3 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -407,6 +482,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 1 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 1 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -415,6 +495,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 10, "path": "v", "filter": {"$or":[{"$and":[{"meta.a":{"$gt":"other sentence"}},{"meta.a":{"$lt":"some sentence"}}]},{"meta.a":{"$in":[{"b":3},{"b":5}]}}]}, "efSearch": 10 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 10, "path": "v", "filter": {"$or":[{"$and":[{"meta.a":{"$gt":"other sentence"}},{"meta.a":{"$lt":"some sentence"}}]},{"meta.a":{"$in":[{"b":3},{"b":5}]}}]}, "efSearch": 10 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -439,6 +524,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.b": 2 } }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.b": 2 } }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -447,6 +537,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.b": { "$gt": 1 } }, { "meta.b": { "$lt": 5 } } ] }, "efSearch": 1 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.b": { "$gt": 1 } }, { "meta.b": { "$lt": 5 } } ] }, "efSearch": 1 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -455,6 +550,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$and": [ { "$or": [{ "meta.b": { "$eq": 2 } }, { "meta.b": { "$eq": 5 } } ] }, { "meta.b": { "$lt": 5 } } ] } }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$and": [ { "$or": [{ "meta.b": { "$eq": 2 } }, { "meta.b": { "$eq": 5 } } ] }, { "meta.b": { "$lt": 5 } } ] } }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -463,6 +563,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.b": { "$gt": 1 } }, { "meta.b": { "$lt": 5 } } ] }, "efSearch": 1 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.b": { "$gt": 1 } }, { "meta.b": { "$lt": 5 } } ] }, "efSearch": 1 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -471,6 +576,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.b": { "$eq": 1 } }, { "meta.b": { "$eq": 2 } } , { "meta.b": { "$eq": 5 } } ] } }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.b": { "$eq": 1 } }, { "meta.b": { "$eq": 2 } } , { "meta.b": { "$eq": 5 } } ] } }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -496,6 +606,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": true } }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": true } }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -504,6 +619,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": true }, "efSearch": 1 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": true }, "efSearch": 1 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -512,6 +632,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": false }, "efSearch": 1 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": false }, "efSearch": 1 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -520,6 +645,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": false }, "efSearch": 3 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": false }, "efSearch": 3 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -546,6 +676,10 @@ ANALYZE;
 BEGIN;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$regex": "^some", "$options" : "i"}}, "efSearch": 100 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$regex": "^some", "$options" : "i"}}, "efSearch": 100 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -556,6 +690,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('vector_hnsw_db',
 BEGIN;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$regex": "^some", "$options" : "i"}}, "efSearch": 100 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$regex": "^some", "$options" : "i"}}, "efSearch": 100 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -781,6 +919,10 @@ ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan = off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_empty_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "efSearch": 16 }  } }, { "$project": { "rank": {"$round":[{"$multiply": [{"$meta": "searchScore" }, 100000]}]} } } ], "cursor": {} }');
+COMMIT;
+
+BEGIN;
+SET LOCAL enable_seqscan = off;
 EXPLAIN (COSTS OFF)SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_empty_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "efSearch": 5 }  } }, { "$project": { "rank": {"$round":[{"$multiply": [{"$meta": "searchScore" }, 100000]}]} } } ], "cursor": {} }');
 COMMIT;
 
@@ -788,6 +930,10 @@ ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan = off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_empty_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "efSearch": 16 }  } }, { "$project": { "rank": {"$round":[{"$multiply": [{"$meta": "searchScore" }, 100000]}]} } } ], "cursor": {} }');
+COMMIT;
+
+BEGIN;
+SET LOCAL enable_seqscan = off;
 EXPLAIN (COSTS OFF)SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_empty_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "efSearch": 5 }  } }, { "$project": { "rank": {"$round":[{"$multiply": [{"$meta": "searchScore" }, 100000]}]} } } ], "cursor": {} }');
 COMMIT;
 
@@ -823,6 +969,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
 BEGIN;
 SET LOCAL enable_seqscan = off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
+COMMIT;
+
+BEGIN;
+SET LOCAL enable_seqscan = off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (VERBOSE on, COSTS off) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } } ], "cursor": {} }')
 $cmd$);
@@ -835,6 +985,10 @@ ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan = off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
+COMMIT;
+
+BEGIN;
+SET LOCAL enable_seqscan = off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (VERBOSE on, COSTS off) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } } ], "cursor": {} }')
 $cmd$);
@@ -847,6 +1001,10 @@ ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan = off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
+COMMIT;
+
+BEGIN;
+SET LOCAL enable_seqscan = off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (VERBOSE on, COSTS off) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } } ], "cursor": {} }')
 $cmd$);
@@ -896,6 +1054,10 @@ ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan = off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
+COMMIT;
+
+BEGIN;
+SET LOCAL enable_seqscan = off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (VERBOSE on, COSTS off) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } } ], "cursor": {} }')
 $cmd$, false, false, false, true);
@@ -1008,6 +1170,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
 BEGIN;
 SET LOCAL enable_seqscan to off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "k": 3, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -1015,6 +1181,10 @@ ROLLBACK;
 BEGIN;
 SET LOCAL enable_seqscan to off;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ], "oversampling": 1.5 }  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ], "oversampling": 1.5 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -1023,6 +1193,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$lte": "some sentence"}}, "efSearch": 100 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$lte": "some sentence"}}, "efSearch": 100 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -1036,6 +1211,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$lte": "some sentence"}}, "efSearch": 100 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$lte": "some sentence"}}, "efSearch": 100 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -1044,6 +1224,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$eq": "some sentence"}}, "efSearch": 100, "oversampling": 1.5 }  } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$eq": "some sentence"}}, "efSearch": 100, "oversampling": 1.5 }  } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -1056,6 +1241,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$eq": "some sentence"}}, "efSearch": 100, "exact": true }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$eq": "some sentence"}}, "efSearch": 100, "exact": true }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -1069,6 +1259,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$eq": "some sentence"}}, "efSearch": 100, "exact": true, "oversampling": 1 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$eq": "some sentence"}}, "efSearch": 100, "exact": true, "oversampling": 1 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
 ROLLBACK;
 
@@ -1077,6 +1272,11 @@ BEGIN;
 SET LOCAL enable_seqscan to off;
 SET LOCAL documentdb.enableVectorPreFilter = on;
 SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$lte": "some sentence"}}, "efSearch": 100 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$lte": "some sentence"}}, "efSearch": 100 }  } } ], "cursor": {} }');
 ROLLBACK;
 

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import getpass
 import re
 import secrets
 import shutil
@@ -12,6 +13,7 @@ import time
 import unittest
 import urllib.parse
 import os
+import pty
 from pathlib import Path
 
 OSS_ROOT = Path(__file__).resolve().parents[3]
@@ -21,7 +23,7 @@ TUNE_SCRIPT = OSS_ROOT / "documentdb-local" / "scripts" / "documentdb-tune.sh"
 GATEWAY_SETUP_SCRIPT = OSS_ROOT / "documentdb-local" / "scripts" / "documentdb-register-gateway.sh"
 GATEWAY_ADMIN_SCRIPT = OSS_ROOT / "documentdb-local" / "scripts" / "documentdb-gateway-admin.sh"
 TOOLS_LIB = OSS_ROOT / "documentdb-local" / "scripts" / "documentdb-tools-lib.sh"
-PASSWORD_RULE = b"one non-empty line of printable ASCII"
+PASSWORD_RULE = b"one non-empty line of UTF-8 text without control characters"
 PRELOAD_LIB = OSS_ROOT / "scripts" / "preload_libraries.sh"
 
 
@@ -578,6 +580,10 @@ class InputValidationContractTests(unittest.TestCase):
         (b"ValidPass123!\r\n", "ValidPass123!"),
         (b" sp ace ", " sp ace "),
         (b"aB3$ :x/'\"\\|@%&*;!Z\n", "aB3$ :x/'\"\\|@%&*;!Z"),
+        # SASLprep beyond controls and UTF-8 validity is the backend's call.
+        ("p\u00e4sswort\n".encode(), "p\u00e4sswort"),
+        ("Valid\U0001f9eaPass123!".encode(), "Valid\U0001f9eaPass123!"),
+        ("Valid\U0010ffffPass".encode(), "Valid\U0010ffffPass"),
     ]
     REJECTED_PASSWORDS = [
         b"",
@@ -591,8 +597,14 @@ class InputValidationContractTests(unittest.TestCase):
         b"Valid\x1bPass",
         b"Valid\x7fPass",
         b"Valid\x00Pass",
-        "Valid\U0001f9eaPass123!".encode(),
-        "p\u00e4sswort".encode(),
+        "Valid\u0085Pass".encode(),
+        "Valid\u009fPass".encode(),
+        b"p\xc3ssword",
+        b"Valid\xed\xa0\x80Pass",
+        b"Valid\xc0\xafPass",
+        b"Valid\xf4\x90\x80\x80Pass",
+        b"Valid\xf8\x88\x80\x80\x80Pass",
+        b"Valid\xfc\x84\x80\x80\x80\x80Pass",
     ]
 
     def setUp(self):
@@ -740,6 +752,36 @@ class InputValidationContractTests(unittest.TestCase):
                 self.assertNotEqual(r.returncode, 0)
                 self.assertIn(PASSWORD_RULE, r.stderr)
 
+    def test_non_ascii_password_needs_iconv(self):
+        # Without iconv, UTF-8 validity cannot be proven, so non-ASCII fails closed.
+        empty = self.root / "no-iconv"
+        empty.mkdir()
+        script = (f"source {shlex.quote(str(TOOLS_LIB))}\nPATH={shlex.quote(str(empty))}\n"
+                  'documentdb_read_password PW "The password" || exit 1\n')
+        r = self._bash(script, stdin="pässwort".encode())
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(PASSWORD_RULE, r.stderr)
+        self.assertEqual(self._bash(script, stdin=b"ValidPass123!").returncode, 0)
+
+    def test_utf8_check_keeps_the_password_out_of_iconv(self):
+        # iconv is the reader's only child; allexport or an inherited export
+        # of its local must not hand it the password.
+        bin_dir = self.root / "iconv-bin"
+        bin_dir.mkdir()
+        env_dump = self.root / "iconv-env"
+        (bin_dir / "iconv").write_text(
+            f'#!/bin/bash\nenv > {env_dump}\nexec {shutil.which("iconv")} "$@"\n', encoding="utf-8")
+        (bin_dir / "iconv").chmod(0o755)
+        script = (f"source {shlex.quote(str(TOOLS_LIB))}\n"
+                  'documentdb_read_password PW "The password" || exit 1\n')
+        for leak in ({"SHELLOPTS": "allexport"}, {"_ddb_raw": "x"}):
+            with self.subTest(**leak):
+                env_dump.unlink(missing_ok=True)
+                r = self._bash(script, stdin="pässwort9A!".encode(),
+                               env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", **leak})
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertNotIn("pässwort9A!".encode(), env_dump.read_bytes())
+
     def _check_wiring(self, run, sources):
         # The full matrix runs once in test_password_contract; this proves
         # each source goes through it.
@@ -749,6 +791,9 @@ class InputValidationContractTests(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertEqual(r.stdout, b"ValidPass123!")
                 r = run(source, "p\u00e4sswort".encode())
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(r.stdout, "p\u00e4sswort".encode())
+                r = run(source, "Valid\u0085Pass".encode())
                 self.assertNotEqual(r.returncode, 0)
                 self.assertIn(PASSWORD_RULE, r.stderr)
 
@@ -802,6 +847,132 @@ class InputValidationContractTests(unittest.TestCase):
 
     def test_gateway_admin_password_sources_use_the_contract(self):
         self._check_wiring(self._admin_password, ("file", "stdin"))
+
+    def test_gateway_admin_keeps_the_password_out_of_child_environments(self):
+        # The real script under an inherited allexport and exports named like
+        # its password locals. The first mktemp after the read stops it there.
+        script = self.root / "ga" / "documentdb-gateway-admin.sh"
+        script.parent.mkdir()
+        shutil.copy(GATEWAY_ADMIN_SCRIPT, script)
+        stage_tools_lib(script.parent)
+        bin_dir = self.root / "ga-bin"
+        bin_dir.mkdir()
+        env_dump = self.root / "mktemp-env"
+        (bin_dir / "mktemp").write_text(f'#!/bin/bash\nenv > {env_dump}\nexit 1\n', encoding="utf-8")
+        (bin_dir / "mktemp").chmod(0o755)
+        for source in ("file", "stdin"):
+            with self.subTest(source=source):
+                env_dump.unlink(missing_ok=True)
+                pw_file = self.root / "ga-pw"
+                pw_file.write_bytes(b"ValidPass123!")
+                pw_file.chmod(0o600)
+                pw_args = (["--password-file", str(pw_file)] if source == "file"
+                           else ["--password-stdin"])
+                r = subprocess.run(
+                    ["bash", str(script), "create-user", "--username", "admin", *pw_args,
+                     "--socket-dir", str(self.root), "--pg-port", "5432",
+                     "--pg-owner", getpass.getuser()],
+                    input=b"ValidPass123!" if source == "stdin" else b"",
+                    capture_output=True, timeout=30,
+                    env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                         "SHELLOPTS": "allexport", "line": "x", "raw": "x"})
+                self.assertIn(b"Cannot create temp file", r.stderr)
+                self.assertNotIn(b"ValidPass123!", env_dump.read_bytes())
+
+    def test_register_gateway_password_stdin_uses_the_contract(self):
+        # The password reaches gateway-admin on its stdin; no file holds it, and
+        # neither an inherited export nor allexport carries it to children.
+        # --restore never uses the password, so it neither reads nor checks it.
+        script = self.root / "rg" / "documentdb-register-gateway.sh"
+        script.parent.mkdir()
+        script.write_text(re.sub(r'(?m)^main "\$@"$', "",
+                                 GATEWAY_SETUP_SCRIPT.read_text(encoding="utf-8")), encoding="utf-8")
+        stage_tools_lib(script.parent)
+        harness = (f"source {shlex.quote(str(script))}\n"
+                   'parse_arguments "$@"\n'
+                   'if [[ -n "${ADMIN_PASSWORD}" ]]; then create_admin_user; fi\n')
+        cases = [(b"ValidPass123!\r\n", b"ValidPass123!", []),
+                 (b"ValidPass123!\nextra", None, []), (b"Valid\x00Pass", None, []),
+                 (b"Valid\tPass", "unread", ["--restore"])]
+        for i, (data, expected, mode) in enumerate(cases):
+            with self.subTest(data=data):
+                case = self.root / f"rg{i}"
+                (case / "bin").mkdir(parents=True)
+                stub = case / "bin" / "documentdb-gateway-admin"
+                stub.write_text(f'#!/bin/bash\nprintf "%s\\n" "$@" > {case}/argv\ncat > {case}/stdin\n'
+                                f'printf %s "${{ADMIN_PASSWORD-unset}}" > {case}/env\n', encoding="utf-8")
+                stub.chmod(0o755)
+                r = subprocess.run(
+                    ["bash", "-c", harness, "rg", *mode, "--pgdata", str(case),
+                     "--admin-user", "admin", "--admin-password-stdin", "--dry-run"],
+                    input=data, capture_output=True, timeout=30,
+                    env={**os.environ, "PATH": f"{case / 'bin'}:{os.environ['PATH']}",
+                         "ADMIN_PASSWORD": "inherited", "SHELLOPTS": "allexport"})
+                if expected == "unread":
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    self.assertFalse((case / "argv").exists())
+                elif expected is None:
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertIn(PASSWORD_RULE, r.stderr)
+                    self.assertFalse((case / "argv").exists())
+                else:
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    self.assertEqual((case / "stdin").read_bytes(), expected, r.stderr)
+                    argv = (case / "argv").read_text().split("\n")
+                    self.assertIn("--password-stdin", argv)
+                    self.assertNotIn("--password-file", argv)
+                    self.assertNotIn(expected, (case / "argv").read_bytes() + r.stdout + r.stderr)
+                    self.assertEqual((case / "env").read_bytes(), b"unset")
+
+        # The real preview also counts a stdin password as the admin's.
+        preview = self.root / "preview"
+        preview.mkdir()
+        (preview / "pg_hba.conf").touch()
+        (preview / "pg_ident.conf").touch()
+        r = subprocess.run(
+            ["bash", str(GATEWAY_SETUP_SCRIPT), "--pgdata", str(preview), "--admin-user", "admin",
+             "--admin-password-stdin", "--dry-run"],
+            input=b"ValidPass123!", capture_output=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(b"Would create admin user 'admin'", r.stdout)
+
+        # A terminal on stdin is refused only where the password is read.
+        for mode, ok in (([], False), (["--restore"], True)):
+            with self.subTest(mode=mode, stdin="tty"):
+                leader, follower = pty.openpty()
+                try:
+                    r = subprocess.run(
+                        ["bash", str(GATEWAY_SETUP_SCRIPT), *mode, "--pgdata", str(self.root),
+                         "--admin-user", "admin", "--admin-password-stdin", "--dry-run"],
+                        stdin=follower, capture_output=True, timeout=30)
+                finally:
+                    os.close(follower)
+                    os.close(leader)
+                self.assertEqual(r.returncode == 0, ok, r.stderr)
+                self.assertEqual(b"Stdin is a TTY" in r.stderr, not ok, r.stderr)
+
+        # Both flag orders are refused alike, in every mode.
+        pw_file = self.root / "pw"
+        pw_file.write_text("ValidPass123!", encoding="utf-8")
+        both = [["--admin-password-stdin", "--admin-password-file", str(pw_file)],
+                ["--admin-password-file", str(pw_file), "--admin-password-stdin"]]
+        for mode in ([], ["--restore"]):
+            for flags in both:
+                with self.subTest(mode=mode, flags=flags):
+                    r = subprocess.run(
+                        ["bash", str(GATEWAY_SETUP_SCRIPT), *mode, "--pgdata", str(self.root),
+                         *flags, "--dry-run"],
+                        input=b"ValidPass123!", capture_output=True, timeout=30)
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertIn(b"mutually exclusive", r.stderr)
+
+        # An empty file value is no way around the conflict.
+        r = subprocess.run(
+            ["bash", str(GATEWAY_SETUP_SCRIPT), "--pgdata", str(self.root), "--admin-user", "admin",
+             "--admin-password-stdin", "--admin-password-file", "", "--dry-run"],
+            input=b"ValidPass123!", capture_output=True, timeout=30)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(b"--admin-password-file requires a value", r.stderr)
 
     def test_reserved_role_names_match_across_entry_points(self):
         # install.sh runs before the tools package exists, so it carries a copy.
@@ -6126,12 +6297,12 @@ class RegisterGatewayAdminBootstrapContractTests(unittest.TestCase):
     def test_register_gateway_validates_admin_user_and_password_file_together(self):
         text = GATEWAY_SETUP_SCRIPT.read_text(encoding="utf-8")
         self.assertIn(
-            "--admin-user is required when --admin-password-file is set.",
+            "--admin-user is required with --admin-password-file or --admin-password-stdin.",
             text,
             "register-gateway must reject a password file without --admin-user",
         )
         self.assertIn(
-            "--admin-password-file is required when --admin-user is set.",
+            "--admin-password-file or --admin-password-stdin is required when --admin-user is set.",
             text,
             "register-gateway must reject --admin-user without a password file",
         )

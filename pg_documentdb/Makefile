@@ -10,6 +10,7 @@ template_sql_files = $(wildcard sql/*.sql)
 generated_sql_files = $(patsubst %,build/%,$(template_sql_files))
 DATA_built = $(generated_sql_files)
 sql_file_inputs = $(wildcard sql/**/*.sql)
+version_file_inputs = documentdb.control $(OSS_SRC_DIR)/scripts/generate_extension_version.sh
 
 BUILD_SCRIPT_DIR = ../
 OSS_SRC_DIR = ../

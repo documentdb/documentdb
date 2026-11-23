@@ -2,11 +2,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 #
-# Clean-host bootstrap for stable or explicitly selected RC packages.
+# Clean-host bootstrap for the latest or stable package repository channel,
+# a pinned GA release, or an explicitly selected RC.
 #
-# The script trusts the public package repositories, installs
-# documentdb-<major>, and hands provisioning to documentdb-setup. RC installs
-# record their origin because RC and final packages can have identical versions.
+# Channel installs take DocumentDB from its public package repository; pinned
+# and RC installs download one GitHub release and verify its SHA256SUMS.
+# Each installs documentdb-<major> and hands provisioning to documentdb-setup.
+# RC installs record their origin because RC and final packages can have
+# identical versions.
 #
 # Supported hosts:
 #   Ubuntu 24.04 LTS                          amd64, arm64
@@ -43,7 +46,6 @@ PACKAGED_COMMANDS="documentdb-setup documentdb-local-reset documentdb-tune
     documentdb-createcluster documentdb-register-gateway
     documentdb-gateway-admin documentdb-gateway"
 
-PGDG_KEYRING="/usr/share/keyrings/postgresql.gpg"
 PGDG_APT_KEY_URL="https://www.postgresql.org/media/keys/ACCC4CF8.asc"
 PGDG_APT_KEY_FINGERPRINT="B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
 PGDG_RPM_X86_64_KEY_URL="https://download.postgresql.org/pub/repos/yum/keys/PGDG-RPM-GPG-KEY-RHEL"
@@ -59,7 +61,11 @@ DOCUMENTDB_APT_REPOSITORY_URL="https://documentdb.io/deb"
 DOCUMENTDB_RPM_REPOSITORY_URL="https://documentdb.io/rpm/rhel9"
 
 PG_MAJOR="${DEFAULT_PG_MAJOR}"
-RELEASE_VERSION="stable"
+RELEASE_VERSION=""
+RELEASE_KIND=""
+RELEASE_TAG=""
+RELEASE_DEFAULT="false"
+STABLE_REQUESTED="false"
 ADMIN_USER="${DEFAULT_ADMIN_USER}"
 ADMIN_USER_EXPLICIT="false"
 ADMIN_PASSWORD_FILE=""
@@ -96,11 +102,10 @@ APT_ARCH=""
 RPM_ARCH=""
 
 PGDG_REPO_PRESENT="false"
+PGDG_KEYRING=""
 DOCUMENTDB_REPO_PRESENT="false"
+DOCUMENTDB_CONFIGURED_CHANNEL=""
 DESIRED_PGDG_SOURCE=""
-DESIRED_DOCUMENTDB_SOURCE=""
-DESIRED_DOCUMENTDB_RPM_REPO=""
-PUBLISHED_DOCUMENTDB_RPM_REPO=""
 RHEL_CRB_METHOD=""
 RHEL_CRB_REPO=""
 
@@ -112,23 +117,36 @@ usage() {
     cat <<'EOF'
 Usage: install.sh [OPTIONS]
 
-Install the current stable DocumentDB stand-alone packages and provision a new
-private DocumentDB instance with documentdb-setup.
+Install DocumentDB stand-alone packages and provision a new private
+DocumentDB instance with documentdb-setup.
 
 Supported hosts:
   Ubuntu 24.04 LTS                  amd64, arm64
   RHEL/Rocky/Alma/CentOS Stream 9   x86_64, aarch64
 
 Options:
-  --version <stable|X.Y-rcN>   Release selection (default: stable repository).
+  --version <latest|stable|X.Y.Z|X.Y-rcN>
+                              Release selection (default: the channel this
+                              host already follows, otherwise latest).
+                              latest and stable configure that DocumentDB
+                              repository channel; latest carries the newest
+                              GA release and stable can lag it. apt or dnf
+                              upgrades then follow the channel.
+                              X.Y.Z (or X.Y-Z, vX.Y-Z, X.Y for X.Y.0), from
+                              1.0.0 on, pins that GA release: its packages
+                              come from the GitHub release and no DocumentDB
+                              repository is configured, so apt or dnf never
+                              upgrade it.
                               RCs, such as 1.0-rc2, are for disposable testing
                               only, with no maintenance or supported upgrades.
+  --stable                    Same as --version stable.
   --pg-major <17|18>          PostgreSQL major (default: 18)
   --admin-user <USER>         Initial DocumentDB administrator (default: admin)
   --admin-password-file <FILE>
                               Read the initial administrator password from
-                              FILE: one line of printable ASCII, and one
-                              trailing newline (LF or CRLF) is removed.
+                              FILE: one line of UTF-8 text without control
+                              characters, and one trailing newline (LF or
+                              CRLF) is removed.
                               Required with --yes.
   --listen-port <PORT>        Gateway port, 1024-65535 (default: 10260)
   --packages-only             Configure repositories and install packages
@@ -221,8 +239,7 @@ strip_outer_quotes() {
 }
 
 # PostgreSQL role names: letters, digits, '_' and '-', starting with a letter
-# or '_', at most NAMEDATALEN-1 bytes, never a reserved name and never inside
-# a reserved prefix.
+# or '_', at most NAMEDATALEN-1 bytes, and never inside a reserved prefix.
 validate_admin_user() {
     admin_value="$1"
     admin_label="$2"
@@ -237,16 +254,22 @@ validate_admin_user() {
         die "${admin_label} must be at most 63 bytes."
 
     admin_value_lower="$(lowercase "${admin_value}")"
-    for reserved_name in ${RESERVED_ADMIN_NAMES}; do
-        [ "${admin_value}" != "${reserved_name}" ] ||
-            die "${admin_label} '${admin_value}' is reserved by PostgreSQL or DocumentDB."
-    done
     for blocked_prefix in ${BLOCKED_ADMIN_PREFIXES}; do
         case "${admin_value_lower}" in
             "${blocked_prefix}"*)
                 die "${admin_label} '${admin_value}' begins with reserved prefix '${blocked_prefix}'. Reserved prefixes: ${BLOCKED_ADMIN_PREFIXES}."
                 ;;
         esac
+    done
+}
+
+# Run after state detection: a configured host only reports status and never
+# uses the name.
+reject_reserved_admin_user() {
+    [ "${SETUP_CONFIGURED}" = "false" ] || return 0
+    for reserved_name in ${RESERVED_ADMIN_NAMES}; do
+        [ "${ADMIN_USER}" != "${reserved_name}" ] ||
+            die "--admin-user '${ADMIN_USER}' is reserved by PostgreSQL or DocumentDB."
     done
 }
 
@@ -275,10 +298,11 @@ parse_arguments() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --version)
-                [ "$#" -ge 2 ] || die "--version requires a value."
+                { [ "$#" -ge 2 ] && [ -n "$2" ]; } || die "--version requires a value."
                 RELEASE_VERSION="$2"
                 shift 2
                 ;;
+            --stable) STABLE_REQUESTED="true"; shift ;;
             --pg-major)
                 [ "$#" -ge 2 ] || die "--pg-major requires a value."
                 PG_MAJOR="$2"
@@ -318,17 +342,46 @@ parse_arguments() {
 }
 
 validate_arguments() {
-    # The tag becomes a URL path segment, so only an RC passes, in any
-    # spelling a user can copy from the release: 1.0-rc2, v1.0-RC2, the
-    # package's 1.0~rc2 or the gateway's 1.0.0-rc2. The charset check first
-    # keeps a newline from hiding a second line from grep.
+    if [ "${STABLE_REQUESTED}" = "true" ]; then
+        case "${RELEASE_VERSION}" in
+            ''|stable) RELEASE_VERSION="stable" ;;
+            *) die "--stable selects the stable channel and cannot be combined with --version ${RELEASE_VERSION}." ;;
+        esac
+    fi
+    if [ -z "${RELEASE_VERSION}" ]; then
+        RELEASE_VERSION="latest"
+        RELEASE_DEFAULT="true"
+    fi
+    # The tag becomes a URL path segment, so only a GA release or an RC
+    # passes, in any spelling a user can copy from the release: 1.2.0, 1.2-0,
+    # v1.2-0 or 1.2; 1.0-rc2, v1.0-RC2, the package's 1.0~rc2 or the
+    # gateway's 1.0.0-rc2. The charset check first keeps a newline from
+    # hiding a second line from grep.
+    version_rule="--version must be latest, stable, a release such as 1.2.0, or an RC such as 1.0-rc2."
     case "${RELEASE_VERSION}" in
-        stable) ;;
-        *[!A-Za-z0-9.~-]*) die "--version must be stable or an RC such as 1.0-rc2." ;;
+        latest|stable) RELEASE_KIND="channel" ;;
+        *[!A-Za-z0-9.~-]*) die "${version_rule}" ;;
         *)
-            printf '%s\n' "${RELEASE_VERSION}" | grep -Eiqx 'v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.0)?[-~]rc[1-9][0-9]*' ||
-                die "--version must be stable or an RC such as 1.0-rc2."
-            RELEASE_VERSION="$(printf '%s' "${RELEASE_VERSION#[vV]}" | tr 'RC~' 'rc-' | sed -E 's/^([0-9]+\.[0-9]+)\.0-rc/\1-rc/')"
+            if printf '%s\n' "${RELEASE_VERSION}" | grep -Eiqx 'v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.0)?[-~]rc[1-9][0-9]*'; then
+                RELEASE_KIND="rc"
+                RELEASE_VERSION="$(printf '%s' "${RELEASE_VERSION#[vV]}" | tr 'RC~' 'rc-' | sed -E 's/^([0-9]+\.[0-9]+)\.0-rc/\1-rc/')"
+                # Users type 1.0-rc2; the GitHub release tag is v1.0-RC2.
+                RELEASE_TAG="v$(printf '%s' "${RELEASE_VERSION}" | tr 'rc' 'RC')"
+            elif printf '%s\n' "${RELEASE_VERSION}" | grep -Eqx '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([.-](0|[1-9][0-9]*))?|v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(0|[1-9][0-9]*)'; then
+                RELEASE_KIND="pinned"
+                RELEASE_VERSION="$(printf '%s' "${RELEASE_VERSION#v}" | tr '-' '.')"
+                case "${RELEASE_VERSION}" in
+                    *.*.*) ;;
+                    *) RELEASE_VERSION="${RELEASE_VERSION}.0" ;;
+                esac
+                case "${RELEASE_VERSION}" in
+                    0.*) die "--version ${RELEASE_VERSION} is older than 1.0.0, the first release this installer supports." ;;
+                esac
+                # Package version 1.2.0 is GitHub release v1.2-0.
+                RELEASE_TAG="v${RELEASE_VERSION%.*}-${RELEASE_VERSION##*.}"
+            else
+                die "${version_rule}"
+            fi
             ;;
     esac
     case "${PG_MAJOR}" in
@@ -353,11 +406,13 @@ validate_arguments() {
 }
 
 # The password-file contract documentdb-setup enforces, checked here so a bad
-# file fails before any package is installed. Clients prepare SCRAM passwords
-# with SASLprep, which rejects control characters and some non-ASCII, so such
-# a password would install fine and never log in. The ASCII-only rule is a
-# stopgap until the backend rejects SASLprep failures (documentdb/documentdb#765).
-PASSWORD_RULE="must hold one non-empty line of printable ASCII; one trailing newline (LF or CRLF) is allowed."
+# file fails before any package is installed. The backend refuses what
+# SASLprep refuses, except in pure ASCII, which it passes through unchecked
+# while clients still refuse ASCII controls. So this refuses controls (C0, DEL,
+# C1) and invalid UTF-8 and leaves the rest of SASLprep to the backend.
+# Non-ASCII needs iconv to prove it is UTF-8 (to UTF-16, as glibc's UTF-8 to
+# UTF-8 passes code points above U+10FFFF).
+PASSWORD_RULE="must hold one non-empty line of UTF-8 text without control characters; one trailing newline (LF or CRLF) is allowed."
 password_file_ok() {
     pw_file="$1"
     pw_size="$(wc -c < "${pw_file}")"
@@ -366,7 +421,15 @@ password_file_ok() {
         *0a) pw_size=$((pw_size - 1)) ;;
     esac
     [ "${pw_size}" -gt 0 ] &&
-        [ -z "$(head -c "${pw_size}" "${pw_file}" | LC_ALL=C tr -d '\040-\176' | od -An)" ]
+        [ -z "$(head -c "${pw_size}" "${pw_file}" | LC_ALL=C tr -d '\040-\176\200-\377' | od -An)" ] ||
+        return 1
+    [ -z "$(head -c "${pw_size}" "${pw_file}" | LC_ALL=C tr -d '\040-\176' | od -An)" ] && return 0
+    # Byte-aligned hex, so C2 80-9F (U+0080-U+009F) cannot match across bytes.
+    case " $(head -c "${pw_size}" "${pw_file}" | od -An -v -tx1 | tr -s ' \n' '  ') " in
+        *" c2 8"?" "* | *" c2 9"?" "*) return 1 ;;
+    esac
+    command -v iconv >/dev/null 2>&1 &&
+        head -c "${pw_size}" "${pw_file}" | iconv -f UTF-8 -t UTF-16 >/dev/null 2>&1
 }
 
 # The password never reaches argv, the environment, or the transcript: it is
@@ -397,8 +460,10 @@ stage_supplied_password_file() {
     staged_password_file="${TMP_DIR}/admin-password"
     cp "${ADMIN_PASSWORD_FILE}" "${staged_password_file}"
     chmod 0600 "${staged_password_file}"
-    # A configured host only reports status and never reads the password.
-    [ "${SETUP_CONFIGURED}" = "true" ] || password_file_ok "${staged_password_file}" ||
+    # A configured host only reports status, and --packages-only never runs
+    # setup; neither reads the password.
+    [ "${SETUP_CONFIGURED}" = "true" ] || [ "${PACKAGES_ONLY}" = "true" ] ||
+        password_file_ok "${staged_password_file}" ||
         die "Password file '${ADMIN_PASSWORD_FILE}' ${PASSWORD_RULE}"
     ADMIN_PASSWORD_FILE="${staged_password_file}"
 }
@@ -582,7 +647,7 @@ validate_native_environment() {
     for required in grep awk sed sort find mktemp install cp stat curl; do
         require_command "${required}"
     done
-    [ "${RELEASE_VERSION}" = "stable" ] || require_command sha256sum
+    [ "${RELEASE_KIND}" = "channel" ] || require_command sha256sum
 
     if [ "${PACKAGE_FAMILY}" = "apt" ]; then
         require_command apt-get
@@ -667,10 +732,10 @@ detect_installation_state() {
             acquire_privileges
             acquire_install_lock
         fi
-        die "A release-candidate installation was started on this host. Use a fresh host; rerunning this installer, including stable mode, cannot upgrade or adopt an RC."
+        die "A release-candidate installation was started on this host. Use a fresh host; rerunning this installer, with any release selection, cannot upgrade or adopt an RC."
     fi
     installed_packages="$(list_documentdb_packages)"
-    if [ "${RELEASE_VERSION}" != "stable" ]; then
+    if [ "${RELEASE_KIND}" = "rc" ]; then
         # Any dpkg state but not-installed counts: removed or half-installed
         # packages keep conffiles, and setup leaves files dpkg does not track.
         if [ -n "$(list_documentdb_packages '^.[^n]')" ] ||
@@ -689,6 +754,30 @@ detect_installation_state() {
     if [ -e "${brownfield_state}" ] || [ -L "${brownfield_state}" ]; then
         validate_trust_file "${brownfield_state}" "instance state" "600"
         die "PostgreSQL ${PG_MAJOR} already hosts a DocumentDB instance that was configured against an existing PostgreSQL server. Manage it with documentdb-setup and documentdb-gateway-admin; this bootstrap only creates new private instances."
+    fi
+
+    # All of this major's packages count, half-installed ones too: a pin's
+    # local packages would replace any at another version.
+    if [ "${RELEASE_KIND}" = "pinned" ]; then
+        # The DEB extension spells the release X.Y-Z (README.md, "Package version formats").
+        deb_extension_version="${RELEASE_VERSION%.*}-${RELEASE_VERSION##*.}"
+        for installed_package in $(list_documentdb_packages '^.[^nc]'); do
+            case "${installed_package}" in
+                "documentdb-${PG_MAJOR}"|"postgresql-${PG_MAJOR}-documentdb"|"postgresql${PG_MAJOR}-documentdb") ;;
+                # Other majors are handled below, as for channels.
+                documentdb-[0-9]*|postgresql*-documentdb) continue ;;
+            esac
+            if [ "${PACKAGE_FAMILY}" = "apt" ]; then
+                # shellcheck disable=SC2016 # dpkg-query expands ${Version} itself.
+                installed_version="$(probe PACKAGE_VERSION '' dpkg-query -W -f='${Version}' "${installed_package}")"
+            else
+                installed_version="$(probe PACKAGE_VERSION '' rpm -q --qf '%{VERSION}' "${installed_package}")"
+            fi
+            case "${installed_version}" in
+                "${RELEASE_VERSION}"|"${deb_extension_version}") ;;
+                *) die "${installed_package} ${installed_version:-of an unknown version} is already installed, not the pinned ${RELEASE_VERSION}. This bootstrap never upgrades or downgrades packages; change it with the package manager first." ;;
+            esac
+        done
     fi
 
     # Checked before other majors: their packages do not make this one unhealthy.
@@ -740,7 +829,11 @@ require_complete_packages() {
             missing_packages="${missing_packages} ${required_package}"
     done
     [ -n "${missing_packages}" ] || return 0
-    die "$1 Missing or not fully installed:${missing_packages}. Repair with '${repair_command}${missing_packages}', then rerun this installer."
+    repair_advice="Repair with '${repair_command}${missing_packages}'"
+    # A pinned host has no repository to reinstall from.
+    [ "${RELEASE_KIND}" != "pinned" ] ||
+        repair_advice="Reinstall them from the ${RELEASE_TAG} GitHub release files"
+    die "$1 Missing or not fully installed:${missing_packages}. ${repair_advice}, then rerun this installer."
 }
 
 # PATH is pinned to system directories, so a command in /usr/local would go
@@ -768,8 +861,17 @@ refuse_command_collisions() {
         die "Existing commands would shadow or be replaced by the DocumentDB commands:${collisions}. Remove or rename them, then rerun."
 }
 
+# apt and dnf read root-only files too, so once the lock is held sudo reads
+# what the caller cannot, and the recheck sees every definition. Hostnames
+# match in any case, as they do for apt and dnf.
 file_contains() {
-    [ -r "$1" ] && grep -Eq "$2" "$1"
+    if [ -r "$1" ]; then
+        grep -Eiq "$2" "$1"
+    elif [ "${LOCK_HELD}" = "true" ] && [ "${IS_ROOT}" = "false" ]; then
+        "${SUDO}" -n grep -Eiq "$2" "$1"
+    else
+        return 1
+    fi
 }
 
 file_matches_content() {
@@ -799,6 +901,60 @@ Signed-By: ${helper_keyring}" ] || continue
     return 1
 }
 
+# The DocumentDB definitions this script writes for channel $1. The stable
+# ones are the 1.0 installer's, byte for byte, so its hosts stay recognised.
+documentdb_apt_source() {
+    printf '%s\n' "deb [arch=${APT_ARCH} signed-by=/usr/share/keyrings/documentdb-archive-keyring.gpg] ${DOCUMENTDB_APT_REPOSITORY_URL} $1 ubuntu24"
+}
+
+documentdb_rpm_repo() {
+    rpm_repo_url="${DOCUMENTDB_RPM_REPOSITORY_URL}"
+    # latest sits beside stable's platform directory: rpm/latest/rhel9.
+    [ "$1" = "stable" ] || rpm_repo_url="${rpm_repo_url%/*}/latest/${rpm_repo_url##*/}"
+    printf '%s\n' "[documentdb]
+name=DocumentDB Repository
+baseurl=${rpm_repo_url}
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file://$(system_path /etc/pki/rpm-gpg/RPM-GPG-KEY-documentdb)"
+}
+
+# The definition documentdb.io publishes for channel $1.
+published_documentdb_rpm_repo() {
+    published_rpm_url="https://documentdb.io/rpm/rhel9"
+    [ "$1" = "stable" ] || published_rpm_url="https://documentdb.io/rpm/latest/rhel9"
+    printf '%s\n' "[documentdb]
+name=DocumentDB Repository
+baseurl=${published_rpm_url}
+enabled=1
+gpgcheck=1
+gpgkey=https://documentdb.io/documentdb-archive-keyring.gpg"
+}
+
+# Read-only, so reuse can check the selection without the install preflight.
+# Both channels are recognised so a mismatch can be named, not rewritten.
+detect_documentdb_channel() {
+    if [ "${PACKAGE_FAMILY}" = "apt" ]; then
+        managed_docdb="$(system_path /etc/apt/sources.list.d)/documentdb.list"
+    else
+        managed_docdb="$(system_path /etc/yum.repos.d)/documentdb.repo"
+    fi
+    DOCUMENTDB_CONFIGURED_CHANNEL=""
+    [ -f "${managed_docdb}" ] || return 0
+    for docdb_channel in latest stable; do
+        if [ "${PACKAGE_FAMILY}" = "apt" ]; then
+            file_matches_content "${managed_docdb}" "$(documentdb_apt_source "${docdb_channel}")" ||
+                continue
+        else
+            { file_matches_content "${managed_docdb}" "$(documentdb_rpm_repo "${docdb_channel}")" ||
+                file_matches_content "${managed_docdb}" "$(published_documentdb_rpm_repo "${docdb_channel}")"; } ||
+                continue
+        fi
+        DOCUMENTDB_CONFIGURED_CHANNEL="${docdb_channel}"
+    done
+}
+
 # Repository definitions are reused only when they are the definitions this
 # script would write, or for PGDG the helper's; anything else fails closed
 # instead of silently installing from an unexpected source.
@@ -807,10 +963,9 @@ preflight_apt_repositories() {
     managed_pgdg="${sources_dir}/pgdg.list"
     managed_docdb="${sources_dir}/documentdb.list"
     DESIRED_PGDG_SOURCE="deb [signed-by=/usr/share/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt noble-pgdg main"
-    DESIRED_DOCUMENTDB_SOURCE="deb [arch=${APT_ARCH} signed-by=/usr/share/keyrings/documentdb-archive-keyring.gpg] ${DOCUMENTDB_APT_REPOSITORY_URL} stable ubuntu24"
 
-    if [ -f "${managed_docdb}" ] &&
-        file_matches_content "${managed_docdb}" "${DESIRED_DOCUMENTDB_SOURCE}"; then
+    detect_documentdb_channel
+    if [ -n "${DOCUMENTDB_CONFIGURED_CHANNEL}" ]; then
         validate_trust_file "${managed_docdb}" "DocumentDB APT source" "644"
         DOCUMENTDB_REPO_PRESENT="true"
     fi
@@ -831,7 +986,7 @@ preflight_apt_repositories() {
         fi
         if file_contains "${file}" 'documentdb\.io/deb'; then
             { [ "${file}" = "${managed_docdb}" ] &&
-                file_matches_content "${file}" "${DESIRED_DOCUMENTDB_SOURCE}"; } ||
+                [ -n "${DOCUMENTDB_CONFIGURED_CHANNEL}" ]; } ||
                 die "Conflicting DocumentDB repository configuration found in ${file}. The installer only reuses its exact HTTPS source definition."
             validate_trust_file "${file}" "DocumentDB APT source" "644"
             DOCUMENTDB_REPO_PRESENT="true"
@@ -851,8 +1006,8 @@ preflight_apt_repositories() {
         require_apt_keyring_encoding "$(system_path "${PGDG_KEYRING}")" "PGDG"
     fi
     docdb_keyring="/usr/share/keyrings/documentdb-archive-keyring.gpg"
-    # An RC refuses this source right after preflight, so only stable needs its key.
-    if [ "${DOCUMENTDB_REPO_PRESENT}" = "true" ] && [ "${RELEASE_VERSION}" = "stable" ]; then
+    # Any other source is refused right after preflight, so only the selected channel needs its key.
+    if [ "${DOCUMENTDB_CONFIGURED_CHANNEL}" = "${RELEASE_VERSION}" ]; then
         [ -f "$(system_path "${docdb_keyring}")" ] ||
             die "The DocumentDB APT source is signed by ${docdb_keyring}, which is missing. Restore that key, or remove the source so the installer adds one, then rerun."
         require_apt_keyring_encoding "$(system_path "${docdb_keyring}")" "DocumentDB"
@@ -863,22 +1018,9 @@ preflight_rpm_repositories() {
     repo_dir="$(system_path /etc/yum.repos.d)"
     managed_pgdg="${repo_dir}/pgdg-redhat-all.repo"
     managed_docdb="${repo_dir}/documentdb.repo"
-    DESIRED_DOCUMENTDB_RPM_REPO="[documentdb]
-name=DocumentDB Repository
-baseurl=${DOCUMENTDB_RPM_REPOSITORY_URL}
-enabled=1
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=file://$(system_path /etc/pki/rpm-gpg/RPM-GPG-KEY-documentdb)"
-    PUBLISHED_DOCUMENTDB_RPM_REPO="[documentdb]
-name=DocumentDB Repository
-baseurl=https://documentdb.io/rpm/rhel9
-enabled=1
-gpgcheck=1
-gpgkey=https://documentdb.io/documentdb-archive-keyring.gpg"
 
-    if [ -f "${managed_docdb}" ] &&
-        file_matches_content "${managed_docdb}" "${DESIRED_DOCUMENTDB_RPM_REPO}"; then
+    detect_documentdb_channel
+    if [ -n "${DOCUMENTDB_CONFIGURED_CHANNEL}" ]; then
         validate_trust_file "${managed_docdb}" "DocumentDB DNF source" "644"
         DOCUMENTDB_REPO_PRESENT="true"
     fi
@@ -896,8 +1038,7 @@ gpgkey=https://documentdb.io/documentdb-archive-keyring.gpg"
         fi
         if file_contains "${file}" 'documentdb\.io/rpm'; then
             { [ "${file}" = "${managed_docdb}" ] &&
-                { file_matches_content "${file}" "${DESIRED_DOCUMENTDB_RPM_REPO}" ||
-                  file_matches_content "${file}" "${PUBLISHED_DOCUMENTDB_RPM_REPO}"; }; } ||
+                [ -n "${DOCUMENTDB_CONFIGURED_CHANNEL}" ]; } ||
                 die "Conflicting DocumentDB repository configuration found in ${file}. The installer only reuses its exact HTTPS repository definition."
             validate_trust_file "${file}" "DocumentDB DNF source" "644"
             DOCUMENTDB_REPO_PRESENT="true"
@@ -945,15 +1086,88 @@ detect_rhel_crb_method() {
     RHEL_CRB_METHOD="dnf"
 }
 
+# Reuse configures no repository, but a pin is only true without one, and a
+# channel must not contradict the one the host follows.
+reused_release_source_check() {
+    detect_documentdb_channel
+    # Preflight's rule, so an unreadable or untrusted file cannot hide a channel.
+    [ ! -e "${managed_docdb}" ] && [ ! -L "${managed_docdb}" ] ||
+        validate_trust_file "${managed_docdb}" "DocumentDB repository file" "644"
+    for file in "$(system_path /etc/apt/sources.list)" \
+        "$(system_path /etc/apt/sources.list.d)"/*.list \
+        "$(system_path /etc/apt/sources.list.d)"/*.sources \
+        "$(system_path /etc/yum.repos.d)"/*.repo; do
+        [ -f "${file}" ] || continue
+        # refuse_release_source_mismatch judges the recognised file.
+        [ "${file}" != "${managed_docdb}" ] || [ -z "${DOCUMENTDB_CONFIGURED_CHANNEL}" ] || continue
+        file_contains "${file}" 'documentdb\.io/(deb|rpm)' || continue
+        [ "${RELEASE_KIND}" != "pinned" ] ||
+            die "Pinned installation requires a host without a DocumentDB repository, but ${file} configures one, so the package manager could upgrade ${RELEASE_VERSION} from it. Existing repository configuration is not removed; remove it to pin this host."
+        # A second source would decide what upgrades follow, whatever the plan says.
+        [ -z "${DOCUMENTDB_CONFIGURED_CHANNEL}" ] ||
+            die "Conflicting DocumentDB repository configuration found in ${file}, beside ${managed_docdb}. The installer only reuses its exact source definition."
+    done
+    refuse_release_source_mismatch
+}
+
+# A fresh install gets the full preflight; reuse configures nothing, so only
+# the selection is checked.
+check_release_sources() {
+    # A directory the caller cannot list hides definitions apt and dnf still read.
+    for repo_dir in /etc/apt /etc/apt/sources.list.d /etc/yum.repos.d; do
+        repo_dir="$(system_path "${repo_dir}")"
+        [ ! -d "${repo_dir}" ] || { [ -r "${repo_dir}" ] && [ -x "${repo_dir}" ]; } ||
+            die "Cannot list ${repo_dir}, so its repository definitions cannot be checked. Rerun this installer as root."
+    done
+    # With no selection, a host keeps its channel, so 1.0 hosts rerun unchanged.
+    # Resolved once: the recheck after the lock holds the channel the plan names.
+    if [ "${RELEASE_DEFAULT}" = "true" ]; then
+        detect_documentdb_channel
+        RELEASE_VERSION="${DOCUMENTDB_CONFIGURED_CHANNEL:-latest}"
+        RELEASE_DEFAULT="false"
+    fi
+    if [ "${SETUP_CONFIGURED}" = "false" ] && [ "${SELECTED_PACKAGE_INSTALLED}" = "false" ]; then
+        preflight_repositories
+    else
+        reused_release_source_check
+    fi
+}
+
 preflight_repositories() {
+    # Runs again after the lock, so nothing from the first pass may carry over.
+    PGDG_REPO_PRESENT="false"
+    DOCUMENTDB_REPO_PRESENT="false"
+    PGDG_KEYRING="/usr/share/keyrings/postgresql.gpg"
     if [ "${PACKAGE_FAMILY}" = "apt" ]; then
         preflight_apt_repositories
     else
         preflight_rpm_repositories
     fi
-    if [ "${RELEASE_VERSION}" != "stable" ] && [ "${DOCUMENTDB_REPO_PRESENT}" = "true" ]; then
-        die "RC installation requires a clean host without a DocumentDB stable repository. Existing repository configuration is not removed."
-    fi
+    refuse_release_source_mismatch
+}
+
+# The release selection must match the repository the host follows, whether
+# the packages are about to be installed or are reused.
+refuse_release_source_mismatch() {
+    [ -n "${DOCUMENTDB_CONFIGURED_CHANNEL}" ] || return 0
+    case "${RELEASE_KIND}" in
+        channel)
+            [ "${DOCUMENTDB_CONFIGURED_CHANNEL}" != "${RELEASE_VERSION}" ] || return 0
+            channel_option="--version latest"
+            [ "${DOCUMENTDB_CONFIGURED_CHANNEL}" = "latest" ] || channel_option="--stable"
+            # Reuse writes no repository, so removing the file would leave an installed host on none.
+            switch_advice="remove that file to switch channels"
+            [ "${SELECTED_PACKAGE_INSTALLED}" = "false" ] ||
+                switch_advice="to switch, change that file to the ${RELEASE_VERSION} channel's definition yourself"
+            die "${managed_docdb} configures the DocumentDB ${DOCUMENTDB_CONFIGURED_CHANNEL} channel, but the ${RELEASE_VERSION} channel was selected. Rerun with ${channel_option} to keep it, or ${switch_advice}; the installer never rewrites it."
+            ;;
+        pinned)
+            die "Pinned installation requires a host without a DocumentDB repository, because the package manager would upgrade ${RELEASE_VERSION} from the ${DOCUMENTDB_CONFIGURED_CHANNEL} channel in ${managed_docdb}. Existing repository configuration is not removed; remove that file to pin this host, or rerun with --version ${DOCUMENTDB_CONFIGURED_CHANNEL} to follow the channel."
+            ;;
+        *)
+            die "RC installation requires a clean host without a DocumentDB repository. Existing repository configuration is not removed."
+            ;;
+    esac
 }
 
 print_argument() {
@@ -1269,19 +1483,34 @@ validate_required_setup_inputs() {
 
 print_plan() {
     log "Installation plan"
-    printf '  Release:          %s\n' "${RELEASE_VERSION}"
-    if [ "${RELEASE_VERSION}" != "stable" ]; then
-        warn "${RELEASE_VERSION} is for disposable testing only, not production. No RC maintenance or supported upgrades."
-    fi
+    case "${RELEASE_KIND}" in
+        channel) printf '  Release:          %s channel\n' "${RELEASE_VERSION}" ;;
+        pinned) printf '  Release:          %s, pinned (GitHub release %s)\n' "${RELEASE_VERSION}" "${RELEASE_TAG}" ;;
+        *)
+            printf '  Release:          %s\n' "${RELEASE_VERSION}"
+            warn "${RELEASE_VERSION} is for disposable testing only, not production. No RC maintenance or supported upgrades."
+            ;;
+    esac
     printf '  Operating system: %s\n' "${OS_DISPLAY}"
     if [ "${PACKAGE_FAMILY}" = "apt" ]; then
         printf '  Architecture:     %s\n  Package manager:  apt\n' "${APT_ARCH}"
+        upgrade_command="apt upgrade"
     else
         printf '  Architecture:     %s\n  Package manager:  dnf\n' "${RPM_ARCH}"
+        upgrade_command="dnf upgrade"
     fi
     printf '  PostgreSQL major: %s\n' "${PG_MAJOR}"
     printf '  Package:          documentdb-%s (%s)\n' "${PG_MAJOR}" \
         "$([ "${SELECTED_PACKAGE_INSTALLED}" = "true" ] && printf 'installed' || printf 'to install')"
+    # A reused channel install may have no repository; the source checks guarantee the rest.
+    if [ "${RELEASE_KIND}" = "channel" ] && [ "${SELECTED_PACKAGE_INSTALLED}" = "true" ] &&
+        [ -z "${DOCUMENTDB_CONFIGURED_CHANNEL}" ]; then
+        printf '  Updates:          unchanged; this run configures no repository\n'
+    elif [ "${RELEASE_KIND}" = "channel" ]; then
+        printf '  Updates:          %s follows the %s channel\n' "${upgrade_command}" "${RELEASE_VERSION}"
+    elif [ "${RELEASE_KIND}" = "pinned" ]; then
+        printf '  Updates:          none; no DocumentDB repository is configured, so %s will not upgrade it\n' "${upgrade_command}"
+    fi
     if [ "${SETUP_CONFIGURED}" = "true" ]; then
         printf '  Instance:         already configured; setup will not run again\n'
         printf '  Admin user:       existing credentials unchanged\n'
@@ -1304,7 +1533,7 @@ print_plan() {
 install_ubuntu() {
     apt_get update
     apt_get install -y --no-install-recommends ca-certificates curl gnupg
-    [ "${RELEASE_VERSION}" = "stable" ] || fetch_release_packages
+    [ "${RELEASE_KIND}" = "channel" ] || fetch_release_packages
 
     ensure_apt_keyring "$(system_path "${PGDG_KEYRING}")" \
         "${PGDG_APT_KEY_URL}" "${PGDG_APT_KEY_FINGERPRINT}" "PGDG"
@@ -1315,7 +1544,7 @@ install_ubuntu() {
             0644 "${DESIRED_PGDG_SOURCE}"
     fi
 
-    if [ "${RELEASE_VERSION}" = "stable" ]; then
+    if [ "${RELEASE_KIND}" = "channel" ]; then
         ensure_apt_keyring \
             "$(system_path /usr/share/keyrings/documentdb-archive-keyring.gpg)" \
             "${DOCUMENTDB_KEY_URL}" "${DOCUMENTDB_KEY_FINGERPRINT}" "DocumentDB"
@@ -1323,13 +1552,13 @@ install_ubuntu() {
             log "Reusing the existing DocumentDB APT repository configuration."
         else
             write_root_file "$(system_path /etc/apt/sources.list.d/documentdb.list)" \
-                0644 "${DESIRED_DOCUMENTDB_SOURCE}"
+                0644 "$(documentdb_apt_source "${RELEASE_VERSION}")"
         fi
     fi
 
     apt_get update
     suppress_default_cluster
-    if [ "${RELEASE_VERSION}" = "stable" ]; then
+    if [ "${RELEASE_KIND}" = "channel" ]; then
         apt_get install -y "documentdb-${PG_MAJOR}"
     else
         install_release_packages
@@ -1404,7 +1633,7 @@ install_rhel_family() {
         pgdg_key_fingerprint="${PGDG_RPM_X86_64_KEY_FINGERPRINT}"
     fi
 
-    [ "${RELEASE_VERSION}" = "stable" ] || fetch_release_packages
+    [ "${RELEASE_KIND}" = "channel" ] || fetch_release_packages
     # A reused repo with an unpublished minor would break the first dnf call.
     if [ "${PGDG_REPO_PRESENT}" = "true" ]; then
         use_pgdg_major_path_if_minor_unpublished
@@ -1446,20 +1675,20 @@ install_rhel_family() {
 
     run_root_no_stdin dnf -qy module disable postgresql
 
-    if [ "${RELEASE_VERSION}" = "stable" ]; then
+    if [ "${RELEASE_KIND}" = "channel" ]; then
         ensure_rpm_key "$(system_path /etc/pki/rpm-gpg/RPM-GPG-KEY-documentdb)" \
             "${DOCUMENTDB_KEY_URL}" "${DOCUMENTDB_KEY_FINGERPRINT}" "DocumentDB"
         if [ "${DOCUMENTDB_REPO_PRESENT}" = "true" ]; then
             log "Reusing the existing DocumentDB DNF repository configuration."
         else
             write_root_file "$(system_path /etc/yum.repos.d/documentdb.repo)" \
-                0644 "${DESIRED_DOCUMENTDB_RPM_REPO}"
+                0644 "$(documentdb_rpm_repo "${RELEASE_VERSION}")"
         fi
     fi
 
     run_root_no_stdin dnf clean expire-cache
     run_root_no_stdin dnf -y makecache --refresh
-    if [ "${RELEASE_VERSION}" = "stable" ]; then
+    if [ "${RELEASE_KIND}" = "channel" ]; then
         run_root_no_stdin dnf install -y "documentdb-${PG_MAJOR}"
     else
         install_release_packages
@@ -1490,8 +1719,7 @@ release_package_patterns() {
 # Runs before any repository is configured, so a release that cannot be
 # downloaded leaves no repository or key behind.
 fetch_release_packages() {
-    # Users type 1.0-rc2; the GitHub release tag is v1.0-RC2.
-    release_url="https://github.com/documentdb/documentdb/releases/download/v$(printf '%s' "${RELEASE_VERSION}" | tr 'rc' 'RC')"
+    release_url="https://github.com/documentdb/documentdb/releases/download/${RELEASE_TAG}"
     if [ "${DRY_RUN}" = "true" ]; then
         log "Would download ${release_url}/SHA256SUMS, select this host's five packages from it, and verify each."
         RELEASE_PACKAGE_FILES="<packages-listed-in-SHA256SUMS>"
@@ -1499,7 +1727,7 @@ fetch_release_packages() {
         release_dir="${TMP_DIR}/release"
         mkdir -m 0700 "${release_dir}"
         strict_curl "${release_url}/SHA256SUMS" "${release_dir}/SHA256SUMS" ||
-            die "Cannot download ${RELEASE_VERSION} checksums; no stable fallback."
+            die "Cannot download ${RELEASE_VERSION} checksums; there is no repository fallback."
         while read -r release_pattern; do
             release_match="$(awk -v pattern="^${release_pattern}\$" '$2 ~ pattern { print $1 "/" $2 }' "${release_dir}/SHA256SUMS")"
             case "${release_match}" in
@@ -1513,7 +1741,7 @@ fetch_release_packages() {
             [ "${#release_checksum}" -eq 64 ] ||
                 die "Expected one SHA256 checksum for ${release_package}."
             strict_curl "${release_url}/${release_package}" "${release_dir}/${release_package}" ||
-                die "Cannot download ${release_package}; no stable fallback."
+                die "Cannot download ${release_package}; there is no repository fallback."
             (
                 cd "${release_dir}"
                 printf '%s  %s\n' "${release_checksum}" "${release_package}" | sha256sum --check --status
@@ -1533,7 +1761,8 @@ install_release_packages() {
     done <<EOF
 ${RELEASE_PACKAGE_FILES}
 EOF
-    write_root_file "$(system_path "${RC_STATE_FILE}")" 0644 "${RELEASE_VERSION}"
+    [ "${RELEASE_KIND}" != "rc" ] ||
+        write_root_file "$(system_path "${RC_STATE_FILE}")" 0644 "${RELEASE_VERSION}"
     if [ "${PACKAGE_FAMILY}" = "apt" ]; then
         apt_get install -y "$@"
     else
@@ -1627,6 +1856,7 @@ main() {
     determine_privilege_mode
     create_temp_dir
     detect_installation_state
+    reject_reserved_admin_user
     stage_supplied_password_file
 
     if [ "${TESTING}" = "true" ] && [ "${TEST_VALIDATION_ONLY}" = "true" ]; then
@@ -1635,10 +1865,7 @@ main() {
         return 0
     fi
 
-    if [ "${SETUP_CONFIGURED}" = "false" ] &&
-        [ "${SELECTED_PACKAGE_INSTALLED}" = "false" ]; then
-        preflight_repositories
-    fi
+    check_release_sources
     print_plan
     validate_required_setup_inputs
 
@@ -1653,6 +1880,8 @@ main() {
     # Another installer may have finished while this one waited for the lock,
     # so the derived state is recomputed before anything is changed.
     detect_installation_state
+    reject_reserved_admin_user
+    check_release_sources
     if [ "${SETUP_CONFIGURED}" = "false" ]; then
         confirm_plan
         [ "${PACKAGES_ONLY}" = "true" ] || prompt_password_file

@@ -15,6 +15,7 @@
 #include <nodes/extensible.h>
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
+#include <nodes/supportnodes.h>
 #include <nodes/tidbitmap.h>
 #include <access/htup_details.h>
 #include <access/heapam.h>
@@ -22,6 +23,7 @@
 #include <optimizer/optimizer.h>
 #include <parser/parse_relation.h>
 #include <utils/rel.h>
+#include <utils/relcache.h>
 #include <access/detoast.h>
 #include <miscadmin.h>
 #include <catalog/pg_operator.h>
@@ -39,12 +41,17 @@
 #include "customscan/custom_scan_registrations.h"
 #include "metadata/metadata_cache.h"
 #include "query/query_operator.h"
+#include "query/bson_dollar_selectivity.h"
 #include "catalog/pg_am.h"
 #include "commands/cursor_common.h"
 #include "customscan/bson_custom_scan_private.h"
 #include "api_hooks.h"
 #include "opclass/bson_index_support.h"
+#include "opclass/bson_gin_index_term.h"
+#include "opclass/bson_gin_index_mgmt.h"
 #include "index_am/index_am_utils.h"
+#include "index_am/documentdb_rum.h"
+#include "utils/documentdb_errors.h"
 
 #if (PG_VERSION_NUM >= 150000)
 
@@ -60,6 +67,16 @@
 /* --------------------------------------------------------- */
 /* Data-types */
 /* --------------------------------------------------------- */
+
+typedef enum ContinuationIndexScanType
+{
+	/* Bitmap, TidRange or other non index scans */
+	ContinuationIndexScanType_None = 0,
+
+	ContinuationIndexScanType_PrimaryKey = 1,
+
+	ContinuationIndexScanType_SecondaryIndex = 2,
+} ContinuationIndexScanType;
 
 /*
  * The input continuation data parsed out during query planning.
@@ -79,7 +96,9 @@ typedef struct InputContinuation
 	const char *queryTableName;
 
 	/* Whether or not this is a primary key scan */
-	bool isPrimaryKeyScan;
+	ContinuationIndexScanType indexScanType;
+
+	const char *indexCollation;
 } InputContinuation;
 
 /*
@@ -108,7 +127,10 @@ typedef struct ContinuationState
 	bool currentTupleValid;
 
 	/* whether or not it's an index key based continuation */
-	bool isPrimaryKeyScan;
+	ContinuationIndexScanType indexScanType;
+
+	char indexScanName[NAMEDATALEN];
+	const char *indexScanCollation;
 
 	/* Continuation data */
 	Datum continuationDatums[INDEX_MAX_KEYS];
@@ -143,10 +165,15 @@ typedef struct ExtensionScanState
 	ItemPointerData userContinuationState;
 
 	/* The continuation from the primary key */
-	Datum primaryKeyDatums[INDEX_MAX_KEYS];
+	Datum cursorKeyDatums[2];
 
 	/* whether or not it has user primary key state */
 	bool hasPrimaryKeyState;
+
+	char secondaryIndexName[NAMEDATALEN];
+
+	/* whether or not it has secondary index state */
+	bool hasSecondaryIndexState;
 
 	/* Whether or not to consume the user continuation state */
 	bool hasUserContinuationState;
@@ -204,6 +231,7 @@ const ContinuationFieldNames ContinuationFields =
 	.RemoteQuery = { .string = "qr", .length = sizeof("qr") - 1 },
 	.ResumeToken = { .string = "rt", .length = sizeof("rt") - 1 },
 	.ResumeTokenData = { .string = "_data", .length = sizeof("_data") - 1 },
+	.SecondaryIndex = { .string = "six", .length = sizeof("six") - 1 },
 	.StreamingQuery = { .string = "qc", .length = sizeof("qc") - 1 },
 	.TableName = { .string = "table_name", .length = sizeof("table_name") - 1 },
 	.TailableQuery = { .string = "qt", .length = sizeof("qt") - 1 },
@@ -213,6 +241,7 @@ const ContinuationFieldNames ContinuationFields =
 
 extern bool EnablePrimaryKeyCursorScan;
 extern bool EnableContinuationFastBitmapLookup;
+extern bool EnableIndexScanOnStreamingCursors;
 
 #define InputContinuationNodeName "ExtensionScanInputContinuation"
 
@@ -254,6 +283,13 @@ static bool EqualUnsupportedExtensionScanNode(const struct ExtensibleNode *a,
 											  const struct ExtensibleNode *b);
 static Node * ReplaceCursorParamValuesMutator(Node *node, ParamListInfo boundParams);
 static IndexOptInfo * GetPrimaryKeyIndexOpt(RelOptInfo *rel);
+static TupleTableSlot * SkipIndexScanWithContinuation(ScanState *innerScanState,
+													  Datum indexKey,
+													  const char *collation,
+													  ItemPointer
+													  userContinuation,
+													  bool *shouldContinue,
+													  double *numSkipped);
 
 /* --------------------------------------------------------- */
 /* Top level exports */
@@ -291,6 +327,47 @@ static const ExtensibleNodeMethods InputContinuationMethods =
 
 PG_FUNCTION_INFO_V1(command_cursor_state);
 PG_FUNCTION_INFO_V1(command_current_cursor_state);
+PG_FUNCTION_INFO_V1(command_cursor_state_support);
+
+
+/*
+ * Cursor markers do not filter documents and should not affect scan costing.
+ */
+Datum
+command_cursor_state_support(PG_FUNCTION_ARGS)
+{
+	Node *supportRequest = (Node *) PG_GETARG_POINTER(0);
+	Pointer responsePointer = NULL;
+	if (!EnableIndexScanOnStreamingCursors)
+	{
+		PG_RETURN_POINTER(responsePointer);
+	}
+
+	if (IsA(supportRequest, SupportRequestSelectivity))
+	{
+		SupportRequestSelectivity *req = (SupportRequestSelectivity *) supportRequest;
+		if (req->root != NULL &&
+			EnablePlannerCostSelectivity(req->root, req->args))
+		{
+			req->selectivity = 1.0;
+			responsePointer = (Pointer) req;
+		}
+	}
+	else if (IsA(supportRequest, SupportRequestCost))
+	{
+		SupportRequestCost *req = (SupportRequestCost *) supportRequest;
+		if (req->root != NULL && req->node != NULL && IsA(req->node, FuncExpr) &&
+			EnablePlannerCostSelectivity(req->root, ((FuncExpr *) req->node)->args))
+		{
+			req->startup = 0;
+			req->per_tuple = 1e-19;
+			responsePointer = (Pointer) req;
+		}
+	}
+
+	PG_RETURN_POINTER(responsePointer);
+}
+
 
 /*
  * Dummy function used to send cursor state to the planner.
@@ -341,8 +418,7 @@ command_current_cursor_state(PG_FUNCTION_ARGS)
 							ContinuationFields.Value.length,
 							&binaryValue);
 
-	if (EnablePrimaryKeyCursorScan &&
-		CurrentQueryState->isPrimaryKeyScan)
+	if (CurrentQueryState->indexScanType == ContinuationIndexScanType_PrimaryKey)
 	{
 		pgbson_array_writer arrayWriter;
 		PgbsonWriterStartArray(&writer, ContinuationFields.PrimaryKey.string,
@@ -356,6 +432,23 @@ command_current_cursor_state(PG_FUNCTION_ARGS)
 		PgbsonArrayWriterWriteDocument(&arrayWriter, DatumGetPgBsonPacked(
 										   CurrentQueryState->continuationDatums[1]));
 		PgbsonWriterEndArray(&writer, &arrayWriter);
+	}
+	else if (CurrentQueryState->indexScanType == ContinuationIndexScanType_SecondaryIndex)
+	{
+		pgbson_writer innerWriter;
+		PgbsonWriterStartDocument(&writer, ContinuationFields.SecondaryIndex.string,
+								  ContinuationFields.SecondaryIndex.length, &innerWriter);
+		PgbsonWriterAppendUtf8(&innerWriter, "idx", 3, CurrentQueryState->indexScanName);
+
+		bson_value_t index_key_value = { 0 };
+		bytea *indexScanKeyBytea = DatumGetByteaP(
+			CurrentQueryState->continuationDatums[0]);
+		index_key_value.value_type = BSON_TYPE_BINARY;
+		index_key_value.value.v_binary.subtype = BSON_SUBTYPE_BINARY;
+		index_key_value.value.v_binary.data = (uint8_t *) VARDATA_ANY(indexScanKeyBytea);
+		index_key_value.value.v_binary.data_len = VARSIZE_ANY_EXHDR(indexScanKeyBytea);
+		PgbsonWriterAppendValue(&innerWriter, "key", 3, &index_key_value);
+		PgbsonWriterEndDocument(&writer, &innerWriter);
 	}
 
 	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
@@ -823,6 +916,32 @@ AddRowCompareToExistingPrimaryKeyPath(PlannerInfo *root, RelOptInfo *rel,
 }
 
 
+inline static bool
+IsValidSecondaryIndexScanPath(IndexPath *indexPath)
+{
+	if (GetIndexKeyCurrentKeyFunc(indexPath->indexinfo->relam,
+								  indexPath->indexinfo->opfamily[0]) == NULL)
+	{
+		return false;
+	}
+
+	CompositeOpClassMetadataInfo metadataInfo = { 0 };
+	CompositeOpClassMetadataReadResult readResult =
+		TryGetCompositeOpClassMetadataInfo(indexPath->indexinfo->indexoid,
+										   AccessShareLock,
+										   &metadataInfo);
+
+	/* We don't support index scans for multi-key currently. This is because
+	 * we're not serializing the dedup state across continuations.
+	 * TODO: Consider enabling this and allowing multi-key.
+	 */
+	bool orderedScanIsSafe =
+		readResult != CompositeOpClassMetadataReadResult_None &&
+		!metadataInfo.isMultiKey;
+	return orderedScanIsSafe;
+}
+
+
 /*
  * UpdatePathsWithExtensionStreamingCursorPlans wraps planner paths in
  * DocumentDBApiScan CustomPath nodes that carry cursor continuation state.
@@ -1073,10 +1192,10 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 	ParseContinuationState(&scanState, &inputContinuation);
 
 	List *customPlanPaths = NIL;
-	if (EnablePrimaryKeyCursorScan && scanState.hasPrimaryKeyState)
+	if (scanState.hasPrimaryKeyState)
 	{
 		/* It's a continuation of the primary key index - force resume from PK */
-		inputContinuation.isPrimaryKeyScan = true;
+		inputContinuation.indexScanType = ContinuationIndexScanType_PrimaryKey;
 
 		IndexPath *inputPath = NULL;
 		bool rowCompareInclusive = false;
@@ -1108,7 +1227,7 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 			inputPath = AddRowCompareToExistingPrimaryKeyPath(root, rel,
 															  existingPkPath,
 															  scanState.
-															  primaryKeyDatums,
+															  cursorKeyDatums,
 															  rowCompareInclusive);
 		}
 
@@ -1116,7 +1235,7 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 		{
 			ScanDirection scandir = ForwardScanDirection;
 			inputPath = GetPrimaryKeyContinuationIndexPath(root, rel,
-														   scanState.primaryKeyDatums,
+														   scanState.cursorKeyDatums,
 														   scandir,
 														   rowCompareInclusive);
 		}
@@ -1131,6 +1250,105 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 			baseRelPathTarget);
 		customPlanPaths = lappend(customPlanPaths, customPath);
 	}
+	else if (scanState.hasSecondaryIndexState)
+	{
+		/* It's a continuation of the secondary index - force resume from the same index */
+		inputContinuation.indexScanType = ContinuationIndexScanType_SecondaryIndex;
+
+		IndexPath *inputPath = NULL;
+
+		Oid indexOid = get_relname_relid(scanState.secondaryIndexName,
+										 ApiDataNamespaceOid());
+
+		if (!OidIsValid(indexOid))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+							errmsg("Secondary index not found to resume query: %s",
+								   scanState.secondaryIndexName)));
+		}
+
+		/* Costing can prune the saved index's path even while the index is valid. */
+		IndexPath *existingIndexPath = NULL;
+		foreach(cell, rel->pathlist)
+		{
+			Path *currentPath = lfirst(cell);
+			if (currentPath->pathtype == T_IndexScan ||
+				currentPath->pathtype == T_IndexOnlyScan)
+			{
+				/* Streaming cursors don't support indexonlyscan */
+				IndexPath *indexPath = (IndexPath *) currentPath;
+				indexPath->path.pathtype = T_IndexScan;
+				if (indexPath->indexinfo->indexoid == indexOid)
+				{
+					existingIndexPath = indexPath;
+					break;
+				}
+			}
+			else if (currentPath->pathtype == T_BitmapHeapScan)
+			{
+				BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) currentPath;
+				if (IsA(bitmapHeapPath->bitmapqual, IndexPath))
+				{
+					IndexPath *indexPath = (IndexPath *) bitmapHeapPath->bitmapqual;
+					if (indexPath->indexinfo->indexoid == indexOid)
+					{
+						existingIndexPath = indexPath;
+						break;
+					}
+				}
+			}
+		}
+
+		if (existingIndexPath == NULL)
+		{
+			Path *resumePath = PlanWithIndexAndGetPath(root, rel,
+													   list_make1_oid(indexOid));
+			if (IsA(resumePath, BitmapHeapPath))
+			{
+				BitmapHeapPath *bitmapPath = (BitmapHeapPath *) resumePath;
+				if (IsA(bitmapPath->bitmapqual, IndexPath))
+				{
+					existingIndexPath = (IndexPath *) bitmapPath->bitmapqual;
+				}
+			}
+			else if (IsA(resumePath, IndexPath))
+			{
+				existingIndexPath = (IndexPath *) resumePath;
+			}
+		}
+
+		if (existingIndexPath != NULL)
+		{
+			bytea *dedupState = NULL;
+			AddContinuationQualsToIndexPath(root, rel, existingIndexPath,
+											scanState.cursorKeyDatums[0],
+											dedupState);
+			inputPath = existingIndexPath;
+		}
+
+		if (inputPath == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+							errmsg(
+								"Failed to find existing index path to resume query: %s",
+								scanState.secondaryIndexName)));
+		}
+
+		if (!IsValidSecondaryIndexScanPath(inputPath))
+		{
+			ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
+							errmsg(
+								"Invalid secondary index scan path - index is no longer valid for streaming scan.")));
+		}
+
+		inputPath->path.pathtype = T_IndexScan;
+		AddOrderByRequiredClausesIfNecessary(inputPath, root, rel);
+
+		CustomPath *customPath = CreateCustomScanPathForContinuation(
+			root, rel, (Path *) inputPath, &inputContinuation,
+			baseRelPathTarget);
+		customPlanPaths = lappend(customPlanPaths, customPath);
+	}
 	else
 	{
 		/* Walk the existing paths and wrap them in a custom scan */
@@ -1138,8 +1356,9 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 		{
 			Path *inputPath = lfirst(cell);
 
-			bool isPrimaryKeyPath = false;
-			if (inputPath->pathtype == T_IndexScan)
+			ContinuationIndexScanType indexScanType = ContinuationIndexScanType_None;
+			if (inputPath->pathtype == T_IndexScan ||
+				inputPath->pathtype == T_IndexOnlyScan)
 			{
 				IndexPath *indexPath = (IndexPath *) inputPath;
 
@@ -1149,8 +1368,8 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 				/* Only support PK Cursor scan with _id clauses for unsharded collections
 				 * at the moment
 				 */
-				isPrimaryKeyPath = EnablePrimaryKeyCursorScan && isPrimaryKeyIndex &&
-								   hasShardKeyEqualityFilter;
+				bool isPrimaryKeyPath = EnablePrimaryKeyCursorScan && isPrimaryKeyIndex &&
+										hasShardKeyEqualityFilter;
 
 				if (isPrimaryKeyIndex && !isPrimaryKeyPath)
 				{
@@ -1158,21 +1377,38 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 				}
 
 				bool isIndexPathCostZero = inputPath->total_cost == 0;
-				if (!isPrimaryKeyPath &&
-					indexPath->indexinfo->amhasgetbitmap)
+				if (!isPrimaryKeyPath)
 				{
-					inputPath = (Path *) create_bitmap_heap_path(root, rel,
-																 inputPath,
-																 rel->lateral_relids, 1.0,
-																 0);
-					if (isIndexPathCostZero)
+					if (EnableIndexScanOnStreamingCursors &&
+						IsValidSecondaryIndexScanPath(indexPath) &&
+						!scanState.hasUserContinuationState)
 					{
-						/* Force the output path to also be cost 0
-						 * Since the base was cost 0 (see documentdb api's planner.c)
-						 */
-						inputPath->total_cost = 0;
-						inputPath->startup_cost = 0;
+						/* Streaming cursors don't support indexonlyscan */
+						indexPath->path.pathtype = T_IndexScan;
+						AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
+						indexScanType = ContinuationIndexScanType_SecondaryIndex;
 					}
+					else if (indexPath->indexinfo->amhasgetbitmap)
+					{
+						inputPath = (Path *) create_bitmap_heap_path(root, rel,
+																	 inputPath,
+																	 rel->lateral_relids,
+																	 1.0,
+																	 0);
+						if (isIndexPathCostZero)
+						{
+							/* Force the output path to also be cost 0
+							 * Since the base was cost 0 (see documentdb api's planner.c)
+							 */
+							inputPath->total_cost = 0;
+							inputPath->startup_cost = 0;
+						}
+					}
+				}
+				else
+				{
+					indexPath->path.pathtype = T_IndexScan;
+					indexScanType = ContinuationIndexScanType_PrimaryKey;
 				}
 			}
 			else if (inputPath->pathtype == T_BitmapHeapScan)
@@ -1184,11 +1420,23 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 				{
 					IndexPath *indexPath = (IndexPath *) bitmapQualPath;
 
-					isPrimaryKeyPath = IsBtreePrimaryKeyIndex(indexPath->indexinfo) &&
-									   hasShardKeyEqualityFilter;
+					bool isPrimaryKeyPath = IsBtreePrimaryKeyIndex(
+						indexPath->indexinfo) &&
+											hasShardKeyEqualityFilter;
 					if (isPrimaryKeyPath && EnablePrimaryKeyCursorScan)
 					{
+						indexScanType = ContinuationIndexScanType_PrimaryKey;
 						inputPath = (Path *) indexPath;
+						indexPath->path.pathtype = T_IndexScan;
+					}
+					else if (EnableIndexScanOnStreamingCursors &&
+							 IsValidSecondaryIndexScanPath(indexPath) &&
+							 !scanState.hasUserContinuationState)
+					{
+						indexScanType = ContinuationIndexScanType_SecondaryIndex;
+						inputPath = (Path *) indexPath;
+						indexPath->path.pathtype = T_IndexScan;
+						AddOrderByRequiredClausesIfNecessary(indexPath, root, rel);
 					}
 					else if (isPrimaryKeyPath)
 					{
@@ -1210,7 +1458,7 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 
 				if (EnablePrimaryKeyCursorScan && info != NULL)
 				{
-					isPrimaryKeyPath = true;
+					indexScanType = ContinuationIndexScanType_PrimaryKey;
 					inputPath = (Path *) create_index_path(
 						root, info, NIL, NIL, NIL, NIL, ForwardScanDirection, false,
 						rel->lateral_relids,
@@ -1251,12 +1499,14 @@ UpdatePathsWithExtensionStreamingCursorPlans(PlannerInfo *root, RelOptInfo *rel,
 				}
 			}
 
-			inputContinuation.isPrimaryKeyScan = isPrimaryKeyPath;
+			inputContinuation.indexScanType = indexScanType;
 
+			bool isValidIndexScan = (inputPath->pathtype == T_IndexScan &&
+									 indexScanType != ContinuationIndexScanType_None);
 			if (inputPath->pathtype != T_BitmapHeapScan &&
 				inputPath->pathtype != T_TidScan &&
 				inputPath->pathtype != T_TidRangeScan &&
-				!isPrimaryKeyPath &&
+				!isValidIndexScan &&
 				!IsValidScanPath(inputPath))
 			{
 				/* For now just break if it's not a seq scan or bitmap scan */
@@ -1642,6 +1892,36 @@ ExtensionScanBeginCustomScan(CustomScanState *node, EState *estate,
 	extensionScanState->innerScanState = (ScanState *) ExecInitNode(
 		extensionScanState->innerPlan, estate, eflags);
 
+	if (extensionScanState->queryState.indexScanType ==
+		ContinuationIndexScanType_SecondaryIndex)
+	{
+		Assert(IsA(extensionScanState->innerScanState, IndexScanState));
+		IndexScanState *indexScanState = (IndexScanState *)
+										 extensionScanState->innerScanState;
+		Relation indexRelation = indexScanState->iss_RelationDesc;
+		if (indexRelation != NULL)
+		{
+			strlcpy(extensionScanState->queryState.indexScanName,
+					RelationGetRelationName(indexRelation), NAMEDATALEN);
+			const bool copyIndexOptions = false;
+			bytea **indexOptions = RelationGetIndexAttOptions(indexRelation,
+															  copyIndexOptions);
+			if (indexOptions != NULL && indexOptions[0] != NULL)
+			{
+				const char *indexCollation = NULL;
+				uint32_t indexCollationLength = 0;
+				Get_Index_Collation_Option(
+					(BsonGinIndexOptionsBase *) indexOptions[0],
+					collation, indexCollation, indexCollationLength);
+				if (indexCollationLength > 0)
+				{
+					extensionScanState->queryState.indexScanCollation =
+						MemoryContextStrdup(estate->es_query_cxt, indexCollation);
+				}
+			}
+		}
+	}
+
 	/* Store the inner state here so that EXPLAIN works */
 	extensionScanState->custom_scanstate.custom_ps = list_make1(
 		extensionScanState->innerScanState);
@@ -1689,9 +1969,15 @@ ExtensionScanExplainCustomScan(CustomScanState *node, List *ancestors,
 	 * explain layer and emitted in the queryPlanner stage of the wire-protocol
 	 * explain response as "cursorScanType".
 	 */
-	if (extensionScanState->queryState.isPrimaryKeyScan)
+	if (extensionScanState->queryState.indexScanType ==
+		ContinuationIndexScanType_PrimaryKey)
 	{
 		ExplainPropertyText("cursorScanType", "streamingPrimaryKey", es);
+	}
+	else if (extensionScanState->queryState.indexScanType ==
+			 ContinuationIndexScanType_SecondaryIndex)
+	{
+		ExplainPropertyText("cursorScanType", "streamingSecondaryIndex", es);
 	}
 	else
 	{
@@ -1796,7 +2082,8 @@ PostProcessSlot(ExtensionScanState *extensionScanState, TupleTableSlot *slot)
 												   slot);
 	if (originalSlot->tts_tableOid == extensionScanState->queryState.currentTableId)
 	{
-		if (EnablePrimaryKeyCursorScan && extensionScanState->queryState.isPrimaryKeyScan)
+		if (extensionScanState->queryState.indexScanType ==
+			ContinuationIndexScanType_PrimaryKey)
 		{
 			if (originalSlot->tts_nvalid <
 				(int) DOCUMENT_DATA_TABLE_OBJECT_ID_VAR_ATTR_NUMBER)
@@ -1815,6 +2102,23 @@ PostProcessSlot(ExtensionScanState *extensionScanState, TupleTableSlot *slot)
 			MemoryContext originalContext = MemoryContextSwitchTo(slot->tts_mcxt);
 			extensionScanState->queryState.continuationDatums[1] = PointerGetDatum(
 				PgbsonCloneFromPgbson(objectId));
+			MemoryContextSwitchTo(originalContext);
+		}
+		else if (extensionScanState->queryState.indexScanType ==
+				 ContinuationIndexScanType_SecondaryIndex)
+		{
+			/* For secondary indexes, we have the continuation as the TID below, but we also copy the
+			 * current index key.
+			 */
+			IndexScanState *iss = (IndexScanState *) extensionScanState->innerScanState;
+
+			bytea *dedupStateUnused = NULL;
+			Datum currentKey = DocumentDBRumGetCurrentIndexKey(iss->iss_ScanDesc,
+															   &dedupStateUnused);
+			MemoryContext originalContext = MemoryContextSwitchTo(slot->tts_mcxt);
+			bytea *buffer = DatumGetByteaPCopy(currentKey);
+			extensionScanState->queryState.continuationDatums[0] = PointerGetDatum(
+				buffer);
 			MemoryContextSwitchTo(originalContext);
 		}
 
@@ -1843,11 +2147,25 @@ ExtensionScanNext(CustomScanState *node)
 		bool shouldContinue = false;
 		bool returnOnEquality = false;
 		double numSkipped = 0;
-		slot = SkipWithUserContinuation(extensionScanState->innerScanState,
-										&extensionScanState->userContinuationState,
-										returnOnEquality,
-										&shouldContinue,
-										&numSkipped);
+		if (extensionScanState->hasSecondaryIndexState)
+		{
+			slot = SkipIndexScanWithContinuation(extensionScanState->innerScanState,
+												 extensionScanState->cursorKeyDatums[0],
+												 extensionScanState->queryState.
+												 indexScanCollation,
+												 &extensionScanState->
+												 userContinuationState,
+												 &shouldContinue,
+												 &numSkipped);
+		}
+		else
+		{
+			slot = SkipWithUserContinuation(extensionScanState->innerScanState,
+											&extensionScanState->userContinuationState,
+											returnOnEquality,
+											&shouldContinue,
+											&numSkipped);
+		}
 
 		extensionScanState->hasUserContinuationState = false;
 		if (slot != NULL)
@@ -1920,7 +2238,7 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 {
 	extensionScanState->queryState.currentTableId = continuation->queryTableId;
 	extensionScanState->queryState.currentTableName = continuation->queryTableName;
-	extensionScanState->queryState.isPrimaryKeyScan = continuation->isPrimaryKeyScan;
+	extensionScanState->queryState.indexScanType = continuation->indexScanType;
 
 	bson_iter_t continuationIterator;
 	PgbsonInitIterator(continuation->continuation, &continuationIterator);
@@ -1996,6 +2314,7 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 				const char *tableName = NULL;
 				bson_value_t continuationBinaryValue = { 0 };
 				bson_value_t primaryKeyBsonValue = { 0 };
+				bson_value_t secondaryIndexBsonValue = { 0 };
 				while (bson_iter_next(&singleContinuationDoc))
 				{
 					StringView keyView = bson_iter_key_string_view(
@@ -2021,6 +2340,12 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 											  &ContinuationFields.PrimaryKey))
 					{
 						primaryKeyBsonValue = *bson_iter_value(&singleContinuationDoc);
+					}
+					else if (StringViewEquals(&keyView,
+											  &ContinuationFields.SecondaryIndex))
+					{
+						secondaryIndexBsonValue = *bson_iter_value(
+							&singleContinuationDoc);
 					}
 				}
 
@@ -2055,12 +2380,12 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 					{
 						if (index == 0)
 						{
-							extensionScanState->primaryKeyDatums[0] = Int64GetDatum(
+							extensionScanState->cursorKeyDatums[0] = Int64GetDatum(
 								bson_iter_as_int64(&primaryKeyIterator));
 						}
 						else if (index == 1)
 						{
-							extensionScanState->primaryKeyDatums[1] = PointerGetDatum(
+							extensionScanState->cursorKeyDatums[1] = PointerGetDatum(
 								PgbsonInitFromDocumentBsonValue(bson_iter_value(
 																	&primaryKeyIterator)));
 						}
@@ -2081,11 +2406,91 @@ ParseContinuationState(ExtensionScanState *extensionScanState,
 					extensionScanState->hasPrimaryKeyState = true;
 				}
 
+				if (secondaryIndexBsonValue.value_type == BSON_TYPE_DOCUMENT)
+				{
+					bson_iter_t secondaryIndexIterator;
+					BsonValueInitIterator(&secondaryIndexBsonValue,
+										  &secondaryIndexIterator);
+
+					bool hasIndexName = false;
+					bool hasIndexKey = false;
+					while (bson_iter_next(&secondaryIndexIterator))
+					{
+						const char *key = bson_iter_key(&secondaryIndexIterator);
+						if (strcmp(key, "idx") == 0)
+						{
+							if (bson_iter_type(&secondaryIndexIterator) != BSON_TYPE_UTF8)
+							{
+								ereport(ERROR, (errmsg(
+													"Expected UTF-8 value for secondary index name")));
+							}
+
+							uint32_t indexNameLength = 0;
+							const char *indexName = bson_iter_utf8(
+								&secondaryIndexIterator, &indexNameLength);
+							if (indexNameLength >= NAMEDATALEN)
+							{
+								ereport(ERROR, (errmsg("Secondary index name too long")));
+							}
+
+							strncpy(extensionScanState->secondaryIndexName, indexName,
+									NAMEDATALEN);
+							hasIndexName = true;
+						}
+						else if (strcmp(key, "key") == 0)
+						{
+							if (bson_iter_type(&secondaryIndexIterator) !=
+								BSON_TYPE_BINARY)
+							{
+								ereport(ERROR, (errmsg(
+													"Expected binary value for secondary index key")));
+							}
+
+							bson_subtype_t subType;
+							uint32_t binaryLen;
+							const uint8_t *bytes;
+							bson_iter_binary(&secondaryIndexIterator, &subType,
+											 &binaryLen, &bytes);
+
+							bytea *buffer = palloc(binaryLen + VARHDRSZ);
+							SET_VARSIZE(buffer, binaryLen + VARHDRSZ);
+							memcpy(VARDATA(buffer), bytes, binaryLen);
+							extensionScanState->cursorKeyDatums[0] = PointerGetDatum(
+								buffer);
+							hasIndexKey = true;
+						}
+						else
+						{
+							ereport(ERROR, (errmsg(
+												"Unexpected field in secondary index document: %s",
+												key)));
+						}
+					}
+
+					if (!hasIndexName)
+					{
+						ereport(ERROR, (errmsg("Secondary index name is missing")));
+					}
+					if (!hasIndexKey)
+					{
+						ereport(ERROR, (errmsg("Secondary index key is missing")));
+					}
+
+					extensionScanState->hasSecondaryIndexState = true;
+				}
+
 				memcpy(&extensionScanState->userContinuationState,
 					   continuationBinaryValue.value.v_binary.data,
 					   sizeof(ItemPointerData));
 				extensionScanState->rawUsercontinuation = *currentValue;
 				extensionScanState->hasUserContinuationState = true;
+
+				if (extensionScanState->hasSecondaryIndexState &&
+					extensionScanState->hasPrimaryKeyState)
+				{
+					ereport(ERROR, (errmsg(
+										"Both secondary index state and primary key state are set")));
+				}
 			}
 		}
 		else
@@ -2358,6 +2763,84 @@ SkipBitmapToUserContinuation(BitmapHeapScanState *bitmapScanState,
 #endif
 
 
+static TupleTableSlot *
+SkipIndexScanWithContinuation(ScanState *innerScanState, Datum indexKey,
+							  const char *collation, ItemPointer
+							  userContinuation,
+							  bool *shouldContinue, double *numSkipped)
+{
+	*shouldContinue = false;
+	*numSkipped = 0;
+
+	bytea *storedContinuation = DatumGetByteaP(indexKey);
+	Assert(ScanDirectionIsForward(innerScanState->ps.state->es_direction));
+	while (true)
+	{
+		CHECK_FOR_INTERRUPTS();
+
+		TupleTableSlot *slot = innerScanState->ps.ExecProcNode(
+			(PlanState *) innerScanState);
+		if (TupIsNull(slot))
+		{
+			return slot;
+		}
+
+		IndexScanState *indexScanState = (IndexScanState *) innerScanState;
+		bytea *dedupState = NULL;
+		Datum indexKeyValue = DocumentDBRumGetCurrentIndexKey(
+			indexScanState->iss_ScanDesc, &dedupState);
+		if (dedupState != NULL)
+		{
+			pfree(dedupState);
+			dedupState = NULL;
+		}
+
+		bytea *indexKeyBuffer = DatumGetByteaP(indexKeyValue);
+
+		bool isComparisonValidIgnore = false;
+		int cmp = CompareSerializedBsonIndexTerms(indexKeyBuffer, storedContinuation,
+												  collation, &isComparisonValidIgnore);
+		if ((Pointer) indexKeyBuffer != DatumGetPointer(indexKeyValue))
+		{
+			pfree(indexKeyBuffer);
+		}
+
+		if (cmp > 0)
+		{
+			/* Passed the index key - keep the slot. */
+			return slot;
+		}
+		else if (cmp < 0)
+		{
+			/* The ordered scan can start below the continuation's lower bound. */
+			(*numSkipped)++;
+			continue;
+		}
+
+		/* On the same index key - compare the tuple's TID with the user continuation. */
+
+		(*numSkipped)++;
+		TupleTableSlot *originalSlot = GetOriginalSlot(innerScanState, slot);
+		if (ItemPointerCompare(&originalSlot->tts_tid, userContinuation) == 0)
+		{
+			*shouldContinue = true;
+
+			/* Return the matching tuple. This is used when the continuation
+			 * points to a tuple that was fetched but not emitted to the client
+			 * (e.g., dynamic cursor bitmap scans where the batch limit was
+			 * reached before writing the tuple). */
+			return NULL;
+		}
+
+		if (ItemPointerCompare(&originalSlot->tts_tid, userContinuation) > 0)
+		{
+			/* already found a slot after the continuation. return. */
+			return slot;
+		}
+	}
+}
+
+
 /*
  * Skips enumerating rows until the specified continuation is hit.
  * If the enumeration lands *after* the given continuation, returns the tuple
@@ -2371,7 +2854,7 @@ SkipWithUserContinuation(ScanState *innerScanState, ItemPointer userContinuation
 	*shouldContinue = false;
 	*numSkipped = 0;
 
-	if (EnableContinuationFastBitmapLookup &&
+	if ((EnableContinuationFastBitmapLookup || EnableIndexScanOnStreamingCursors) &&
 		innerScanState->ps.type == T_BitmapHeapScanState)
 	{
 		BitmapHeapScanState *bitmapScanState =
@@ -2454,7 +2937,7 @@ CopyNodeInputContinuation(struct ExtensibleNode *target_node, const struct
 	newNode->continuation = PgbsonCloneFromPgbson(from->continuation);
 	newNode->queryTableId = from->queryTableId;
 	newNode->queryTableName = pstrdup(from->queryTableName);
-	newNode->isPrimaryKeyScan = from->isPrimaryKeyScan;
+	newNode->indexScanType = from->indexScanType;
 }
 
 
@@ -2470,7 +2953,7 @@ OutInputContinuation(StringInfo str, const struct ExtensibleNode *raw_node)
 	WRITE_STRING_FIELD_VALUE(continuation, string);
 	WRITE_OID_FIELD(queryTableId);
 	WRITE_STRING_FIELD(queryTableName);
-	WRITE_BOOL_FIELD(isPrimaryKeyScan);
+	WRITE_INT32_FIELD(indexScanType);
 }
 
 
@@ -2490,7 +2973,7 @@ ReadCustomScanContinuationExtensionScanNode(struct ExtensibleNode *node)
 	READ_STRING_FIELD_VALUE(continuationStr);
 	READ_OID_FIELD(queryTableId);
 	READ_STRING_FIELD(queryTableName);
-	READ_BOOL_FIELD(isPrimaryKeyScan);
+	READ_INT32_FIELD(indexScanType);
 	if (continuationStr != NULL)
 	{
 		local_node->continuation = PgbsonInitFromHexadecimalString(continuationStr);

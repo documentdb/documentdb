@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/postgres/data_client.rs
  *
  *-------------------------------------------------------------------------
@@ -563,45 +564,12 @@ pub trait PgDataClient: Send + Sync {
         F: Fn(Arc<Connection>) -> Fut + Send + Sync,
         Fut: Future<Output = std::result::Result<T, StatementError>> + Send,
     {
-        let source = if let Some((lsid, _)) = connection_context.transaction.as_ref() {
-            let caller = connection_context.user().principal()?;
-
-            if let Some(connection) = self
-                .service_context()
-                .transaction_store()
-                .get_connection(lsid, caller)
-            {
-                ConnectionSource::Transaction(connection)
-            } else {
-                // This should not happen because we check transaction existence at the beginning of each request handling,
-                // but we add this fallback just in case to avoid panicking and to allow the retry logic to kick in.
-                tracing::error!("Transaction connection not found for lsid {:?}, falling back to pool connection", lsid);
-                ConnectionSource::Pool(self.connection_pool()?)
-            }
-        } else {
-            match pull_connection {
-                PullConnection::Cursor(conn) => ConnectionSource::Cursor(conn),
-                PullConnection::PoolOrTransaction => {
-                    ConnectionSource::Pool(self.connection_pool()?)
-                }
-            }
-        };
-
-        let request = request_context.request();
-        let command_timeout_ms = bounded_by_deadline(
-            request.max_time_ms().map(i64::cast_unsigned),
-            request_context.deadline(),
-        );
-        let req_opts = self.request_options(command_timeout_ms);
-        let dynamic_configuration = self.dynamic_configuration();
-
-        run_request_with_retries(
-            source,
-            query_options,
-            req_opts,
-            self.max_request_timeout(),
-            dynamic_configuration.as_ref(),
+        run_query_with_default_source(
+            self,
             request_context,
+            connection_context,
+            pull_connection,
+            query_options,
             run_func,
         )
         .await
@@ -716,11 +684,95 @@ pub trait PgDataClient: Send + Sync {
     }
 }
 
+/// Runs a query with default source selection and deadline handling.
+///
+/// Trait overrides can delegate here without recursively calling themselves.
+/// This uses the client's pool, configuration and request options, and preserves
+/// retained transaction/cursor ownership before invoking the normal retry path.
+/// Request authentication remains the caller's responsibility.
+///
+/// # Errors
+/// Returns source-resolution or terminal execution errors.
+pub async fn run_query_with_default_source<D, T, F, Fut>(
+    client: &D,
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pull_connection: PullConnection,
+    query_options: QueryOptions,
+    run_func: F,
+) -> Result<T>
+where
+    D: PgDataClient + ?Sized,
+    T: Send,
+    F: Fn(Arc<Connection>) -> Fut + Send + Sync,
+    Fut: Future<Output = std::result::Result<T, StatementError>> + Send,
+{
+    let source = resolve_connection_source(client, connection_context, pull_connection)?;
+    let command_timeout_ms = bounded_by_deadline(
+        request_context
+            .request()
+            .max_time_ms()
+            .map(i64::cast_unsigned),
+        request_context.deadline(),
+    );
+    let request_options = client.request_options(command_timeout_ms);
+    let configuration = client.dynamic_configuration();
+
+    run_request_with_retries(
+        source,
+        query_options,
+        request_options,
+        client.max_request_timeout(),
+        configuration.as_ref(),
+        request_context,
+        run_func,
+    )
+    .await
+}
+
+/// Resolves a retained transaction/cursor connection or the client's pool.
+///
+/// Transactions take precedence over the requested source. A missing transaction
+/// connection retains the existing logged pool fallback.
+///
+/// # Errors
+/// Returns an authorization or pool-resolution error.
+pub fn resolve_connection_source<'a, D>(
+    client: &'a D,
+    connection_context: &ConnectionContext,
+    pull_connection: PullConnection,
+) -> Result<ConnectionSource<'a>>
+where
+    D: PgDataClient + ?Sized,
+{
+    if let Some((lsid, _)) = connection_context.transaction.as_ref() {
+        let caller = connection_context.user().principal()?;
+        if let Some(connection) = client
+            .service_context()
+            .transaction_store()
+            .get_connection(lsid, caller)
+        {
+            return Ok(ConnectionSource::Transaction(connection));
+        }
+        tracing::error!(
+            "Transaction connection not found for lsid {:?}, falling back to pool connection",
+            lsid
+        );
+        return Ok(ConnectionSource::Pool(client.connection_pool()?));
+    }
+
+    match pull_connection {
+        PullConnection::Cursor(connection) => Ok(ConnectionSource::Cursor(connection)),
+        PullConnection::PoolOrTransaction => Ok(ConnectionSource::Pool(client.connection_pool()?)),
+    }
+}
+
 /// Bounds a requested timeout by what remains of a deadline.
 ///
 /// A requested `None` means unbounded, so the deadline replaces it rather than
 /// being ignored.
-fn bounded_by_deadline(requested_ms: Option<u64>, deadline: Option<Instant>) -> Option<u64> {
+#[must_use]
+pub fn bounded_by_deadline(requested_ms: Option<u64>, deadline: Option<Instant>) -> Option<u64> {
     let Some(deadline) = deadline else {
         return requested_ms;
     };

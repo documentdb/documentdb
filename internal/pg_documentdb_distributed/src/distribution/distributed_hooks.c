@@ -952,6 +952,15 @@ RunDistributedOptionalUpgradeDataTables(int major, int minor, int patch)
 }
 
 
+static MongoCollection *
+GetEmptyMergeSourceCollectionCore(MongoCollection *targetCollection)
+{
+	return GetMongoCollectionByNameDatum(
+		CStringGetTextDatum(targetCollection->name.databaseName),
+		CStringGetTextDatum("system.dbSentinel"), AccessShareLock);
+}
+
+
 /*
  * Register hook overrides for DocumentDB.
  */
@@ -960,6 +969,7 @@ InitializeDocumentDBDistributedHooks(void)
 {
 	is_metadata_coordinator_hook = IsMetadataCoordinatorCore;
 	is_cluster_initialized_hook = IsClusterInitializedCore;
+	get_empty_merge_source_collection_hook = GetEmptyMergeSourceCollectionCore;
 	run_command_on_metadata_coordinator_hook = RunCommandOnMetadataCoordinatorCore;
 	execute_admin_write_command_on_all_nodes_hook =
 		ExecuteAdminWriteCommandOnAllNodesCore;

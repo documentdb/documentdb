@@ -155,8 +155,7 @@ $primary->safe_psql(
 CREATE EXTENSION IF NOT EXISTS documentdb_core CASCADE;
 CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;
 
-CREATE OR REPLACE FUNCTION documentdb_api_internal.cursor_directory_cleanup(
-	expiry_time_seconds bigint DEFAULT NULL)
+CREATE OR REPLACE FUNCTION documentdb_api_internal.cursor_directory_cleanup_background()
 RETURNS void
 LANGUAGE plpgsql
 AS $function$
@@ -280,15 +279,15 @@ documentdb.enable_cursor_cleanup_in_recovery = on
 		wait_for_log(
 			$standby,
 			qr/BGW_JOB_ATTEMPT_DISPATCHED [^\n]*job_id=92 [^\n]*execution_in_recovery=1\b/,
-			'recovery-only job dispatch',
+			'recovery job dispatch',
 			75),
-		'recovery-only job starts before promotion');
+		'recovery job starts before promotion');
 	ok(
 		wait_for_log(
 			$standby,
 			qr/Recovery cursor cleanup entered blocking test body/,
-			'recovery-only job blocking body'),
-		'recovery-only job is running before promotion');
+			'recovery job blocking body'),
+		'recovery job is running before promotion');
 
 	$standby->promote;
 
@@ -327,10 +326,10 @@ WHERE job_id IN (90, 91);
 
 	ok(
 		wait_for_job_success($standby, 92, 25),
-		'recovery-only job completes after promotion');
+		'recovery job completes after promotion');
 	ok(
 		wait_for_job_stats_success($standby, 92),
-		'recovery-only job publishes a successful terminal attempt');
+		'recovery job publishes a successful terminal attempt');
 	ok(
 		wait_for_log(
 			$standby,
@@ -391,7 +390,7 @@ recovery_job AS
 	SELECT last_observed_resolution_ts
 	FROM job_stats
 	WHERE job_id = 92
-	  AND role_execution_profile = 'recoveryOnly'
+	  AND role_execution_profile = 'recoveryEligible'
 )
 SELECT count(*) = 2
 	   AND (SELECT count(DISTINCT stats_reset_ts) = 1 FROM job_stats)

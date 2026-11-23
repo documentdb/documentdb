@@ -253,8 +253,8 @@ typedef struct SortIndexInputDetails
 } SortIndexInputDetails;
 
 
-struct IndexPath;
-bool CompositeIndexSupportsIndexOnlyScan(const struct IndexPath *indexPath,
+struct IndexOptInfo;
+bool CompositeIndexSupportsIndexOnlyScan(const struct IndexOptInfo *indexInfo,
 										 bool skipTruncationCheck);
 
 int32_t GetCompositeOpClassColumnNumber(const char *currentPath, void *contextOptions,

@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/requests/info.rs
  *
  *-------------------------------------------------------------------------
@@ -13,7 +14,7 @@ use tokio_postgres::IsolationLevel;
 use crate::{
     context::{LogicalSessionId, RequestTransactionInfo, TransactionNumber},
     error::{DocumentDBError, ErrorCode, Result},
-    requests::read_concern::ReadConcern,
+    requests::{read_concern::ReadConcern, read_preference::ReadPreference},
 };
 
 #[derive(Clone, Debug, Default)]
@@ -24,6 +25,7 @@ pub struct RequestInfo<'a> {
     collection: Option<Cow<'a, str>>,
     pub lsid: Option<LogicalSessionId>,
     read_concern: ReadConcern,
+    read_preference: Option<ReadPreference>,
     comment: Option<Cow<'a, str>>,
     explain: bool,
 }
@@ -64,6 +66,7 @@ pub struct StrictRequestInfo<'a> {
     collection: Option<Cow<'a, str>>,
     lsid: Option<LogicalSessionId>,
     read_concern: ReadConcern,
+    read_preference: Option<ReadPreference>,
     comment: Option<Cow<'a, str>>,
     explain: bool,
 }
@@ -85,6 +88,7 @@ impl<'a> StrictRequestInfo<'a> {
             collection: info.collection,
             lsid: info.lsid,
             read_concern: info.read_concern,
+            read_preference: info.read_preference,
             comment: info.comment,
             explain: info.explain,
         })
@@ -101,6 +105,7 @@ impl<'a> StrictRequestInfo<'a> {
                 .map(|collection| Cow::Owned(collection.into_owned())),
             lsid: self.lsid,
             read_concern: self.read_concern,
+            read_preference: self.read_preference,
             comment: self.comment.map(|comment| Cow::Owned(comment.into_owned())),
             explain: self.explain,
         }
@@ -142,6 +147,11 @@ impl<'a> StrictRequestInfo<'a> {
         &self.read_concern
     }
 
+    #[must_use]
+    pub(crate) const fn read_preference(&self) -> Option<ReadPreference> {
+        self.read_preference
+    }
+
     /// Returns the request `comment` field when it is a string.
     #[must_use]
     pub(crate) fn comment(&self) -> Option<&str> {
@@ -162,6 +172,7 @@ pub(super) struct RequestInfoBuilder<'a> {
     collection: Option<Cow<'a, str>>,
     lsid: Option<LogicalSessionId>,
     read_concern: ReadConcern,
+    read_preference: Option<ReadPreference>,
     comment: Option<Cow<'a, str>>,
     explain: bool,
 }
@@ -176,6 +187,7 @@ impl<'a> RequestInfoBuilder<'a> {
             collection: None,
             lsid: None,
             read_concern: ReadConcern::default(),
+            read_preference: None,
             comment: None,
             explain: false,
         }
@@ -225,6 +237,11 @@ impl<'a> RequestInfoBuilder<'a> {
         self
     }
 
+    pub(super) const fn read_preference(&mut self, read_preference: ReadPreference) -> &mut Self {
+        self.read_preference = Some(read_preference);
+        self
+    }
+
     pub(super) fn comment(&mut self, comment: &'a str) -> &mut Self {
         self.comment = Some(Cow::Borrowed(comment));
         self
@@ -252,6 +269,7 @@ impl<'a> RequestInfoBuilder<'a> {
             collection: self.collection,
             lsid: self.lsid,
             read_concern: self.read_concern,
+            read_preference: self.read_preference,
             comment: self.comment,
             explain: self.explain,
         })

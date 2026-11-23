@@ -16,8 +16,6 @@ const ERROR_MAPPINGS: &str = include_str!("../include/all_error_mappings_oss_gen
 const POSTGRES_ERRORS: &str = include_str!("../documentdb_macros/postgres_errors.csv");
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Consumers with an extended tokio-postgres API opt in via this cfg.
-    println!("cargo::rustc-check-cfg=cfg(pg_buffer_size)");
     // Cargo resolves these paths relative to this package, not the invoking workspace.
     println!("cargo::rerun-if-changed=../include/all_error_mappings_oss_generated.csv");
     println!("cargo::rerun-if-changed=../documentdb_macros/postgres_errors.csv");

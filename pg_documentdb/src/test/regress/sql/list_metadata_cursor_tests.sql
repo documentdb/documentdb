@@ -74,13 +74,3 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('list_metadata_db
 SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
 FROM documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": "list_idx_opts" }')
 ORDER BY 1;
-
--- emitEnableOrderedIndexFalseInResponse GUC test
--- GUC OFF: False index omits enableOrderedIndex entirely; all other behaviour unchanged
-SET documentdb.emitEnableOrderedIndexFalseInResponse TO off;
-SELECT documentdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch')
-FROM documentdb_api.list_indexes_cursor_first_page('list_metadata_db1', '{ "listIndexes": "list_idx_opts" }')
-ORDER BY 1;
-
--- Reset to default
-SET documentdb.emitEnableOrderedIndexFalseInResponse TO on;

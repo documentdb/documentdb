@@ -67,7 +67,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)
+         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document))
          Node: host=localhost port=58070 dbname=regression
          ->  Bitmap Heap Scan on documentdb_data.documents_4110_411001 collection
                Output: documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -84,7 +84,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)
+         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document))
          Node: host=localhost port=58070 dbname=regression
          ->  Bitmap Heap Scan on documentdb_data.documents_4110_411001 collection
                Output: documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -110,7 +110,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)
+         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document))
          Node: host=localhost port=58070 dbname=regression
          ->  Bitmap Heap Scan on documentdb_data.documents_4110_411001 collection
                Output: documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -152,7 +152,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) OFFSET '1'::bigint
+         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)) OFFSET '1'::bigint
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                Output: (documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
@@ -179,7 +179,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) LIMIT '2'::bigint
+         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)) LIMIT '2'::bigint
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                Output: (documentdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
@@ -204,7 +204,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) LIMIT '1'::bigint) agg_stage_2 OFFSET '1'::bigint
+         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document)) LIMIT '1'::bigint) agg_stage_2 OFFSET '1'::bigint
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                Output: (documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
@@ -228,7 +228,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) OFFSET '1'::bigint) agg_stage_2 LIMIT '1'::bigint
+         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document)) OFFSET '1'::bigint) agg_stage_2 LIMIT '1'::bigint
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                Output: (documentdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
@@ -257,7 +257,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_4110_411001 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND ((object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson)) AND (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_4110_411001 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND ((object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson)) AND ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)))
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documentdb_data.documents_4110_411001 collection
                Output: document
@@ -280,7 +280,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND ((object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson)) AND (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint))
+         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND ((object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson)) AND ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)))
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documentdb_data.documents_4110_411001 collection
                Output: documentdb_api_internal.bson_dollar_project(document, '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -302,7 +302,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_project(collection.document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND ((collection.object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson)) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) OFFSET '0'::bigint) agg_stage_2 WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "c" : "2" }'::documentdb_core.bsonquery)
+         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_project(collection.document, '{ "a.b" : { "$numberInt" : "1" }, "c" : "$_id", "_id" : { "$numberInt" : "0" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND ((collection.object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson)) AND ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) OFFSET '0'::bigint) agg_stage_2 WHERE (document OPERATOR(documentdb_api_catalog.#>) '{ "c" : "2" }'::documentdb_core.bsonquery)
          Node: host=localhost port=58070 dbname=regression
          ->  Subquery Scan on agg_stage_2
                Output: agg_stage_2.document
@@ -369,7 +369,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON ) SELECT document FROM bson_aggregation_pipeline(
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_add_fields(document, '{ "x" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "2" }, "xyz" : { "$numberInt" : "3" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "xyz" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)
+         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_add_fields(document, '{ "x" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "2" }, "xyz" : { "$numberInt" : "3" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "xyz" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document))
          Node: host=localhost port=58070 dbname=regression
          ->  Bitmap Heap Scan on documentdb_data.documents_4110_411001 collection
                Output: documentdb_api_internal.bson_dollar_add_fields(documentdb_api_internal.bson_dollar_add_fields(document, '{ "x" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "2" }, "xyz" : { "$numberInt" : "3" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), '{ "xyz" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -395,7 +395,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON ) SELECT document FROM bson_aggregation_pipeline(
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(document, '{ "a" : { "$numberInt" : "1" }, "xyz" : "$_id", "boolean" : "$$REMOVE" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)
+         Query: SELECT documentdb_api_internal.bson_dollar_add_fields(document, '{ "a" : { "$numberInt" : "1" }, "xyz" : "$_id", "boolean" : "$$REMOVE" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document))
          Node: host=localhost port=58070 dbname=regression
          ->  Bitmap Heap Scan on documentdb_data.documents_4110_411001 collection
                Output: documentdb_api_internal.bson_dollar_add_fields(document, '{ "a" : { "$numberInt" : "1" }, "xyz" : "$_id", "boolean" : "$$REMOVE" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -516,7 +516,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'd'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), 'e'::text, documentdb_api_internal.bsonlastwithexpr(document, '{ "" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
+         Query: SELECT documentdb_core.bson_repath_and_build('_id'::text, documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'd'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), 'e'::text, documentdb_api_internal.bsonlastwithexpr(document, '{ "" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)) GROUP BY (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
          Node: host=localhost port=58070 dbname=regression
          ->  GroupAggregate
                Output: documentdb_core.bson_repath_and_build('_id'::text, (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), 'd'::text, documentdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text), 'e'::text, documentdb_api_internal.bsonlastwithexpr(document, '{ "" : "$_id" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson, NULL::text)), (documentdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::documentdb_core.bson, true, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson))
@@ -548,7 +548,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "_id" : "1" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection TABLESAMPLE public.system_rows ('2'::bigint) WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) ORDER BY (random()) LIMIT '2'::bigint) agg_stage_1
+         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "_id" : "1" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection TABLESAMPLE public.system_rows ('2'::bigint) WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document)) ORDER BY (random()) LIMIT '2'::bigint) agg_stage_1
          Node: host=localhost port=58070 dbname=regression
          ->  Subquery Scan on agg_stage_1
                Output: documentdb_api_internal.bson_dollar_project(agg_stage_1.document, '{ "_id" : "1" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -571,7 +571,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "_id" : "1" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection TABLESAMPLE public.system_rows ('2'::bigint) WHERE (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) ORDER BY (random()) LIMIT '2'::bigint
+         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "_id" : "1" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection TABLESAMPLE public.system_rows ('2'::bigint) WHERE ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)) ORDER BY (random()) LIMIT '2'::bigint
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                Output: (documentdb_api_internal.bson_dollar_project(document, '{ "_id" : "1" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)), (random())
@@ -592,7 +592,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection TABLESAMPLE public.system_rows ('3'::bigint) WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) ORDER BY (random()) LIMIT '3'::bigint) agg_stage_1 ORDER BY (random()) LIMIT '2'::bigint
+         Query: SELECT document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection TABLESAMPLE public.system_rows ('3'::bigint) WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document)) ORDER BY (random()) LIMIT '3'::bigint) agg_stage_1 ORDER BY (random()) LIMIT '2'::bigint
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                Output: agg_stage_1.document, (random())
@@ -620,7 +620,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(collection.document, '$a.b'::text) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) agg_stage_1 ORDER BY (random()) LIMIT '2'::bigint
+         Query: SELECT document FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(collection.document, '$a.b'::text) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) agg_stage_1 ORDER BY (random()) LIMIT '2'::bigint
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                Output: agg_stage_1.document, (random())
@@ -655,7 +655,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: WITH internalinhibitoptimization AS MATERIALIZED (SELECT documentdb_api_internal.bson_dollar_add_fields(collection.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) SELECT documentdb_api_internal.bson_dollar_add_fields(document, '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM internalinhibitoptimization inhibit_stage_1
+         Query: WITH internalinhibitoptimization AS MATERIALIZED (SELECT documentdb_api_internal.bson_dollar_add_fields(collection.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) SELECT documentdb_api_internal.bson_dollar_add_fields(document, '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM internalinhibitoptimization inhibit_stage_1
          Node: host=localhost port=58070 dbname=regression
          ->  CTE Scan on internalinhibitoptimization inhibit_stage_1
                Output: documentdb_api_internal.bson_dollar_add_fields(inhibit_stage_1.document, '{ "newField2" : "someOtherField" }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -706,7 +706,7 @@ EXPlAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: WITH facet_base_0_0 AS (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) SELECT documentdb_api_catalog.bson_object_agg(document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'a'::text), '{ "a" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_add_fields(facetsub_stage_1.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM facet_base_0_0 facetsub_stage_1) agg_stage_sub_1_1 UNION ALL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'b'::text), '{ "b" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_core.bson_repath_and_build('d'::text, documentdb_api_internal.bsoncount(1)) AS document FROM (SELECT facetsub_stage_2.document FROM facet_base_0_0 facetsub_stage_2) agg_stage_sub_1_0) agg_stage_sub_1_1 UNION ALL SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'c'::text), '{ "c" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(facetsub_stage_3.document, '$a.b'::text) AS document FROM facet_base_0_0 facetsub_stage_3) agg_stage_sub_1_1)) agg_stage_0
+         Query: WITH facet_base_0_0 AS (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) SELECT documentdb_api_catalog.bson_object_agg(document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'a'::text), '{ "a" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_add_fields(facetsub_stage_1.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM facet_base_0_0 facetsub_stage_1) agg_stage_sub_1_1 UNION ALL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'b'::text), '{ "b" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_core.bson_repath_and_build('d'::text, documentdb_api_internal.bsoncount(1)) AS document FROM (SELECT facetsub_stage_2.document FROM facet_base_0_0 facetsub_stage_2) agg_stage_sub_1_0) agg_stage_sub_1_1 UNION ALL SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'c'::text), '{ "c" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(facetsub_stage_3.document, '$a.b'::text) AS document FROM facet_base_0_0 facetsub_stage_3) agg_stage_sub_1_1)) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_object_agg((COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_add_fields(facetsub_stage_1.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'a'::text), '{ "a" : [  ] }'::documentdb_core.bson)))
@@ -743,7 +743,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_catalog.bson_object_agg(document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'results'::text), '{ "results" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT facetsub_stage_1.document FROM (SELECT agg_stage_1_1.document FROM (SELECT documentdb_api_catalog.bson_object_agg(agg_stage_0.document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1_1.document, 'results'::text), '{ "results" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT facetsub_stage_0.document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) facetsub_stage_0 WHERE (facetsub_stage_0.document OPERATOR(documentdb_api_catalog.#=) '{ "result" : true }'::documentdb_core.bsonquery)) agg_stage_sub_1_1_1) agg_stage_0) agg_stage_1_1) facetsub_stage_1 WHERE (facetsub_stage_1.document OPERATOR(documentdb_api_catalog.#=) '{ "result" : true }'::documentdb_core.bsonquery)) agg_stage_sub_1_1) agg_stage_1
+         Query: SELECT documentdb_api_catalog.bson_object_agg(document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'results'::text), '{ "results" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT facetsub_stage_1.document FROM (SELECT agg_stage_1_1.document FROM (SELECT documentdb_api_catalog.bson_object_agg(agg_stage_0.document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1_1.document, 'results'::text), '{ "results" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT facetsub_stage_0.document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) facetsub_stage_0 WHERE (facetsub_stage_0.document OPERATOR(documentdb_api_catalog.#=) '{ "result" : true }'::documentdb_core.bsonquery)) agg_stage_sub_1_1_1) agg_stage_0) agg_stage_1_1) facetsub_stage_1 WHERE (facetsub_stage_1.document OPERATOR(documentdb_api_catalog.#=) '{ "result" : true }'::documentdb_core.bsonquery)) agg_stage_sub_1_1) agg_stage_1
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_object_agg((COALESCE(documentdb_api_catalog.bson_array_agg((documentdb_api_catalog.bson_object_agg((COALESCE(documentdb_api_catalog.bson_array_agg(collection.document, 'results'::text), '{ "results" : [  ] }'::documentdb_core.bson)))), 'results'::text), '{ "results" : [  ] }'::documentdb_core.bson)))
@@ -770,7 +770,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: WITH facet_base_2_0 AS (SELECT agg_stage_2_1.document FROM (SELECT documentdb_api_catalog.bson_object_agg(agg_stage_1.document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'results'::text), '{ "results" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT facetsub_stage_1.document FROM (SELECT agg_stage_1_1.document FROM (SELECT documentdb_api_catalog.bson_object_agg(agg_stage_0.document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1_1.document, 'results'::text), '{ "results" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT facetsub_stage_0.document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) facetsub_stage_0 WHERE (facetsub_stage_0.document OPERATOR(documentdb_api_catalog.#=) '{ "result" : true }'::documentdb_core.bsonquery)) agg_stage_sub_1_1_1) agg_stage_0) agg_stage_1_1) facetsub_stage_1 WHERE (facetsub_stage_1.document OPERATOR(documentdb_api_catalog.#=) '{ "result" : true }'::documentdb_core.bsonquery)) agg_stage_sub_1_1) agg_stage_1) agg_stage_2_1) SELECT documentdb_api_catalog.bson_object_agg(document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'a'::text), '{ "a" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_add_fields(facetsub_stage_1.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM facet_base_2_0 facetsub_stage_1) agg_stage_sub_1_1 UNION ALL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'b'::text), '{ "b" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_core.bson_repath_and_build('d'::text, documentdb_api_internal.bsoncount(1)) AS document FROM (SELECT facetsub_stage_2.document FROM facet_base_2_0 facetsub_stage_2) agg_stage_sub_1_0) agg_stage_sub_1_1 UNION ALL SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'c'::text), '{ "c" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(facetsub_stage_3.document, '$a.b'::text) AS document FROM facet_base_2_0 facetsub_stage_3) agg_stage_sub_1_1)) agg_stage_2
+         Query: WITH facet_base_2_0 AS (SELECT agg_stage_2_1.document FROM (SELECT documentdb_api_catalog.bson_object_agg(agg_stage_1.document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'results'::text), '{ "results" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT facetsub_stage_1.document FROM (SELECT agg_stage_1_1.document FROM (SELECT documentdb_api_catalog.bson_object_agg(agg_stage_0.document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1_1.document, 'results'::text), '{ "results" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT facetsub_stage_0.document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) facetsub_stage_0 WHERE (facetsub_stage_0.document OPERATOR(documentdb_api_catalog.#=) '{ "result" : true }'::documentdb_core.bsonquery)) agg_stage_sub_1_1_1) agg_stage_0) agg_stage_1_1) facetsub_stage_1 WHERE (facetsub_stage_1.document OPERATOR(documentdb_api_catalog.#=) '{ "result" : true }'::documentdb_core.bsonquery)) agg_stage_sub_1_1) agg_stage_1) agg_stage_2_1) SELECT documentdb_api_catalog.bson_object_agg(document) AS document FROM (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'a'::text), '{ "a" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_internal.bson_dollar_add_fields(facetsub_stage_1.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM facet_base_2_0 facetsub_stage_1) agg_stage_sub_1_1 UNION ALL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'b'::text), '{ "b" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_core.bson_repath_and_build('d'::text, documentdb_api_internal.bsoncount(1)) AS document FROM (SELECT facetsub_stage_2.document FROM facet_base_2_0 facetsub_stage_2) agg_stage_sub_1_0) agg_stage_sub_1_1 UNION ALL SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'c'::text), '{ "c" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_api_catalog.bson_dollar_unwind(facetsub_stage_3.document, '$a.b'::text) AS document FROM facet_base_2_0 facetsub_stage_3) agg_stage_sub_1_1)) agg_stage_2
          Node: host=localhost port=58070 dbname=regression
          ->  Aggregate
                Output: documentdb_api_catalog.bson_object_agg((COALESCE(documentdb_api_catalog.bson_array_agg(documentdb_api_internal.bson_dollar_add_fields(facetsub_stage_1.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson), 'a'::text), '{ "a" : [  ] }'::documentdb_core.bson)))
@@ -840,7 +840,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db',
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_project_find(document, '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "_id" : { "$gt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND ((collection.object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson)) AND (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST OFFSET '1'::bigint LIMIT '2'::bigint) agg_stage_4
+         Query: SELECT documentdb_api_internal.bson_dollar_project_find(document, '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "_id" : { "$gt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.document OPERATOR(documentdb_api_catalog.#>) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND ((collection.object_id OPERATOR(documentdb_core.>) '{ "" : "1" }'::documentdb_core.bson) AND (collection.object_id OPERATOR(documentdb_core.<) '{ "" : {  } }'::documentdb_core.bson)) AND ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document)) AND documentdb_api_internal.bson_dollar_fullscan(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) ORDER BY (documentdb_api_catalog.bson_orderby(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::documentdb_core.bson)) NULLS FIRST OFFSET '1'::bigint LIMIT '2'::bigint) agg_stage_4
          Node: host=localhost port=58070 dbname=regression
          ->  Subquery Scan on agg_stage_4
                Output: documentdb_api_internal.bson_dollar_project_find(agg_stage_4.document, '{ "a.b" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "_id" : { "$gt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -1012,7 +1012,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db',
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_4110_411001 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "1" }'::documentdb_core.bson) AND (shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint))
+         Query: SELECT document FROM documentdb_data.documents_4110_411001 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "1" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "1" }'::documentdb_core.bson) AND ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document)))
          Node: host=localhost port=58070 dbname=regression
          ->  Index Scan using _id_ on documentdb_data.documents_4110_411001 collection
                Output: document
@@ -1028,7 +1028,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db',
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_4110_411001 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "2" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "2" }'::documentdb_core.bson) AND ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.cursor_tracker(document, '{ "allowOffsetLimitNode" : false }'::documentdb_core.bson))) LIMIT '1'::bigint
+         Query: SELECT document FROM documentdb_data.documents_4110_411001 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "_id" : "2" }'::documentdb_core.bsonquery) AND (object_id OPERATOR(documentdb_core.=) '{ "" : "2" }'::documentdb_core.bson) AND ((shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(document) AND documentdb_api_internal.cursor_tracker(document, '{ "allowOffsetLimitNode" : false }'::documentdb_core.bson))) LIMIT '1'::bigint
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                Output: document
@@ -1142,7 +1142,7 @@ SELECT documentdb_api.insert_one('db','agg_pipeline_movie_catalog','{ "_id" : 19
 (1 row)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title" } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title" } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                                                         document                                                                                                                                                                        
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
@@ -1155,7 +1155,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
@@ -1168,7 +1168,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
@@ -1189,7 +1189,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1.document, "lookupRight_stage_1".document, true) AS document FROM ((SELECT collection.document FROM documentdb_data.documents_4111_411020 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4111'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_core.bson_repath_and_build('efe'::text, documentdb_api_internal.bsoncount(1)) AS document FROM (SELECT collection_0_1.document FROM documentdb_data.documents_4112_411038 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '4112'::bigint)) agg_stage_sub_1_0) agg_stage_sub_1_1) "lookupRight_stage_1" ON (true))) agg_stage_1 ORDER BY (random()) LIMIT '3'::bigint
+         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents(lookup_stage_1.document, "lookupRight_stage_1".document, true) AS document FROM ((SELECT collection.document FROM documentdb_data.documents_4111_411020 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4111'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT documentdb_core.bson_repath_and_build('efe'::text, documentdb_api_internal.bsoncount(1)) AS document FROM (SELECT collection_0_1.document FROM documentdb_data.documents_4112_411038 collection_0_1 WHERE ((collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '4112'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection_0_1.document))) agg_stage_sub_1_0) agg_stage_sub_1_1) "lookupRight_stage_1" ON (true))) agg_stage_1 ORDER BY (random()) LIMIT '3'::bigint
          Node: host=localhost port=58070 dbname=regression
          ->  Limit
                Output: (documentdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(documentdb_api_catalog.bson_array_agg((documentdb_core.bson_repath_and_build('efe'::text, documentdb_api_internal.bsoncount(1))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::documentdb_core.bson)), true)), (random())
@@ -1222,7 +1222,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1."funcName", 'matched_docs'::text), '{ "matched_docs" : [  ] }'::documentdb_core.bson) AS "funcName" FROM (SELECT documentdb_core.bson_repath_and_build('efe'::text, documentdb_api_internal.bsoncount(1)) AS "funcName" FROM (SELECT lookup_subpipeline_substage_0.lookup_unwind AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'matched_docs'::text) lookup_subpipeline_substage_0(lookup_unwind)) agg_stage_sub_1_0) agg_stage_sub_1_1), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "title" : "title" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_4111_411020 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4111'::bigint)) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_1.document FROM documentdb_data.documents_4112_411038 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '4112'::bigint)) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'title'::text)) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
+         Query: SELECT documentdb_api_internal.bson_dollar_merge_documents("left", (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(agg_stage_sub_1_1."funcName", 'matched_docs'::text), '{ "matched_docs" : [  ] }'::documentdb_core.bson) AS "funcName" FROM (SELECT documentdb_core.bson_repath_and_build('efe'::text, documentdb_api_internal.bsoncount(1)) AS "funcName" FROM (SELECT lookup_subpipeline_substage_0.lookup_unwind AS "funcName" FROM documentdb_api_catalog.bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'matched_docs'::text) lookup_subpipeline_substage_0(lookup_unwind)) agg_stage_sub_1_0) agg_stage_sub_1_1), true) AS document FROM (SELECT lookup_stage_1.document AS "left", "lookupRight_stage_1".document AS "right" FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "title" : "title" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_4111_411020 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4111'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) lookup_stage_1 JOIN LATERAL (SELECT COALESCE(documentdb_api_catalog.bson_array_agg(lookup_right_query_stage_0.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::documentdb_core.bson) AS document FROM (SELECT collection_0_1.document FROM documentdb_data.documents_4112_411038 collection_0_1 WHERE ((collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '4112'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection_0_1.document))) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'title'::text)) "lookupRight_stage_1" ON (true))) lookup_non_inlined_stage_1
          Node: host=localhost port=58070 dbname=regression
          ->  Nested Loop
                Output: documentdb_api_internal.bson_dollar_merge_documents(collection.document, (SubPlan 1), true)
@@ -1250,7 +1250,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 (30 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "coll_dne", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "coll_dne", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
@@ -1263,7 +1263,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "colldne", "pipeline": [], "as": "c" } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "colldne", "pipeline": [], "as": "c" } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                         document                                                                                                         
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "c" : [  ] }
@@ -1278,7 +1278,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
 BEGIN;
 set local citus.enable_local_execution to off;
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title" } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title" } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                                                         document                                                                                                                                                                        
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
@@ -1291,7 +1291,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
@@ -1304,7 +1304,7 @@ SELECT document FROM bson_aggregation_pipeline('db',
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
  { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
@@ -1324,83 +1324,83 @@ SELECT documentdb_api.shard_collection('db', 'agg_pipeline_movie_screenings', '{
 (1 row)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title" } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title" } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                                                         document                                                                                                                                                                        
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
 (7 rows)
 
 BEGIN;
 set local citus.enable_local_execution to off;
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title" } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title" } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                                                         document                                                                                                                                                                        
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
 (7 rows)
 
 ROLLBACK;
@@ -1411,94 +1411,94 @@ SELECT documentdb_api.shard_collection('db', 'agg_pipeline_movie_catalog', '{ "_
 (1 row)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title" } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title" } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                                                         document                                                                                                                                                                        
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "_id" : { "$numberInt" : "16" }, "title" : null, "genre" : "Unknown", "available_seats" : { "$numberInt" : "0" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "9" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "1" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "coll_dne", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "coll_dne", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                document                                                                                                                               
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "colldne", "pipeline": [], "as": "c" } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "colldne", "pipeline": [], "as": "c" } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                         document                                                                                                         
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "c" : [  ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "c" : [  ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "c" : [  ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "c" : [  ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "c" : [  ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "c" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "c" : [  ] }
  { "_id" : { "$numberInt" : "5" }, "c" : [  ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "c" : [  ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "c" : [  ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "c" : [  ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "as": "matched_docs", "pipeline": [ { "$documents": [ { "a": 1}, { "a": 2 } ] }  ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "as": "matched_docs", "pipeline": [ { "$documents": [ { "a": 1}, { "a": 2 } ] }  ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                                                                document                                                                                                                                               
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "a" : { "$numberInt" : "1" } }, { "a" : { "$numberInt" : "2" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
-    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "as": "matched_docs",  "foreignField": "foo", "localField": "_id", "pipeline": [ { "$documents": [ { "a": 1}, { "a": 2 } ] }  ] } } ], "cursor": {} }');
+    '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "as": "matched_docs",  "foreignField": "foo", "localField": "_id", "pipeline": [ { "$documents": [ { "a": 1}, { "a": 2 } ] }  ] } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
                                                                                                               document                                                                                                              
 ---------------------------------------------------------------------
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [  ] }
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [  ] }
  { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [  ] }
  { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [  ] }
  { "_id" : { "$numberInt" : "5" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [  ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [  ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [  ] }
 (7 rows)
 
 -- $lookup.pipeline Negative tests
@@ -1652,7 +1652,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) UNION ALL SELECT documentdb_api_internal.bson_dollar_add_fields(collection_0_1.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint)) agg_stage_0
+         Query: SELECT document FROM (SELECT collection.document FROM documentdb_data.documents_4110_411001 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document)) UNION ALL SELECT documentdb_api_internal.bson_dollar_add_fields(collection_0_1.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4110_411001 collection_0_1 WHERE ((collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '4110'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection_0_1.document))) agg_stage_0
          Node: host=localhost port=58070 dbname=regression
          ->  Append
                ->  Seq Scan on documentdb_data.documents_4110_411001 collection
@@ -2064,7 +2064,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
-         Query: SELECT document FROM documentdb_data.documents_4115_411094 collection WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "a" : "RANDOM_A" }'::documentdb_core.bsonquery)
+         Query: SELECT document FROM documentdb_data.documents_4115_411094 collection WHERE ((document OPERATOR(documentdb_api_catalog.#=) '{ "a" : "RANDOM_A" }'::documentdb_core.bsonquery) AND documentdb_api_internal.bson_indexopt_scan(document))
          Node: host=localhost port=58070 dbname=regression
          ->  Seq Scan on documentdb_data.documents_4115_411094 collection
                Output: document
@@ -2086,7 +2086,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 8
    Tasks Shown: One of 8
    ->  Task
-         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4115_411094 collection WHERE true
+         Query: SELECT documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson) AS document FROM documentdb_data.documents_4115_411094 collection WHERE documentdb_api_internal.bson_indexopt_scan(document)
          Node: host=localhost port=58070 dbname=regression
          ->  Seq Scan on documentdb_data.documents_4115_411094 collection
                Output: documentdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" } }'::documentdb_core.bson, '{ "now" : NOW_SYS_VARIABLE }'::documentdb_core.bson)
@@ -2248,7 +2248,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Task Count: 1
    Tasks Shown: All
    ->  Task
-         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents_at_path(lookup_stage_1.document, COALESCE("lookupRight_stage_1".document, '{ }'::documentdb_core.bson), 'director_info'::text) AS document FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "name" : "director" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_4118_411123 collection WHERE (collection.shard_key_value OPERATOR(pg_catalog.=) '4118'::bigint)) lookup_stage_1 LEFT JOIN LATERAL (SELECT lookup_right_query_stage_0.document FROM (SELECT collection_0_1.document FROM documentdb_data.documents_4117_411107 collection_0_1 WHERE (collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '4117'::bigint)) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'name'::text)) "lookupRight_stage_1" ON (true))) agg_stage_1 WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "title" : "Celestial Rift" }'::documentdb_core.bsonquery)
+         Query: SELECT document FROM (SELECT documentdb_api_internal.bson_dollar_merge_documents_at_path(lookup_stage_1.document, COALESCE("lookupRight_stage_1".document, '{ }'::documentdb_core.bson), 'director_info'::text) AS document FROM ((SELECT collection.document, documentdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "name" : "director" }'::documentdb_core.bson) AS lookup_filter FROM documentdb_data.documents_4118_411123 collection WHERE ((collection.shard_key_value OPERATOR(pg_catalog.=) '4118'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection.document))) lookup_stage_1 LEFT JOIN LATERAL (SELECT lookup_right_query_stage_0.document FROM (SELECT collection_0_1.document FROM documentdb_data.documents_4117_411107 collection_0_1 WHERE ((collection_0_1.shard_key_value OPERATOR(pg_catalog.=) '4117'::bigint) AND documentdb_api_internal.bson_indexopt_scan(collection_0_1.document))) lookup_right_query_stage_0 WHERE documentdb_api_internal.bson_dollar_lookup_join_filter(lookup_right_query_stage_0.document, lookup_stage_1.lookup_filter, 'name'::text)) "lookupRight_stage_1" ON (true))) agg_stage_1 WHERE (document OPERATOR(documentdb_api_catalog.#=) '{ "title" : "Celestial Rift" }'::documentdb_core.bsonquery)
          Node: host=localhost port=58070 dbname=regression
          ->  Nested Loop Left Join
                Output: documentdb_api_internal.bson_dollar_merge_documents_at_path(collection.document, COALESCE(collection_0_1.document, '{ }'::documentdb_core.bson), 'director_info'::text)

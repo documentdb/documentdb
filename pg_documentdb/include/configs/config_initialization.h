@@ -12,6 +12,7 @@
 #define DOCUMENTS_CONFIG_INITIALIZATION_H
 
 extern bool EnableWriteErrorCodeConversion;
+extern bool EnableDollarMergeOnAgnosticSources;
 
 void InitializeTestConfigurations(const char *prefix, const char *newGucPrefix);
 void InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix);

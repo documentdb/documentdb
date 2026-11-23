@@ -108,6 +108,7 @@ void ConsiderIndexOrderByPushdownForId(PlannerInfo *root, RelOptInfo *rel,
 									   ReplaceExtensionFunctionContext *context);
 void ConsiderIndexOnlyScan(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte,
 						   Index rti, ReplaceExtensionFunctionContext *context);
+bool IsNativePlannerIndexOnlyScanEnabled(void);
 void ConsiderMergeSortForInPrefix(PlannerInfo *root, RelOptInfo *rel,
 								  RangeTblEntry *rte, Index rti,
 								  ReplaceExtensionFunctionContext *context);

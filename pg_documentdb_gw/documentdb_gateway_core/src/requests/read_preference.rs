@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/requests/read_preference.rs
  *
  *-------------------------------------------------------------------------
@@ -13,7 +14,7 @@ use crate::{
     protocol::bson_scanner,
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadPreferenceMode {
     Primary,
     Secondary,
@@ -40,18 +41,40 @@ impl FromStr for ReadPreferenceMode {
     }
 }
 
-#[derive(Debug)]
-pub struct ReadPreference;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReadPreference {
+    mode: ReadPreferenceMode,
+    max_staleness_seconds: Option<i32>,
+    hedge_enabled: Option<bool>,
+}
 
 impl ReadPreference {
+    /// The mode the caller asked for.
+    #[must_use]
+    pub const fn mode(&self) -> ReadPreferenceMode {
+        self.mode
+    }
+
+    /// The requested staleness bound in seconds, or `None` when the field was absent.
+    #[must_use]
+    pub const fn max_staleness_seconds(&self) -> Option<i32> {
+        self.max_staleness_seconds
+    }
+
+    /// Whether hedging was requested, or `None` when the field was absent.
+    #[must_use]
+    pub const fn hedge_enabled(&self) -> Option<bool> {
+        self.hedge_enabled
+    }
+
     /// # Errors
     ///
-    /// Returns an error if the operation fails.
+    /// Returns an error for an invalid or unsupported preference.
     #[expect(
         clippy::too_many_lines,
         reason = "complex read preference parsing logic"
     )]
-    pub(super) fn parse(raw_document: Option<&[u8]>) -> Result<()> {
+    pub(super) fn parse(raw_document: Option<&[u8]>) -> Result<Self> {
         match raw_document {
             None => Err(DocumentDBError::documentdb_error(
                 ErrorCode::FailedToParse,
@@ -171,7 +194,11 @@ impl ReadPreference {
                     ));
                 }
 
-                Ok(())
+                Ok(Self {
+                    mode: read_preference_mode,
+                    max_staleness_seconds,
+                    hedge_enabled: hedge,
+                })
             }
         }
     }
@@ -220,7 +247,66 @@ mod tests {
     fn parse_document_bytes_accepts_primary() {
         let doc = rawdoc! { "mode": "primary" };
 
-        ReadPreference::parse(Some(doc.as_bytes())).unwrap();
+        let preference = ReadPreference::parse(Some(doc.as_bytes())).unwrap();
+        assert_eq!(preference.mode(), ReadPreferenceMode::Primary);
+        assert_eq!(preference.max_staleness_seconds(), None);
+        assert_eq!(preference.hedge_enabled(), None);
+    }
+
+    #[test]
+    fn parse_retains_supported_modes_and_staleness() {
+        for (mode, expected) in [
+            ("primaryPreferred", ReadPreferenceMode::PrimaryPreferred),
+            ("secondaryPreferred", ReadPreferenceMode::SecondaryPreferred),
+            ("nearest", ReadPreferenceMode::Nearest),
+        ] {
+            let doc = rawdoc! {
+                "mode": mode,
+                "maxStalenessSeconds": 30,
+                "hedge": { "enabled": false },
+            };
+            let preference = ReadPreference::parse(Some(doc.as_bytes())).unwrap();
+            assert_eq!(preference.mode(), expected);
+            assert_eq!(preference.max_staleness_seconds(), Some(30));
+            assert_eq!(preference.hedge_enabled(), Some(false));
+        }
+    }
+
+    #[test]
+    fn secondary_refusal_still_precedes_unsupported_hedging() {
+        let doc = rawdoc! { "mode": "secondary", "hedge": { "enabled": true } };
+        let error = ReadPreference::parse(Some(doc.as_bytes())).unwrap_err();
+        assert_eq!(error.error_code(), ErrorCode::FailedToSatisfyReadPreference);
+        assert_eq!(
+            error.error_message_user(),
+            "no server available for query with ReadPreference secondary"
+        );
+    }
+
+    #[test]
+    fn staleness_validation_does_not_truncate_or_relax_the_domain() {
+        for doc in [
+            rawdoc! { "mode": "nearest", "maxStalenessSeconds": 1.5 },
+            rawdoc! { "mode": "nearest", "maxStalenessSeconds": i64::MAX },
+            rawdoc! { "mode": "nearest", "maxStalenessSeconds": -1 },
+            rawdoc! { "mode": "nearest", "maxStalenessSeconds": 1, "maxStalenessSeconds": 2 },
+        ] {
+            assert_eq!(
+                ReadPreference::parse(Some(doc.as_bytes()))
+                    .unwrap_err()
+                    .error_code(),
+                ErrorCode::FailedToParse
+            );
+        }
+        for seconds in [0, i32::MAX] {
+            let doc = rawdoc! { "mode": "nearest", "maxStalenessSeconds": seconds };
+            assert_eq!(
+                ReadPreference::parse(Some(doc.as_bytes()))
+                    .unwrap()
+                    .max_staleness_seconds(),
+                Some(seconds)
+            );
+        }
     }
 
     #[test]

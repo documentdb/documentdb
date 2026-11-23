@@ -136,6 +136,7 @@ extern bool SkipIndexCleanupOnReindex;
 extern bool EnableUniqueReindex;
 extern bool EnableBackgroundIndexBuildNotify;
 extern int IndexBuildScheduleInSec;
+extern char *CurrentOpApplicationName;
 
 /*
  * IndexBuildFailurePoint: test-only GUC to inject failures at specific points
@@ -215,6 +216,7 @@ static IndexCmdRequest * GetNextBackgroundIndexBuildRequest(MemoryContext stable
 															buildState);
 static void ReleaseBackgroundIndexBuildLock(BackgroundIndexBuildState *buildState);
 static bool WaitForIndexCreateNotification(BackgroundIndexBuildState *buildState);
+static inline void SetIndexBuildApplicationName(const char *applicationName);
 static Datum build_index_background_core(PG_FUNCTION_ARGS);
 static void PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
 									   isReindexViaCreate);
@@ -261,6 +263,26 @@ command_build_index_background(PG_FUNCTION_ARGS)
 
 
 /*
+ * Use a session setting: physical creation and unique post-processing commit
+ * internally, so a SET LOCAL GUC is reset before validation even with
+ * a new GUC nest level. Use the same helper to restore the previous name.
+ * NULL means no override was made; an empty original name still needs restoring.
+ */
+static inline void
+SetIndexBuildApplicationName(const char *applicationName)
+{
+	if (applicationName != NULL)
+	{
+		const bool changeValue = true;
+		const bool isReload = false;
+		set_config_option("application_name", applicationName,
+						  PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SET,
+						  changeValue, 0, isReload);
+	}
+}
+
+
+/*
  * Core logic for building indexes in background.
  * Called by a job that is scheduled via either:
  *  a) pg_cron
@@ -292,8 +314,26 @@ build_index_background_core(PG_FUNCTION_ARGS)
 														ALLOCSET_DEFAULT_SIZES);
 	BackgroundIndexBuildState buildState = { .startedAt = GetCurrentTimestamp() };
 	do {
+		/*
+		 * Physical creation uses a helper connection, but unique validation runs
+		 * in this job session. Name the job for currentOp rather than adding a
+		 * special admission exception to the collector. Keep the saved name in
+		 * createContext so it survives the core's commits.
+		 *
+		 * Restore on normal return, including errors handled inside the core.
+		 * An escaping error tears down this dedicated session, so no additional
+		 * PG_TRY/PG_CATCH or volatile restoration state is needed here.
+		 */
+		char *previousApplicationName = NULL;
+		if (CurrentOpApplicationName != NULL && CurrentOpApplicationName[0] != '\0')
+		{
+			previousApplicationName = MemoryContextStrdup(createContext,
+														  application_name);
+			SetIndexBuildApplicationName(CurrentOpApplicationName);
+		}
 		runStatus = build_index_concurrently_from_indexqueue_core(createContext,
 																  &buildState);
+		SetIndexBuildApplicationName(previousApplicationName);
 		ReleaseBackgroundIndexBuildLock(&buildState);
 
 		/* Commit and start before doing another round */
@@ -1866,7 +1906,7 @@ SubmitCreateIndexesRequest(Datum dbNameDatum,
 	foreach(indexDefCell, indexDefList)
 	{
 		IndexDef *indexDef = (IndexDef *) lfirst(indexDefCell);
-		const IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
+		const IndexSpec indexSpec = MakeIndexSpecFromIndexDef(indexDef);
 		bool indexIsValid = false;
 		int indexId = RecordCollectionIndex(collectionId, &indexSpec, indexIsValid);
 

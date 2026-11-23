@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- * SPDX-License-Identifier: MIT
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * src/configs/feature_flag_configs.c
  *
@@ -246,20 +246,6 @@ bool EnableEmptyArrayMultiKeyMarking = DEFAULT_ENABLE_EMPTY_ARRAY_MULTI_KEY_MARK
 bool EnableMultiKeyFilterIndexOnlyScan =
 	DEFAULT_ENABLE_MULTI_KEY_FILTER_INDEX_ONLY_SCAN;
 
-/*
- * Temporary kill switch for candidate detection; when off, projection walking
- * stays fully guarded by EnableIndexOnlyScanForFindProject (the old behavior).
- * Added on v0.116, enabled on v0.116, remove after v1.2.
- */
-#define DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE true
-bool TrackIndexOnlyScanFindCandidate =
-	DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE;
-
-/* Added in v0.114, enabled on v0.113, remove after v1.1 */
-#define DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE true
-bool EmitEnableOrderedIndexFalseInResponse =
-	DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE;
-
 /* Added in v0.116, Pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_COMPOSITE_REDUCED_CORRELATED_BOUNDS_PLANNING false
 bool EnableCompositeReducedCorrelatedBoundsPlanning =
@@ -395,7 +381,7 @@ bool EnableDynamicCursors = DEFAULT_ENABLE_DYNAMIC_CURSORS;
 bool EnableDynamicCursorWithSkipLimit =
 	DEFAULT_ENABLE_DYNAMIC_CURSOR_WITH_SKIPLIMIT;
 
-/* Added in v1.0, pending stabilization, enable in v1.3 */
+/* Added in v1.0, pending stabilization, enable in v1.6 */
 #define DEFAULT_ENABLE_DYNAMIC_CURSOR_EARLY_INDEX_LOCK_RELEASE false
 bool EnableDynamicCursorEarlyIndexLockRelease =
 	DEFAULT_ENABLE_DYNAMIC_CURSOR_EARLY_INDEX_LOCK_RELEASE;
@@ -421,14 +407,6 @@ bool EnableIndexPathKeySummarization = DEFAULT_ENABLE_INDEX_PATH_KEY_SUMMARIZATI
 /* Added in v0.114, enabled in v0.117, remove after v1.1 */
 #define DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN true
 bool EnableDistinctCustomScan = DEFAULT_ENABLE_DISTINCT_CUSTOM_SCAN;
-
-/* Added in v0.114, enabled in v0.117, remove after v1.1 */
-#define DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN true
-bool EnableGroupByDistinctScan = DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN;
-
-/* Added in v0.114, enabled in v0.117, remove after v1.1 */
-#define DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST true
-bool EnableDistinctScanForGroupFirst = DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST;
 
 /* Added in v1.0, enabled in v1.0, remove after v1.3 */
 #define DEFAULT_ENABLE_DISTINCT_SCAN_FOR_ORDERED_GROUP_FIRST true
@@ -467,6 +445,11 @@ bool EnableWritableContribCollections = DEFAULT_ENABLE_WRITABLE_CONTRIB_COLLECTI
 /* Added in v0.109, enabled in v0.115, remove after v1.4 */
 #define DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN true
 bool EnablePrimaryKeyCursorScan = DEFAULT_ENABLE_PRIMARY_KEY_CURSOR_SCAN;
+
+/* Added on v1.4, pending stabilization, enable on v1.7 */
+#define DEFAULT_ENABLE_INDEX_SCAN_ON_STREAMING_CURSORS false
+bool EnableIndexScanOnStreamingCursors =
+	DEFAULT_ENABLE_INDEX_SCAN_ON_STREAMING_CURSORS;
 
 /* Added in v0.108, Pending stabilization, enable in v1.5 */
 #define DEFAULT_USE_FILE_BASED_PERSISTED_CURSORS false
@@ -532,10 +515,15 @@ bool EnableSubqueryPushdownForMatchOnPersistedCursors =
 #define DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_GROUP false
 bool EnableSubqueryPushdownForGroup = DEFAULT_ENABLE_SUBQUERY_PUSHDOWN_FOR_GROUP;
 
-/* Added in v0.117, Pending stabilization, enable in v1.3 */
+/* Added in v0.117, Pending stabilization, enable in v1.5 */
 #define DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER false
 bool EnableRumIndexOnlyScanProjectionWrapper =
 	DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER;
+
+/* Added in v1.3, enabled in v1.3, remove after v1.6 */
+#define DEFAULT_ENABLE_NATIVE_PLANNER_INDEX_ONLY_SCAN true
+bool EnableNativePlannerIndexOnlyScan =
+	DEFAULT_ENABLE_NATIVE_PLANNER_INDEX_ONLY_SCAN;
 
 /* Added in v0.115, enabled in v1.1, remove after v1.3 */
 #define DEFAULT_ENABLE_DOLLAR_SAMPLE_HEAP_SKIP_RESERVOIR_SCAN true
@@ -549,6 +537,11 @@ bool EnableExistentialNullArrayMatch = DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MAT
 /* Added on v1.1, enabled on v1.1, remove after v1.3 */
 #define DEFAULT_ENABLE_MERGE_GENERATED_ID_CONSISTENCY true
 bool EnableMergeGeneratedIdConsistency = DEFAULT_ENABLE_MERGE_GENERATED_ID_CONSISTENCY;
+
+/* Added on v1.3, enabled on v1.3, remove after v1.5 */
+#define DEFAULT_ENABLE_DOLLAR_MERGE_ON_AGNOSTIC_SOURCES true
+bool EnableDollarMergeOnAgnosticSources =
+	DEFAULT_ENABLE_DOLLAR_MERGE_ON_AGNOSTIC_SOURCES;
 
 /*
  * SECTION: Lookup feature flags
@@ -652,6 +645,10 @@ bool EnableCommutativeUpdateMany =
 bool EnableCommutativeDeleteMany =
 	DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY;
 
+/* Added on v1.2, pending stabilization, enable on v1.5 */
+#define DEFAULT_ENABLE_DELETE_MANY_WORKER_PUSHDOWN false
+bool EnableDeleteManyWorkerPushdown = DEFAULT_ENABLE_DELETE_MANY_WORKER_PUSHDOWN;
+
 /* Added in v1.2, pending stabilization, enable in v1.3 */
 #define DEFAULT_ENABLE_UPDATE_WORKER_PLAN_CACHE false
 bool EnableUpdateWorkerPlanCache =
@@ -662,7 +659,7 @@ bool EnableUpdateWorkerPlanCache =
 bool EnableUpdateWorkerSingleWriteNoSubTransaction =
 	DEFAULT_ENABLE_UPDATE_WORKER_SINGLE_WRITE_NO_SUB_TRANSACTION;
 
-/* Added in v1.2, pending stabilization, enable in v1.3 */
+/* Added in v1.2, pending stabilization, enable in v1.4 */
 #define DEFAULT_ENABLE_ARRAY_BSON_STATS_WITH_PLANNER_STATISTICS false
 bool EnableArrayBsonStatsWithPlannerStatistics =
 	DEFAULT_ENABLE_ARRAY_BSON_STATS_WITH_PLANNER_STATISTICS;
@@ -670,6 +667,10 @@ bool EnableArrayBsonStatsWithPlannerStatistics =
 /* Added on v1.3, pending stabilization, enable on v1.4 */
 #define DEFAULT_ENABLE_INSERT_WORKER_PUSHDOWN false
 bool EnableInsertWorkerPushdown = DEFAULT_ENABLE_INSERT_WORKER_PUSHDOWN;
+
+/* Added on v1.3, enabled on v1.3, remove after v1.5 */
+#define DEFAULT_ENABLE_BATCH_INSERT_RETRY_END_INDEX_FIX true
+bool EnableBatchInsertRetryEndIndexFix = DEFAULT_ENABLE_BATCH_INSERT_RETRY_END_INDEX_FIX;
 
 /* Added on v1.2, enabled on v1.2, remove after v1.4 */
 #define DEFAULT_ENABLE_IN_GRANULAR_SELECTIVITY true
@@ -972,6 +973,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.enable_index_scan_on_streaming_cursors", newGucPrefix),
+		gettext_noop(
+			"Whether to enable index scans for streaming cursors."),
+		NULL, &EnableIndexScanOnStreamingCursors,
+		DEFAULT_ENABLE_INDEX_SCAN_ON_STREAMING_CURSORS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.enable_date_trunc_day_with_pg_bin", newGucPrefix),
 		gettext_noop(
 			"Whether to use PostgreSQL date_bin for day truncation within its timestamp range. When off, use legacy interval-based day truncation."),
@@ -1108,24 +1117,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to allow unique indexes to be built with a collation."),
 		NULL, &EnableCollatedUniqueIndexes,
 		DEFAULT_ENABLE_COLLATED_UNIQUE_INDEXES,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableGroupByDistinctScan", newGucPrefix),
-		gettext_noop(
-			"Whether or not to enable the distinct custom scan wrapper for "
-			"$group pipelines that have no aggregate accumulators."),
-		NULL, &EnableGroupByDistinctScan,
-		DEFAULT_ENABLE_GROUP_BY_DISTINCT_SCAN,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enableDistinctScanForGroupFirst", newGucPrefix),
-		gettext_noop(
-			"Whether or not to enable the distinct custom scan wrapper for "
-			"$group pipelines whose accumulators are exclusively $first."),
-		NULL, &EnableDistinctScanForGroupFirst,
-		DEFAULT_ENABLE_DISTINCT_SCAN_FOR_GROUP_FIRST,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1433,15 +1424,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
-		psprintf("%s.track_index_only_scan_find_candidate", newGucPrefix),
-		gettext_noop(
-			"Whether to walk find projections to detect index-only scan candidates "
-			"while index only scan for find with project is disabled."),
-		NULL, &TrackIndexOnlyScanFindCandidate,
-		DEFAULT_TRACK_INDEX_ONLY_SCAN_FIND_CANDIDATE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
 		psprintf("%s.enable_composite_reduced_correlated_bounds_planning", newGucPrefix),
 		gettext_noop(
 			"Whether to prune reduced-correlated composite index quals during planning when per-path multi-key metadata is available."),
@@ -1585,7 +1567,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 	DefineCustomBoolVariable(
 		psprintf("%s.enable_cursor_cleanup_background", newGucPrefix),
 		gettext_noop(
-			"Reserved for future role-neutral cursor cleanup through the background worker."),
+			"Transfer primary cursor cleanup to the background worker when the promotion barrier is enabled."),
 		NULL, &EnableCursorCleanupBackground,
 		DEFAULT_ENABLE_CURSOR_CLEANUP_BACKGROUND,
 		PGC_USERSET, 0, NULL, NULL, NULL);
@@ -1604,16 +1586,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"Whether to schedule index builds via background worker jobs."),
 		NULL, &IndexBuildsScheduledOnBgWorker,
 		DEFAULT_INDEX_BUILDS_SCHEDULED_ON_BGWORKER,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.emitEnableOrderedIndexFalseInResponse", newGucPrefix),
-		gettext_noop(
-			"When enabled, list index responses include \"enableOrderedIndex\": false "
-			"for indexes whose enableCompositeTerm was explicitly set to false (-1). "
-			"When disabled, the field is omitted for those indexes."),
-		NULL, &EmitEnableOrderedIndexFalseInResponse,
-		DEFAULT_EMIT_ENABLE_ORDERED_INDEX_FALSE_IN_RESPONSE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
@@ -1770,8 +1742,7 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 
 	DefineCustomBoolVariable(
 		psprintf("%s.enable_update_query_ast", newGucPrefix),
-		gettext_noop(
-			"Build general-match update-all queries using native query trees when schema validation is not required."),
+		gettext_noop("Build general-match update-all queries using native query trees."),
 		NULL,
 		&EnableUpdateQueryAst,
 		DEFAULT_ENABLE_UPDATE_QUERY_AST,
@@ -1809,6 +1780,18 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableCommutativeDeleteMany,
 		DEFAULT_ENABLE_COMMUTATIVE_DELETE_MANY,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_delete_many_worker_pushdown", newGucPrefix),
+		gettext_noop(
+			"Whether to push deleteMany to worker nodes via delete_worker UDF, "
+			"avoiding CTE intermediate result overhead on the coordinator."),
+		NULL,
+		&EnableDeleteManyWorkerPushdown,
+		DEFAULT_ENABLE_DELETE_MANY_WORKER_PUSHDOWN,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
@@ -1859,6 +1842,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.enable_batch_insert_retry_end_index_fix", newGucPrefix),
+		gettext_noop(
+			"Whether a batch-insert group that fails before its insert runs is retried one document at a time across the whole group, rather than resuming grouping after the first retried document."),
+		NULL,
+		&EnableBatchInsertRetryEndIndexFix,
+		DEFAULT_ENABLE_BATCH_INSERT_RETRY_END_INDEX_FIX,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.enable_rum_index_only_scan_projection_wrapper", newGucPrefix),
 		gettext_noop(
 			"Whether to wrap RUM index-only scans with the DocumentDBApiRumIndexOnlyScan "
@@ -1866,6 +1860,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableRumIndexOnlyScanProjectionWrapper,
 		DEFAULT_ENABLE_RUM_INDEX_ONLY_SCAN_PROJECTION_WRAPPER,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_native_planner_index_only_scan", newGucPrefix),
+		gettext_noop(
+			"Whether to use native planner index-only scan path generation."),
+		NULL,
+		&EnableNativePlannerIndexOnlyScan,
+		DEFAULT_ENABLE_NATIVE_PLANNER_INDEX_ONLY_SCAN,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);
@@ -1913,6 +1918,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		NULL,
 		&EnableExistentialNullArrayMatch,
 		DEFAULT_ENABLE_EXISTENTIAL_NULL_ARRAY_MATCH,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_dollar_merge_on_agnostic_sources", newGucPrefix),
+		gettext_noop(
+			"Whether $merge writes input supplied independently of the source collection."),
+		NULL,
+		&EnableDollarMergeOnAgnosticSources,
+		DEFAULT_ENABLE_DOLLAR_MERGE_ON_AGNOSTIC_SOURCES,
 		PGC_USERSET,
 		0,
 		NULL, NULL, NULL);

@@ -265,6 +265,63 @@ DROP FUNCTION documentdb_api_internal.test_try_get_wire_error_code(text);
 
 
 -- ============================================================
+-- Part 7: Sub-batch retry after a preprocessing failure
+-- Each sub-batch, and each document replayed on its own, is written in its
+-- own subtransaction, so grouping stored rows by xmin shows which
+-- documents were inserted together.
+-- ============================================================
+\echo '--- Part 7: Sub-batch retry after a preprocessing failure ---'
+
+CREATE FUNCTION pg_temp.rows_written_together(coll text)
+RETURNS text AS $$
+DECLARE
+    v_collection_id bigint;
+    v_result text;
+BEGIN
+    SELECT collection_id INTO v_collection_id
+    FROM documentdb_api_catalog.collections
+    WHERE database_name = 'insertdupdb' AND collection_name = coll;
+
+    EXECUTE format(
+        'SELECT string_agg(ids, '' | '' ORDER BY xid) FROM ('
+        '  SELECT xmin::text::bigint AS xid,'
+        '         string_agg((regexp_match(object_id::text, ''(\d+)''))[1], '','' ORDER BY object_id) AS ids'
+        '  FROM documentdb_data.documents_%s'
+        '  GROUP BY xmin::text::bigint) g',
+        v_collection_id) INTO v_result;
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql;
+
+SET documentdb.batchWriteSubTransactionCount TO 5;
+
+-- The document at index 7 fails before its sub-batch INSERT runs. The
+-- sub-batch starting at 5 is replayed one document at a time and grouping
+-- resumes at 10.
+SELECT documentdb_api.create_collection('insertdupdb', 'group_retry_test');
+CALL documentdb_api.insert_bulk('insertdupdb', '{"insert": "group_retry_test", "ordered": false, "documents": [
+    {"_id": 0}, {"_id": 1}, {"_id": 2}, {"_id": 3}, {"_id": 4},
+    {"_id": 5}, {"_id": 6}, {"_id": [7]}, {"_id": 8}, {"_id": 9},
+    {"_id": 10}, {"_id": 11}, {"_id": 12}, {"_id": 13}, {"_id": 14}]}');
+SELECT pg_temp.rows_written_together('group_retry_test');
+SELECT documentdb_api.drop_collection('insertdupdb', 'group_retry_test');
+
+-- With the retry end index fix off, grouping restarts after each replayed document,
+-- so a new sub-batch starts at 8.
+SET documentdb.enable_batch_insert_retry_end_index_fix TO off;
+SELECT documentdb_api.create_collection('insertdupdb', 'group_retry_test');
+CALL documentdb_api.insert_bulk('insertdupdb', '{"insert": "group_retry_test", "ordered": false, "documents": [
+    {"_id": 0}, {"_id": 1}, {"_id": 2}, {"_id": 3}, {"_id": 4},
+    {"_id": 5}, {"_id": 6}, {"_id": [7]}, {"_id": 8}, {"_id": 9},
+    {"_id": 10}, {"_id": 11}, {"_id": 12}, {"_id": 13}, {"_id": 14}]}');
+SELECT pg_temp.rows_written_together('group_retry_test');
+SELECT documentdb_api.drop_collection('insertdupdb', 'group_retry_test');
+RESET documentdb.enable_batch_insert_retry_end_index_fix;
+
+RESET documentdb.batchWriteSubTransactionCount;
+
+
+-- ============================================================
 -- Part 8: Isolated ON CONFLICT sub-batch scenarios
 -- ============================================================
 \echo '--- Part 8: isolated ON CONFLICT scenarios ---'

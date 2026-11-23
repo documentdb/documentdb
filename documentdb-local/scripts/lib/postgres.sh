@@ -41,6 +41,15 @@ prepare_data_path() {
         }
     fi
 
+    # Again after the repair, which can expose markers or seed scripts.
+    if [ "$CREATE_USER" = "false" ]; then
+        local refusal
+        refusal=$(check_username_in_use 2>&1) || {
+            printf '%s\n' "$refusal" | tee -a "$ENTRYPOINT_LOG" >&6
+            exit 1
+        }
+    fi
+
     # Adopt the image-baked, pre-initialized data directory when one is present
     # so first boot skips initdb + CREATE EXTENSION. See that script for the
     # full rationale (marker lifecycle, pristineness rules, custom --data-path

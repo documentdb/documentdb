@@ -1,5 +1,6 @@
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
+ * Copyright (c) Microsoft Corporation.
+ * Licensed under the MIT License
  *
  * include/documentdb_distributed_init.h
  *
@@ -12,5 +13,6 @@
 
 void InitDocumentDBDistributedConfigurations(const char *prefix);
 void DocumentDBDistributed_InstallBsonMemVTablesLocal(void);
+PGDLLEXPORT const char * GetDocumentDBDistributedBinaryVersion(void);
 
 #endif

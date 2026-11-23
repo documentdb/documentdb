@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/postgres/conn_mgmt/query_dispatch.rs
  *
  * Retry and transaction query dispatch logic
@@ -48,6 +49,46 @@ pub enum ConnectionSource<'a> {
     Cursor(Arc<Connection>),
     /// Use the transaction connection; retry is suppressed.
     Transaction(Arc<Connection>),
+}
+
+impl ConnectionSource<'_> {
+    #[must_use]
+    pub const fn is_transaction(&self) -> bool {
+        matches!(self, Self::Transaction(_))
+    }
+
+    /// Acquires a pooled connection or reuses a retained connection.
+    ///
+    /// # Errors
+    /// Returns an acquisition error.
+    pub async fn acquire(&self, tracker: &RequestTracker) -> Result<Arc<Connection>> {
+        match self {
+            Self::Pool(pool) => {
+                let started = Instant::now();
+                let acquired = pool.acquire_connection().await;
+                tracker.record_duration(RequestIntervalKind::OpenBackendConnection, started);
+
+                match acquired {
+                    Ok(connection) => Ok(Arc::new(Connection::new(
+                        connection,
+                        false,
+                        pool.command_deadline(),
+                    ))),
+                    Err(error) => Err(DocumentDBError::from(error)),
+                }
+            }
+            Self::Cursor(connection) | Self::Transaction(connection) => Ok(Arc::clone(connection)),
+        }
+    }
+}
+
+/// Whether a failure returns to the caller or follows the retry policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QueryFailureAction {
+    /// Apply the normal retry, timeout and shutdown-conversion rules.
+    UseRetryPolicy,
+    /// Return the current error without retrying or applying terminal conversion.
+    Return,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -333,20 +374,56 @@ async fn set_statement_timeout(
     Ok(use_transaction)
 }
 
-/// Unified query execution with connection resolution, gateway timeout, and retry logic.
-///
-/// - Resolves a connection via [`ConnectionSource`]
-/// - Applies gateway timeout if needed
-/// - Executes the query closure
-/// - Commits gateway transaction if one was started
-/// - On error, classifies and retries
+/// Executes a query with default acquisition, timeout and retry handling.
 ///
 /// # Errors
-/// Returns an error if the query fails after exhausting all retry attempts,
-/// or if the command timeout is exceeded.
+/// Returns the terminal acquisition or statement error.
+pub fn run_request_with_retries<'a, 'request, T, F, Fut>(
+    source: ConnectionSource<'a>,
+    query_options: QueryOptions,
+    request_options: RequestOptions,
+    max_time: Duration,
+    dynamic_configuration: &'a dyn DynamicConfiguration,
+    request_context: &'a RequestContext<'request>,
+    run_func: F,
+) -> impl Future<Output = Result<T>> + use<'a, 'request, T, F, Fut>
+where
+    F: Fn(Arc<Connection>) -> Fut,
+    Fut: Future<Output = std::result::Result<T, StatementError>>,
+{
+    run_request_with_retries_using(
+        query_options,
+        request_options,
+        max_time,
+        dynamic_configuration,
+        request_context,
+        source.is_transaction(),
+        source,
+        async |source: &ConnectionSource<'_>, _, tracker: &RequestTracker| {
+            source.acquire(tracker).await
+        },
+        run_func,
+        |_| QueryFailureAction::UseRetryPolicy,
+    )
+}
+
+/// Executes a query with caller-supplied acquisition and failure handling.
+///
+/// Owns the acquisition state and borrows it on each attempt.
+/// `QueryFailureAction::Return` bypasses retries and terminal timeout/shutdown conversion.
+/// Acquisition errors and mapped statement errors both reach the failure policy;
+/// the original backend error remains available through the error's source.
+///
+/// The caller must preserve retained connection ownership, supply the correct
+/// transaction state, and honor the requested timeout-pool choice. Returning a
+/// failure does not itself authorize replay against another connection.
+/// Request authentication remains the caller's responsibility.
+///
+/// # Errors
+/// Returns an acquisition, statement or timeout error.
 #[expect(
-    clippy::too_many_lines,
-    reason = "complex logic that would be harder to read if split across multiple functions"
+    clippy::too_many_arguments,
+    reason = "keeps acquisition and failure policies independent of execution inputs"
 )]
 #[cfg_attr(
     feature = "request-tracing",
@@ -362,18 +439,23 @@ async fn set_statement_timeout(
         )
     )
 )]
-pub async fn run_request_with_retries<T, F, Fut>(
-    source: ConnectionSource<'_>,
+pub async fn run_request_with_retries_using<T, F, Fut, S, A, H>(
     query_options: QueryOptions,
     request_options: RequestOptions,
     max_time: Duration,
     dynamic_configuration: &dyn DynamicConfiguration,
     request_context: &RequestContext<'_>,
-    run_func: F,
+    in_transaction: bool,
+    acquisition_state: S,
+    acquire: A,
+    mut run_func: F,
+    on_failure: H,
 ) -> Result<T>
 where
-    F: Fn(Arc<Connection>) -> Fut,
+    F: FnMut(Arc<Connection>) -> Fut,
     Fut: Future<Output = std::result::Result<T, StatementError>>,
+    A: AsyncFn(&S, bool, &RequestTracker) -> Result<Arc<Connection>>,
+    H: Fn(&DocumentDBError) -> QueryFailureAction,
 {
     let overall_command_timeout = request_options.command_timeout().unwrap_or(max_time);
 
@@ -384,135 +466,29 @@ where
         long_retry_policy: None,
     };
 
-    let in_transaction = matches!(source, ConnectionSource::Transaction(_));
-
     // Pre-compute whether set_statement_timeout can ever apply. When false
     // (the common path) we skip the function call entirely on every iteration.
     let needs_gateway_timeout = request_options.command_timeout().is_some()
         && !in_transaction
         && !query_options.supports_backend_timeout();
+    let needs_timeout_pool = needs_gateway_timeout && !query_options.supports_transaction_timeout();
+    let tracker = request_context.tracker;
 
     loop {
-        let result: std::result::Result<T, DocumentDBError> = 'attempt: {
-            let connection = match &source {
-                ConnectionSource::Pool(pool) => {
-                    let open_backend_connection_start = Instant::now();
-                    let acquire = pool.acquire_connection().await;
-                    request_context.tracker.record_duration(
-                        RequestIntervalKind::OpenBackendConnection,
-                        open_backend_connection_start,
-                    );
-
-                    match acquire {
-                        Ok(pool_conn) => {
-                            Arc::new(Connection::new(pool_conn, false, pool.command_deadline()))
-                        }
-                        Err(e) => break 'attempt Err(DocumentDBError::from(e)),
-                    }
-                }
-                ConnectionSource::Cursor(conn) | ConnectionSource::Transaction(conn) => {
-                    Arc::clone(conn)
-                }
-            };
-
-            // Applied per attempt because a cursor or transaction connection
-            // outlives the request that opened it and must not keep serving
-            // later requests under a bound they never asked for.
-            connection.set_command_deadline(request_options.command_timeout());
-
-            // Set statement timeout (only when needed)
-            let in_gateway_txn = if needs_gateway_timeout {
-                match set_statement_timeout(
-                    &connection,
-                    request_options.command_timeout(),
-                    &query_options,
+        let result = match acquire(&acquisition_state, needs_timeout_pool, tracker).await {
+            Ok(connection) => {
+                execute_on_connection(
+                    connection,
+                    query_options,
+                    request_options,
                     in_transaction,
-                    request_context.tracker,
+                    needs_gateway_timeout,
+                    request_context,
+                    &mut run_func,
                 )
                 .await
-                {
-                    Ok(v) => v,
-                    Err(e) => {
-                        break 'attempt Err(map_statement_error(
-                            e,
-                            in_transaction,
-                            request_options.in_replica_cluster_mode(),
-                            request_context.activity_id,
-                        ))
-                    }
-                }
-            } else {
-                false
-            };
-
-            // Execute the query
-            let request_start = Instant::now();
-            if in_gateway_txn {
-                // Gateway transaction active — clone Arc because we need
-                // the connection afterwards for COMMIT/ROLLBACK.
-                let query_result = run_func(Arc::clone(&connection)).await;
-                request_context
-                    .tracker
-                    .record_duration(RequestIntervalKind::ProcessRequest, request_start);
-
-                match query_result {
-                    Ok(value) => {
-                        let commit_start = Instant::now();
-                        match connection.batch_execute("COMMIT").await {
-                            Ok(()) => {
-                                connection.set_in_transaction(false);
-                                request_context.tracker.record_duration(
-                                    RequestIntervalKind::PostgresCommitTransaction,
-                                    commit_start,
-                                );
-                                Ok(value)
-                            }
-                            Err(e) => {
-                                // The gateway owns this transaction and nothing
-                                // else will touch the connection, so clear
-                                // unconditionally.
-                                connection.set_in_transaction(false);
-                                let mapped_error = map_statement_error(
-                                    e,
-                                    in_transaction,
-                                    request_options.in_replica_cluster_mode(),
-                                    request_context.activity_id,
-                                );
-                                Err(mapped_error)
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        // Only clear the flag once the ROLLBACK is acknowledged,
-                        // so a failed ROLLBACK still leaves the backstop armed.
-                        if connection.batch_execute("ROLLBACK").await.is_ok() {
-                            connection.set_in_transaction(false);
-                        }
-                        let mapped_error = map_statement_error(
-                            e,
-                            in_transaction,
-                            request_options.in_replica_cluster_mode(),
-                            request_context.activity_id,
-                        );
-                        Err(mapped_error)
-                    }
-                }
-            } else {
-                // No gateway transaction -> move the Arc directly into the
-                // closure call, avoiding an Arc::clone + drop pair.
-                let query_result = run_func(connection).await;
-                request_context
-                    .tracker
-                    .record_duration(RequestIntervalKind::ProcessRequest, request_start);
-                query_result.map_err(|e| {
-                    map_statement_error(
-                        e,
-                        in_transaction,
-                        request_options.in_replica_cluster_mode(),
-                        request_context.activity_id,
-                    )
-                })
             }
+            Err(error) => Err(error),
         };
 
         // Handle result / retry
@@ -520,6 +496,10 @@ where
             Ok(value) => return Ok(value),
 
             Err(error) => {
+                if on_failure(&error) == QueryFailureAction::Return {
+                    mark_span_error(&tracing::Span::current());
+                    return Err(error);
+                }
                 tracing::error!("Error executing postgres request: {error}");
 
                 // a request is retriable if:
@@ -596,13 +576,440 @@ where
     }
 }
 
+async fn execute_on_connection<T, F, Fut>(
+    connection: Arc<Connection>,
+    query_options: QueryOptions,
+    request_options: RequestOptions,
+    in_transaction: bool,
+    needs_gateway_timeout: bool,
+    request_context: &RequestContext<'_>,
+    run_func: &mut F,
+) -> Result<T>
+where
+    F: FnMut(Arc<Connection>) -> Fut,
+    Fut: Future<Output = std::result::Result<T, StatementError>>,
+{
+    let result = 'attempt: {
+        connection.set_command_deadline(request_options.command_timeout());
+        let in_gateway_txn = if needs_gateway_timeout {
+            match set_statement_timeout(
+                &connection,
+                request_options.command_timeout(),
+                &query_options,
+                in_transaction,
+                request_context.tracker,
+            )
+            .await
+            {
+                Ok(started) => started,
+                Err(error) => {
+                    break 'attempt Err(map_statement_error(
+                        error,
+                        in_transaction,
+                        request_options.in_replica_cluster_mode(),
+                        request_context.activity_id,
+                    ));
+                }
+            }
+        } else {
+            false
+        };
+
+        let started = Instant::now();
+        if !in_gateway_txn {
+            let result = run_func(connection).await;
+            request_context
+                .tracker
+                .record_duration(RequestIntervalKind::ProcessRequest, started);
+            break 'attempt result.map_err(|error| {
+                map_statement_error(
+                    error,
+                    in_transaction,
+                    request_options.in_replica_cluster_mode(),
+                    request_context.activity_id,
+                )
+            });
+        }
+
+        let result = run_func(Arc::clone(&connection)).await;
+        request_context
+            .tracker
+            .record_duration(RequestIntervalKind::ProcessRequest, started);
+        match result {
+            Ok(value) => {
+                let commit_start = Instant::now();
+                let committed = connection.batch_execute("COMMIT").await;
+                connection.set_in_transaction(false);
+                match committed {
+                    Ok(()) => {
+                        request_context.tracker.record_duration(
+                            RequestIntervalKind::PostgresCommitTransaction,
+                            commit_start,
+                        );
+                        Ok(value)
+                    }
+                    Err(error) => Err(map_statement_error(
+                        error,
+                        in_transaction,
+                        request_options.in_replica_cluster_mode(),
+                        request_context.activity_id,
+                    )),
+                }
+            }
+            Err(error) => {
+                if connection.batch_execute("ROLLBACK").await.is_ok() {
+                    connection.set_in_transaction(false);
+                }
+                Err(map_statement_error(
+                    error,
+                    in_transaction,
+                    request_options.in_replica_cluster_mode(),
+                    request_context.activity_id,
+                ))
+            }
+        }
+    };
+    result
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{
+        cell::Cell,
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+
+    use bson::rawdoc;
     use tokio::net::TcpListener;
     use tokio_postgres::NoTls;
 
     use super::*;
-    use crate::{error::ErrorKind, testing::TestDynamicConfiguration};
+    use crate::{
+        error::ErrorKind,
+        requests::{RequestExecutionMode, RequestType, WireRequest},
+        testing::TestDynamicConfiguration,
+    };
+
+    fn execution_request() -> WireRequest<'static> {
+        WireRequest::from_owned_command_document(
+            RequestType::Ping,
+            RequestExecutionMode::Normal,
+            None,
+            rawdoc! { "ping": 1, "$db": "admin" },
+            None,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn extraction_preserves_send_only_query_closures() {
+        fn require_send<T: Send>(value: T) -> T {
+            value
+        }
+
+        let request = execution_request();
+        let tracker = RequestTracker::new();
+        let context = RequestContext::new("", &request, &tracker);
+        let configuration = TestDynamicConfiguration::default();
+        let count = Cell::new(0);
+        let future = run_request_with_retries_using(
+            QueryOptions::default(),
+            RequestOptions::new(false, Some(1_000)),
+            Duration::from_secs(1),
+            &configuration,
+            &context,
+            false,
+            (),
+            |(): &(), _, _: &RequestTracker| {
+                std::future::ready(Err(DocumentDBError::bad_value("stop".to_owned())))
+            },
+            move |_| {
+                count.set(count.get() + 1);
+                std::future::ready(Err::<(), _>(StatementError::Timeout(Duration::ZERO)))
+            },
+            |_| QueryFailureAction::Return,
+        );
+        assert!(require_send(future).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn execution_reacquires_for_each_retry_without_dispatching_on_open_failure() {
+        let request = execution_request();
+        let tracker = RequestTracker::new();
+        let context = RequestContext::new("", &request, &tracker);
+        let configuration = TestDynamicConfiguration::default();
+        let acquisitions = Arc::new(AtomicUsize::new(0));
+        let queries = AtomicUsize::new(0);
+        let result = run_request_with_retries_using(
+            QueryOptions::default(),
+            RequestOptions::new(false, Some(1_000)),
+            Duration::from_secs(1),
+            &configuration,
+            &context,
+            false,
+            Arc::clone(&acquisitions),
+            async |state: &Arc<AtomicUsize>, _, _: &RequestTracker| {
+                tokio::task::yield_now().await;
+                if state.fetch_add(1, Ordering::Relaxed) == 0 {
+                    Err(DocumentDBError::from(PoolError::Timeout(
+                        TimeoutType::Create,
+                    )))
+                } else {
+                    Err(DocumentDBError::bad_value(
+                        "terminal acquisition error".to_owned(),
+                    ))
+                }
+            },
+            |_| async {
+                queries.fetch_add(1, Ordering::Relaxed);
+                Err::<(), _>(StatementError::Timeout(Duration::ZERO))
+            },
+            |_| QueryFailureAction::UseRetryPolicy,
+        )
+        .await;
+        assert_eq!(acquisitions.load(Ordering::Relaxed), 2);
+        assert_eq!(queries.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            result.unwrap_err().error_message_user(),
+            "terminal acquisition error"
+        );
+    }
+
+    #[test]
+    fn dropping_execution_releases_owned_acquisition_state() {
+        use std::task::{Context, Waker};
+
+        struct AcquisitionState(Arc<AtomicUsize>);
+
+        impl Drop for AcquisitionState {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let request = execution_request();
+        let tracker = RequestTracker::new();
+        let context = RequestContext::new("", &request, &tracker);
+        let configuration = TestDynamicConfiguration::default();
+
+        for poll_once in [false, true] {
+            let dropped = Arc::new(AtomicUsize::new(0));
+            let acquired = AtomicBool::new(false);
+            {
+                let future = run_request_with_retries_using(
+                    QueryOptions::default(),
+                    RequestOptions::new(false, None),
+                    Duration::from_secs(1),
+                    &configuration,
+                    &context,
+                    false,
+                    AcquisitionState(Arc::clone(&dropped)),
+                    async |state: &AcquisitionState, _, _: &RequestTracker| {
+                        acquired.store(true, Ordering::Relaxed);
+                        std::future::pending::<()>().await;
+                        assert_eq!(state.0.load(Ordering::Relaxed), 0);
+                        Err(DocumentDBError::bad_value("unreachable".to_owned()))
+                    },
+                    |_| async { Ok(42) },
+                    |_| QueryFailureAction::UseRetryPolicy,
+                );
+                let mut future = std::pin::pin!(future);
+                assert!(!acquired.load(Ordering::Relaxed));
+                assert_eq!(dropped.load(Ordering::Relaxed), 0);
+                if poll_once {
+                    assert!(future
+                        .as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop()))
+                        .is_pending());
+                    assert!(acquired.load(Ordering::Relaxed));
+                }
+            }
+            assert_eq!(dropped.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn unpolled_local_execution_is_send_and_does_not_acquire() {
+        use crate::{
+            postgres::{conn_mgmt::PgPoolSettings, create_query_catalog},
+            testing::test_setup_configuration,
+        };
+
+        fn require_send<T: Send>(value: T) -> T {
+            value
+        }
+
+        let setup = test_setup_configuration();
+        let pool = ConnectionPool::new_with_user(
+            &setup,
+            &create_query_catalog(),
+            "user",
+            None,
+            "test",
+            PgPoolSettings::system_pool_settings(1),
+        )
+        .unwrap();
+        let request = execution_request();
+        let tracker = RequestTracker::new();
+        let context = RequestContext::new("", &request, &tracker);
+        let configuration = TestDynamicConfiguration::default();
+        let count = Cell::new(0);
+        let future = require_send(run_request_with_retries(
+            ConnectionSource::Pool(&pool),
+            QueryOptions::default(),
+            RequestOptions::new(false, None),
+            Duration::from_secs(1),
+            &configuration,
+            &context,
+            move |_| {
+                count.set(count.get() + 1);
+                std::future::ready(Ok(42))
+            },
+        ));
+        assert_eq!(pool.status().connections_created(), 0);
+        drop(future);
+        assert_eq!(pool.status().connections_created(), 0);
+    }
+
+    #[tokio::test]
+    async fn returning_a_failure_preserves_its_source_and_does_not_retry_or_defer() {
+        let request = execution_request();
+        let tracker = RequestTracker::new();
+        let context = RequestContext::new("", &request, &tracker);
+        let configuration = TestDynamicConfiguration::default();
+        configuration.set_defer_retries_to_caller(true);
+        let acquisitions = AtomicUsize::new(0);
+        let error = run_request_with_retries_using(
+            QueryOptions::default(),
+            RequestOptions::new(false, Some(0)),
+            Duration::ZERO,
+            &configuration,
+            &context,
+            false,
+            (),
+            |(): &(), _, _: &RequestTracker| async {
+                acquisitions.fetch_add(1, Ordering::Relaxed);
+                Err(DocumentDBError::from(PoolError::Timeout(
+                    TimeoutType::Create,
+                )))
+            },
+            |_| async { Err::<(), _>(StatementError::Timeout(Duration::ZERO)) },
+            |_| QueryFailureAction::Return,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(acquisitions.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            error.as_pool_error(),
+            Some(PoolError::Timeout(TimeoutType::Create))
+        ));
+        assert_ne!(error.error_code(), ErrorCode::ShutdownInProgress);
+        assert_eq!(error.error_code(), ErrorCode::ExceededTimeLimit);
+        assert_eq!(error.kind(), &ErrorKind::Pool);
+        assert_eq!(
+            error.error_message_user(),
+            "Timed out while acquiring a database connection."
+        );
+    }
+
+    #[tokio::test]
+    async fn default_failure_policy_preserves_shutdown_handoff() {
+        let request = execution_request();
+        let tracker = RequestTracker::new();
+        let context = RequestContext::new("", &request, &tracker);
+        let configuration = TestDynamicConfiguration::default();
+        configuration.set_defer_retries_to_caller(true);
+        let error = run_request_with_retries_using(
+            QueryOptions::default(),
+            RequestOptions::new(false, Some(1_000)),
+            Duration::from_secs(1),
+            &configuration,
+            &context,
+            false,
+            (),
+            |(): &(), _, _: &RequestTracker| async {
+                Err(DocumentDBError::from(PoolError::Timeout(
+                    TimeoutType::Create,
+                )))
+            },
+            |_| async { Err::<(), _>(StatementError::Timeout(Duration::ZERO)) },
+            |_| QueryFailureAction::UseRetryPolicy,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.error_code(), ErrorCode::ShutdownInProgress);
+        assert_eq!(error.error_message_user(), "Graceful shutdown requested");
+    }
+
+    #[tokio::test]
+    async fn transactions_and_nonretryable_commands_do_not_reacquire() {
+        let request = execution_request();
+        let tracker = RequestTracker::new();
+        let context = RequestContext::new("", &request, &tracker);
+        let configuration = TestDynamicConfiguration::default();
+        for (in_transaction, retry_request) in [(true, true), (false, false)] {
+            let acquisitions = AtomicUsize::new(0);
+            let error = run_request_with_retries_using(
+                QueryOptions::builder().retry_request(retry_request).build(),
+                RequestOptions::new(false, Some(1_000)),
+                Duration::from_secs(1),
+                &configuration,
+                &context,
+                in_transaction,
+                (),
+                |(): &(), _, _: &RequestTracker| async {
+                    acquisitions.fetch_add(1, Ordering::Relaxed);
+                    Err(DocumentDBError::from(PoolError::Timeout(
+                        TimeoutType::Create,
+                    )))
+                },
+                |_| async { Err::<(), _>(StatementError::Timeout(Duration::ZERO)) },
+                |_| QueryFailureAction::UseRetryPolicy,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(acquisitions.load(Ordering::Relaxed), 1);
+            assert!(error.as_pool_error().is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn acquisition_receives_the_existing_timeout_source_choice() {
+        let request = execution_request();
+        let tracker = RequestTracker::new();
+        let context = RequestContext::new("", &request, &tracker);
+        let configuration = TestDynamicConfiguration::default();
+        for (backend_timeout, transaction_timeout, timeout_ms, in_transaction, expected) in [
+            (true, false, Some(100), false, false),
+            (false, true, Some(100), false, false),
+            (false, false, Some(100), false, true),
+            (false, false, None, false, false),
+            (false, false, Some(100), true, false),
+        ] {
+            let observed = AtomicBool::new(!expected);
+            let result = run_request_with_retries_using(
+                QueryOptions::builder()
+                    .supports_backend_timeout(backend_timeout)
+                    .supports_transaction_timeout(transaction_timeout)
+                    .build(),
+                RequestOptions::new(false, timeout_ms),
+                Duration::from_secs(1),
+                &configuration,
+                &context,
+                in_transaction,
+                (),
+                |(): &(), use_timeout_pool, _: &RequestTracker| {
+                    observed.store(use_timeout_pool, Ordering::Relaxed);
+                    async { Err(DocumentDBError::bad_value("stop".to_owned())) }
+                },
+                |_| async { Err::<(), _>(StatementError::Timeout(Duration::ZERO)) },
+                |_| QueryFailureAction::Return,
+            )
+            .await;
+            assert!(result.is_err());
+            assert_eq!(observed.load(Ordering::Relaxed), expected);
+        }
+    }
 
     async fn mapped_connectivity_error() -> DocumentDBError {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();

@@ -7,10 +7,13 @@ members = [
     "documentdb_gateway_otel",
     "documentdb_tests"
 ]
-# Locally vendored, patched copy of tokio-postgres (see [patch.crates-io] below).
-# Excluded so it is built only as a patched dependency, not as a workspace member.
+
+# Exclude members so they are built only as a patched dependencies, not as proper workspace members.
 exclude = [
-    "libs/tokio-postgres"
+    "libs/tokio-postgres/crates/tokio-postgres",
+    "libs/deadpool/crates/deadpool",
+    "libs/deadpool/crates/deadpool-postgres",
+    "libs/deadpool/crates/deadpool-runtime"
 ]
 resolver = "2"
 
@@ -152,3 +155,10 @@ codegen-units = 1
 [profile.profiling]
 inherits = "release"
 debug = true
+
+## Patch section
+[patch.crates-io]
+tokio-postgres = { path = "libs/tokio-postgres/crates/tokio-postgres" }
+deadpool = { path = "libs/deadpool/crates/deadpool" }
+deadpool-runtime = { path = "libs/deadpool/crates/deadpool-runtime" }
+deadpool-postgres = { path = "libs/deadpool/crates/deadpool-postgres" }

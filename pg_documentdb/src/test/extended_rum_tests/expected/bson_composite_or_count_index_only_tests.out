@@ -81,16 +81,8 @@ SELECT document FROM bson_aggregation_count('orcount_db',
 -- 2. A count whose filter is an $or of TWO equality $and branches over the SAME
 --    non-multi-key composite index (an OR-of-ANDs). Every branch is fully covered
 --    by (zone, band), so the count could be answered without touching the heap.
---    OBSERVED TODAY: the plan is a Bitmap Heap Scan (BitmapOr of two Bitmap Index
---    Scans) with a heap Recheck Cond -- it fetches heap pages even though nothing
---    but the count is needed.
---    TODO: this SHOULD be lowered to an index-only scan. The index is not
---    multi-key (isMultiKey: false) and every $or branch is fully covered by
---    (zone, band), so the union of the two equality ranges can be served straight
---    from the index with no heap access -- exactly as the single-branch count in
---    section 1 already is. The OR-of-ANDs-on-one-index shape should lower to an
---    index-only scan (a union / append of the two covered ranges) instead of a
---    Bitmap Heap Scan.
+--    Depending on the planner version, this uses either a full Index Only Scan
+--    with the OR-of-ANDs as a residual filter or a Bitmap Heap Scan.
 -- ============================================================================
 SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)

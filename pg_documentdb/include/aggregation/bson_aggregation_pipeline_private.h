@@ -183,6 +183,9 @@ typedef struct AggregationPipelineBuildContext
 	/* The collection name associated with this request (if applicable) */
 	StringView collectionNameView;
 
+	/* Whether input can come from somewhere other than the original collection. */
+	bool hasIndependentSource;
+
 	/* Whether or not the aggregation query allows direct shard delegation
 	 * This allows queries to go directly against a local shard *iff* it's available.
 	 * This can be done for base streaming queries. TODO: Investigate whether or not
@@ -449,6 +452,9 @@ Expr * GenerateMultiExpressionRepathExpression(List *repathArgs,
 Stage GetAggregationStageAtPosition(const List *aggregationStages, int position);
 
 /* Helper methods */
+
+Query * UnionQueries(Query *leftQuery, Query *rightQuery,
+					 AggregationPipelineBuildContext *context);
 
 /* GUC defined in feature_flag_configs.c; consumed by the inline helpers below. */
 extern bool EnableAddShardKeyOnlyOnPrimaryKeyFilters;

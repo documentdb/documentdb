@@ -1,0 +1,52 @@
+# Machine-readable stewardship metadata for the local DocumentDB gateway fork of
+# selected deadpool-rs crates. Keep this file in sync with FORK.md.
+
+fork_epoch = "documentdb-deadpool-fork-1"
+fork_owner = "DocumentDB gateway maintainers"
+support_boundary = "Local path dependency for DocumentDB gateway workspaces only"
+publication_policy = "Do not publish retained crates under upstream package names"
+upstream_repository = "https://github.com/deadpool-rs/deadpool"
+upstream_commit = "f4efd12e65b2cc9347f6ca0ee42800cd376ea658"
+source_policy = "Unmodified upstream crate source and manifests copied at the pinned commit"
+license = "MIT OR Apache-2.0"
+
+[validation]
+scope = "Changes to retained crate source, manifests, or dependency wiring"
+commands = [
+  "cargo make --cwd pg_documentdb_gw build",
+  "cargo make --cwd pg_documentdb_gw test",
+  "cargo make --cwd pg_documentdb_gw lint",
+  "cargo make --cwd pg_documentdb_gw_host dev",
+]
+
+# Release tags identify package versions; upstream_commit above pins the copied source.
+[[retained_crates]]
+name = "deadpool"
+upstream_version = "0.13.1"
+upstream_tag = "deadpool-v0.13.1"
+upstream_tag_commit = "bba260f93ef4f7a63c82799563f92518b9e5d42a"
+local_path = "crates/deadpool"
+
+[[retained_crates]]
+name = "deadpool-runtime"
+upstream_version = "0.3.1"
+upstream_tag = "deadpool-runtime-v0.3.1"
+upstream_tag_commit = "362391f640a0a041ec246370c67a99e7b34c9312"
+local_path = "crates/deadpool-runtime"
+
+[[retained_crates]]
+name = "deadpool-postgres"
+upstream_version = "0.14.2"
+upstream_tag = "deadpool-postgres-v0.14.2"
+upstream_tag_commit = "bba260f93ef4f7a63c82799563f92518b9e5d42a"
+local_path = "crates/deadpool-postgres"
+
+[divergence_policy]
+classification_required = true
+classes = ["upstream-first", "upstream-candidate", "local-only"]
+ledger_location = "FORK.md#divergence-ledger"
+
+[security]
+advisory_identities = ["deadpool", "deadpool-runtime", "deadpool-postgres"]
+monitor_upstream_releases = true
+coordinate_shared_vulnerabilities_with_upstream = true

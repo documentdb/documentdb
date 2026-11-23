@@ -218,11 +218,6 @@ static Path * GeneratePathFromContinuation(ParsedContinuationState *tempState,
 										   ReplaceExtensionFunctionContext *indexContext);
 static bool WriteContinuationBasedOnScanTypeAndState(ScanState *ps, pgbson_writer *writer,
 													 QueryScanType scanType);
-static void AddOrderByRequiredClausesIfNecessary(IndexPath *indexPath, PlannerInfo *root,
-												 RelOptInfo *rel);
-static void AddContinuationQualsToIndexPath(PlannerInfo *root, RelOptInfo *rel,
-											IndexPath *resumePath,
-											ParsedContinuationState *state);
 static bool IsGroupByFullyPushableForStreaming(PlannerInfo *root);
 static List * GetRequiredStreamingPathKeys(PlannerInfo *root);
 static bool PathProvidesRequiredStreamingOrder(PlannerInfo *root, Path *path);
@@ -686,7 +681,7 @@ GetIndexSupportsGetIndexKey(Oid relam, Oid opfamily)
  * and deduplicate across cursor pages by carrying their dedup state forward in
  * the continuation token.
  */
-static bool
+bool
 MultiKeyIndexRequiresBitmapScan(IndexOptInfo *indexInfo)
 {
 	if (!EnableDynamicCursorMultiKeyBitmap)
@@ -1933,12 +1928,12 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 	TupleTableSlot *slot = NULL;
 	IndexScanDesc scanDesc = NULL;
 	PGFunction skipTidsFunc = NULL;
+	ScanDirection indexScanDirection = ForwardScanDirection;
 	double numSkipped = 0;
 
 	/*
-	 * Dynamic cursor scans always use ForwardScanDirection. The comparison
-	 * logic below relies on this: cmp > 0 means we've passed the
-	 * continuation, cmp < 0 means we're before it.
+	 * The executor runs forward, but the access method can traverse index keys
+	 * backward to satisfy an ORDER BY.
 	 */
 	Assert(ScanDirectionIsForward(ps->ps.state->es_direction));
 
@@ -1971,6 +1966,12 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 				scanDesc->indexRelation->rd_rel->relam,
 				scanDesc->indexRelation->
 				rd_opfamily[0]);
+			if (scanDesc->numberOfOrderBys > 0)
+			{
+				indexScanDirection = GetOrderByScanDirectionFromDatum(
+					scanDesc->indexRelation->rd_opcoptions[0],
+					scanDesc->orderByData[0].sk_argument);
+			}
 		}
 
 		bytea **dedupBytes = NULL;
@@ -1978,10 +1979,32 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 		bytea *currentKeyBytes = DatumGetByteaP(currentKey);
 
 		const char *collation = NULL;
+		const bool copyIndexOptions = false;
+		bytea **indexOptions = RelationGetIndexAttOptions(scanDesc->indexRelation,
+														  copyIndexOptions);
+		if (indexOptions != NULL && indexOptions[0] != NULL)
+		{
+			const char *indexCollation = NULL;
+			uint32_t indexCollationLength = 0;
+			Get_Index_Collation_Option(
+				(BsonGinIndexOptionsBase *) indexOptions[0],
+				collation, indexCollation, indexCollationLength);
+			if (indexCollationLength > 0)
+			{
+				collation = indexCollation;
+			}
+		}
+
 		bool isComparisonValidIgnore = false;
 		int cmp = CompareSerializedBsonIndexTerms(currentKeyBytes,
 												  scanState->indexContinuation,
 												  collation, &isComparisonValidIgnore);
+		if (ScanDirectionIsBackward(indexScanDirection))
+		{
+			/* The term comparator follows physical index order. */
+			cmp = -cmp;
+		}
+
 		if (cmp > 0)
 		{
 			/* We passed the continuation (continuation point got deleted) */
@@ -1996,7 +2019,8 @@ ExtensionCursorScanNextWithIndexContinuation(CustomScanState *node)
 			continue;
 		}
 
-		/* Still at the same key - skip forward if TID < required TID
+		/* TIDs within a key remain ascending even when keys are scanned backward.
+		 * Still at the same key - skip forward if TID < required TID
 		 * We use the indexscan's TID here since we do not have HOT here.
 		 * TODO: Revisit with HOT (since the Heap's TID can be disjoint from
 		 * the index's TID in the case of HOT).
@@ -2666,16 +2690,16 @@ ParseContinuationDocument(pgbson *continuation, ParsedContinuationState *state)
 }
 
 
-static Path *
+Path *
 PlanWithIndexAndGetPath(PlannerInfo *root, RelOptInfo *rel,
-						ParsedContinuationState *state)
+						List *indexOids)
 {
 	List *indexList = NIL;
 	ListCell *indexCell;
 	foreach(indexCell, rel->indexlist)
 	{
 		IndexOptInfo *index = lfirst_node(IndexOptInfo, indexCell);
-		if (list_member_oid(state->indexOids, index->indexoid))
+		if (list_member_oid(indexOids, index->indexoid))
 		{
 			indexList = lappend(indexList, index);
 		}
@@ -2683,7 +2707,7 @@ PlanWithIndexAndGetPath(PlannerInfo *root, RelOptInfo *rel,
 
 	if (indexList == NIL)
 	{
-		if (state->indexOids == NIL)
+		if (indexOids == NIL)
 		{
 			ereport(ERROR, (errmsg(
 								"Continuation document is missing index information for bitmap scan")));
@@ -2932,7 +2956,7 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 			if (resumePath == NULL)
 			{
 				/* Here we need to plan a path that uses this index with that continuation */
-				Path *finalPath = PlanWithIndexAndGetPath(root, rel, state);
+				Path *finalPath = PlanWithIndexAndGetPath(root, rel, state->indexOids);
 				if (finalPath == NULL)
 				{
 					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_QUERYPLANKILLED),
@@ -2980,7 +3004,8 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 			}
 
 			/* Here we need to add the operators to skip based on continuation */
-			AddContinuationQualsToIndexPath(root, rel, resumePath, state);
+			AddContinuationQualsToIndexPath(root, rel, resumePath, state->cursorDatums[0],
+											state->dedupState);
 
 			/* Note: The query can change state across continuations (what started as an indexonlyscan
 			 * can become indexscans and vice versa. Allow this to happen as writes happen since
@@ -3094,7 +3119,7 @@ GeneratePathFromContinuation(ParsedContinuationState *state,
 			}
 
 			/* If we got here, we didn't find a bitmap or index path already created */
-			Path *finalPath = PlanWithIndexAndGetPath(root, rel, state);
+			Path *finalPath = PlanWithIndexAndGetPath(root, rel, state->indexOids);
 			if (IsA(finalPath, BitmapHeapPath))
 			{
 				return (Path *) CreateCustomScanPathForStreaming(root, rel,
@@ -3150,7 +3175,7 @@ MakeSimpleIndexClause(PlannerInfo *root, OpExpr *expr)
  * an ordered scan. Otherwise, the index layer may choose a fast/regular scan
  * which may violate the assumptions made for ordered scans.
  */
-static void
+void
 AddOrderByRequiredClausesIfNecessary(IndexPath *indexPath, PlannerInfo *root,
 									 RelOptInfo *rel)
 {
@@ -3177,16 +3202,16 @@ AddOrderByRequiredClausesIfNecessary(IndexPath *indexPath, PlannerInfo *root,
 }
 
 
-static void
+void
 AddContinuationQualsToIndexPath(PlannerInfo *root, RelOptInfo *rel, IndexPath *resumePath,
-								ParsedContinuationState *state)
+								Datum continuationDatum, const bytea *dedupState)
 {
-	if (state->cursorDatums[0] == (Datum) 0)
+	if (continuationDatum == (Datum) 0)
 	{
 		ereport(ERROR, (errmsg("Invalid continuation provided - missing cursor state")));
 	}
 
-	bytea *continuationBuffer = DatumGetByteaPP(state->cursorDatums[0]);
+	bytea *continuationBuffer = DatumGetByteaPP(continuationDatum);
 
 	/* We add this as a min operator on this index */
 	const char *firstPath = GetCompositeFirstIndexPath(
@@ -3205,13 +3230,13 @@ AddContinuationQualsToIndexPath(PlannerInfo *root, RelOptInfo *rel, IndexPath *r
 	/* When the continuation carried a serialized dedup state, embed it so the
 	 * ordered scan can restore its dedup tracker and suppress documents already
 	 * returned on earlier pages. */
-	if (state->dedupState != NULL)
+	if (dedupState != NULL)
 	{
 		bson_value_t dedupValue = { 0 };
 		dedupValue.value_type = BSON_TYPE_BINARY;
 		dedupValue.value.v_binary.subtype = 0;
-		dedupValue.value.v_binary.data = (uint8_t *) state->dedupState;
-		dedupValue.value.v_binary.data_len = VARSIZE_ANY(state->dedupState);
+		dedupValue.value.v_binary.data = (uint8_t *) dedupState;
+		dedupValue.value.v_binary.data_len = VARSIZE_ANY(dedupState);
 		PgbsonWriterAppendValue(&childWriter, "dedupState", 10, &dedupValue);
 	}
 

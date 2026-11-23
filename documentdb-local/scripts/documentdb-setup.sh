@@ -206,8 +206,8 @@ Authentication (one of the following; interactive prompt is the default):
   --admin-password-file <FILE>  Read the admin password from a file
                          (also: --password-file; for non-interactive/CI use).
                          File should be mode 0600. It must hold one line of
-                         printable ASCII; one trailing newline (LF or CRLF)
-                         is removed.
+                         UTF-8 text without control characters; one trailing
+                         newline (LF or CRLF) is removed.
   --admin-password-stdin Read the admin password from stdin (same rules as
                          --admin-password-file).
                          Best practice for piping a secret without

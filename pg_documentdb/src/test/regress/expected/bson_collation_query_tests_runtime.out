@@ -168,13 +168,13 @@ SELECT documentdb_api.insert_one('coll_q_db', 'coll_strings', '{ "_id": 26, "a":
 SET documentdb_core.enableCollation TO off;
 -- enableCollation = off, skipFailOnCollation = off (default): collation is rejected.
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_strings", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cat" } } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
-psql:sql/bson_collation_query_tests_core.sql:39: ERROR:  collation is not supported in the aggregate command yet.
+psql:sql/bson_collation_query_tests_core.sql:39: ERROR:  Collation support is disabled. Enable it to use 'aggregate.collation'.
 SELECT document FROM bson_aggregation_find('coll_q_db', '{ "find": "coll_strings", "filter": { "b": { "$eq": "cat" } }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }');
-psql:sql/bson_collation_query_tests_core.sql:40: ERROR:  collation is not supported in the find command yet.
+psql:sql/bson_collation_query_tests_core.sql:40: ERROR:  Collation support is disabled. Enable it to use 'find.collation'.
 SELECT document FROM documentdb_api.distinct_query('coll_q_db', '{"distinct":"coll_strings", "key":"a", "collation":{"locale":"en","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:41: ERROR:  collation is not supported in the distinct command yet.
+psql:sql/bson_collation_query_tests_core.sql:41: ERROR:  Collation support is disabled. Enable it to use 'distinct.collation'.
 SELECT documentdb_api.count_query('coll_q_db', '{"count":"coll_strings", "query":{"a":"cat"}, "collation":{"locale":"en","strength":1}}');
-psql:sql/bson_collation_query_tests_core.sql:42: ERROR:  collation is not supported in the count command yet.
+psql:sql/bson_collation_query_tests_core.sql:42: ERROR:  Collation support is disabled. Enable it to use 'count.collation'.
 -- enableCollation = off, skipFailOnCollation = on: collation is accepted but ignored (binary match).
 SET documentdb.skipFailOnCollation TO on;
 SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_strings", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "a": { "$eq": "cat" } } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }');
@@ -3099,7 +3099,7 @@ SELECT documentdb_api.insert_one('coll_q_db', 'coll_delete', '{"_id": "CAT", "a"
 SET documentdb_core.enableCollation TO off;
 BEGIN;
 SELECT documentdb_api.delete('coll_q_db', '{ "delete": "coll_delete", "deletes": [ {"q": {"_id": "DoG" }, "limit": 0, "collation": { "locale": "fr", "strength" : 2}} ]}');
-psql:sql/bson_collation_query_tests_core.sql:821: ERROR:  BSON field 'delete.deletes.collation' is not yet supported
+psql:sql/bson_collation_query_tests_core.sql:821: ERROR:  Collation support is disabled. Enable it to use 'delete.deletes.collation'.
 ROLLBACK;
 -- enableCollation = on for the rest of the section.
 SET documentdb_core.enableCollation TO on;
@@ -4800,7 +4800,7 @@ SELECT documentdb_api.insert_one('coll_q_db', 'coll_update_select', '{"_id": "DO
 BEGIN;
 SET LOCAL documentdb_core.enableCollation TO off;
 SELECT documentdb_api.update('coll_q_db', '{ "update": "coll_update_select", "updates": [ { "q": { "_id": "DoG" }, "u": { "$set": { "disabled": true } }, "multi": true, "collation": { "locale": "en", "strength": 1 } } ] }');
-psql:sql/bson_collation_query_tests_core.sql:1468: ERROR:  BSON field 'update.updates.collation' is not yet supported
+psql:sql/bson_collation_query_tests_core.sql:1468: ERROR:  Collation support is disabled. Enable it to use 'update.updates.collation'.
 ROLLBACK;
 -- Collation applies when selecting documents by string _id and non-_id fields.
 BEGIN;
@@ -5784,7 +5784,7 @@ SET LOCAL documentdb_core.enableCollation TO off;
 SELECT documentdb_api.find_and_modify(
   'coll_q_db',
   '{"findAndModify": "coll_find_modify", "query": {"group": "PeT"}, "update": {"$set": {"state": "disabled"}}, "collation": {"locale": "en", "strength": 1}}');
-psql:sql/bson_collation_query_tests_core.sql:1866: ERROR:  findAndModify.collation is not implemented yet
+psql:sql/bson_collation_query_tests_core.sql:1866: ERROR:  Collation support is disabled. Enable it to use 'findAndModify.collation'.
 ROLLBACK;
 -- Compatibility mode preserves the existing binary behavior while the feature is disabled.
 BEGIN;

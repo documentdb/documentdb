@@ -1,3 +1,12 @@
+-- Copyright (c) Microsoft Corporation.
+-- Licensed under the MIT License.
+
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.cursor_state_support(internal)
+ RETURNS internal
+ LANGUAGE c
+ IMMUTABLE STRICT PARALLEL SAFE
+AS 'MODULE_PATHNAME', $function$command_cursor_state_support$function$;
+
 DROP FUNCTION IF EXISTS __API_SCHEMA_V2__.current_cursor_state(__CORE_SCHEMA_V2__.bson);
 
 DROP FUNCTION IF EXISTS __API_SCHEMA_V2__.cursor_state(__CORE_SCHEMA_V2__.bson, __CORE_SCHEMA_V2__.bson);
@@ -9,12 +18,14 @@ CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.current_cursor_state(__COR
  RETURNS __CORE_SCHEMA_V2__.bson
  LANGUAGE c
  STABLE
+ SUPPORT __API_SCHEMA_INTERNAL_V2__.cursor_state_support
 AS 'MODULE_PATHNAME', $function$command_current_cursor_state$function$;
 
 CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.cursor_state(__CORE_SCHEMA_V2__.bson, __CORE_SCHEMA_V2__.bson)
  RETURNS bool
  LANGUAGE c
  IMMUTABLE STRICT
+ SUPPORT __API_SCHEMA_INTERNAL_V2__.cursor_state_support
 AS 'MODULE_PATHNAME', $function$command_cursor_state$function$;
 
 CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.cursor_tracker_support(internal)
@@ -73,12 +84,14 @@ CREATE OR REPLACE FUNCTION documentdb_api_internal_readonly.cursor_state(__CORE_
  RETURNS bool
  LANGUAGE c
  IMMUTABLE STRICT
+ SUPPORT __API_SCHEMA_INTERNAL_V2__.cursor_state_support
 AS 'MODULE_PATHNAME', $function$command_cursor_state$function$;
 
 CREATE OR REPLACE FUNCTION documentdb_api_internal_readonly.current_cursor_state(__CORE_SCHEMA__.bson)
  RETURNS __CORE_SCHEMA__.bson
  LANGUAGE c
  STABLE
+ SUPPORT __API_SCHEMA_INTERNAL_V2__.cursor_state_support
 AS 'MODULE_PATHNAME', $function$command_current_cursor_state$function$;
 
 

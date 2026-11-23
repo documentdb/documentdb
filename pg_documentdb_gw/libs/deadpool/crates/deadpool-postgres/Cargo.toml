@@ -1,0 +1,71 @@
+[package]
+name = "deadpool-postgres"
+version = "0.14.2"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Michael P. Jung <michael.jung@terreon.de>"]
+description = "Dead simple async pool for tokio-postgres"
+keywords = ["async", "database", "pool", "postgres"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/deadpool-rs/deadpool"
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["rt_tokio_1"]
+rt_tokio_1 = ["deadpool/rt_tokio_1"]
+rt_async-std_1 = ["deadpool/rt_async-std_1"]
+serde = ["deadpool/serde", "dep:serde"]
+
+# Re-export of tokio-postgres features
+array-impls = ["tokio-postgres/array-impls"]
+js = ["tokio-postgres/js"]
+runtime = ["tokio-postgres/runtime"]
+with-bit-vec-0_6 = ["tokio-postgres/with-bit-vec-0_6"]
+with-bit-vec-0_7 = ["tokio-postgres/with-bit-vec-0_7"]
+with-bit-vec-0_8 = ["tokio-postgres/with-bit-vec-0_8"]
+with-bit-vec-0_9 = ["tokio-postgres/with-bit-vec-0_9"]
+with-chrono-0_4 = ["tokio-postgres/with-chrono-0_4"]
+with-cidr-0_2 = ["tokio-postgres/with-cidr-0_2"]
+with-cidr-0_3 = ["tokio-postgres/with-cidr-0_3"]
+with-eui48-0_4 = ["tokio-postgres/with-eui48-0_4"]
+with-eui48-1 = ["tokio-postgres/with-eui48-1"]
+with-geo-types-0_6 = ["tokio-postgres/with-geo-types-0_6"]
+with-geo-types-0_7 = ["tokio-postgres/with-geo-types-0_7"]
+with-jiff-0_1 = ["tokio-postgres/with-jiff-0_1"]
+with-jiff-0_2 = ["tokio-postgres/with-jiff-0_2"]
+with-serde_json-1 = ["tokio-postgres/with-serde_json-1"]
+with-smol_str-01 = ["tokio-postgres/with-smol_str-01"]
+with-time-0_2 = ["tokio-postgres/with-time-0_2"]
+with-time-0_3 = ["tokio-postgres/with-time-0_3"]
+with-uuid-0_8 = ["tokio-postgres/with-uuid-0_8"]
+with-uuid-1 = ["tokio-postgres/with-uuid-1"]
+
+
+[dependencies]
+async-trait = "0.1.80"
+deadpool = { path = "../deadpool", version = "0.13.1", default-features = false, features = [
+    "managed",
+] }
+serde = { package = "serde", version = "1.0", features = [
+    "derive",
+], optional = true }
+tokio = { version = "1.29", features = ["rt", "sync"] }
+tracing = "0.1.37"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio-postgres = "0.7.14"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+tokio-postgres = { version = "0.7.14", default-features = false }
+
+[dev-dependencies]
+config = { version = "0.15", features = ["json"] }
+dotenvy = "0.15.0"
+futures = "0.3.1"
+futures-util = "0.3.30"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync"] }

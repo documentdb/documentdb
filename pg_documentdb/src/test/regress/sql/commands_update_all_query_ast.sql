@@ -10,6 +10,7 @@ SET documentdb.enableBypassDocumentValidation TO ON;
 SET documentdb.enable_update_many_worker_pushdown TO OFF;
 SET documentdb_core.enableCollation TO ON;
 SET documentdb.skipFailOnCollation TO OFF;
+SET documentdb.enable_collation_with_schema_validation TO ON;
 SET documentdb.enable_support_function_id_pushdown TO OFF;
 SHOW documentdb.enable_update_query_ast;
 
@@ -17,6 +18,12 @@ SELECT documentdb_api.create_collection('update_all_ast', 'plain');
 SELECT documentdb_api.create_collection_view('update_all_ast', '{"create":"strict","validator":{"$jsonSchema":{"properties":{"value":{"bsonType":"int"}}}},"validationLevel":"strict","validationAction":"error"}');
 SELECT documentdb_api.create_collection_view('update_all_ast', '{"create":"moderate","validator":{"$jsonSchema":{"properties":{"value":{"bsonType":"int"}}}},"validationLevel":"moderate","validationAction":"error"}');
 SELECT documentdb_api.create_collection_view('update_all_ast', '{"create":"described","enableUpdateDescription":true,"validator":{"$jsonSchema":{"properties":{"value":{"bsonType":"int"}}}},"validationLevel":"strict","validationAction":"error"}');
+SELECT documentdb_api.create_collection_view('update_all_ast', '{"create":"collated_validator","validator":{"label":{"$in":["CAT","DOG"]}},"validationAction":"error"}');
+UPDATE documentdb_api_catalog.collections
+SET options = '{"collation":{"locale":"en","strength":2}}'::bson
+WHERE database_name = 'update_all_ast' AND collection_name = 'collated_validator';
+SELECT documentdb_api_internal.invalidate_collection_cache();
+SELECT documentdb_api.create_collection_view('update_all_ast', '{"create":"strict_invalid","validator":{"$jsonSchema":{"properties":{"value":{"bsonType":"int"}}}},"validationLevel":"strict","validationAction":"error"}');
 
 CREATE TEMP TABLE update_all_cases (
     seq int PRIMARY KEY, label text, target text, command bson,
@@ -51,7 +58,24 @@ INSERT INTO update_all_cases VALUES
  (26, 'disjunctive ID filters', 'plain', '{"update":"plain","updates":[{"q":{"$or":[{"_id":1,"group":"x"},{"_id":3,"group":"y"}]},"u":{"$inc":{"value":1}},"multi":true}]}', 2, 2, false),
  (27, 'element match before transformation', 'plain', '{"update":"plain","updates":[{"q":{"items":{"$elemMatch":{"label":"Cat","qty":{"$lt":3}}}},"u":{"$set":{"items":[]}},"multi":true}]}', 1, 1, false),
  (28, 'comment-only predicate', 'plain', '{"update":"plain","updates":[{"q":{"$comment":"match all"},"u":{"$inc":{"value":1}},"multi":true}]}', 3, 3, false),
- (29, 'contradictory ID filters', 'plain', '{"update":"plain","updates":[{"q":{"$and":[{"_id":1},{"_id":2}],"group":"x"},"u":{"$inc":{"value":1}},"multi":true}]}', 0, 0, false);
+ (29, 'contradictory ID filters', 'plain', '{"update":"plain","updates":[{"q":{"$and":[{"_id":1},{"_id":2}],"group":"x"},"u":{"$inc":{"value":1}},"multi":true}]}', 0, 0, false),
+ (30, 'strict no-op', 'strict', '{"update":"strict","updates":[{"q":{"group":"x"},"u":{"$set":{"group":"x"}},"multi":true}]}', 2, 0, false),
+ (31, 'strict partially unchanged matches', 'strict', '{"update":"strict","updates":[{"q":{"group":"x"},"u":{"$set":{"value":10}},"multi":true}]}', 2, 1, false),
+ (32, 'strict collated array filters', 'strict', '{"update":"strict","updates":[{"q":{"label":"CAT"},"u":{"$inc":{"items.$[item].qty":10}},"arrayFilters":[{"item.label":"CAT"}],"multi":true,"collation":{"locale":"en","strength":2}}]}', 2, 2, false),
+ (33, 'strict array filter rollback', 'strict', '{"update":"strict","updates":[{"q":{"group":"x"},"u":{"$inc":{"items.$[item].qty":10},"$set":{"value":"invalid"}},"arrayFilters":[{"item.qty":{"$lt":3}}],"multi":true}]}', NULL, NULL, true),
+ (34, 'description validation no-op', 'described', '{"update":"described","updates":[{"q":{"group":"x"},"u":{"$set":{"group":"x"}},"multi":true}]}', 2, 0, false),
+ (35, 'moderate invalid to valid', 'moderate', '{"update":"moderate","updates":[{"q":{"group":"y"},"u":{"$set":{"value":30}},"multi":true}]}', 1, 1, false),
+ (36, 'strict empty predicate', 'strict', '{"update":"strict","updates":[{"q":{},"u":{"$inc":{"value":1}},"multi":true}]}', 3, 3, false),
+ (37, 'validator collection collation', 'collated_validator', '{"update":"collated_validator","updates":[{"q":{"group":"x"},"u":{"$set":{"label":"cAt"}},"multi":true,"collation":{"locale":"simple"}}]}', 2, 2, false),
+ (38, 'collated validator rollback', 'collated_validator', '{"update":"collated_validator","updates":[{"q":{"group":"x"},"u":{"$set":{"label":"invalid"}},"multi":true}]}', NULL, NULL, true),
+ -- Existing invalid documents: strict validates every updated document,
+ -- moderate skips validation when the existing document is already invalid.
+ (39, 'strict existing invalid stays invalid', 'strict_invalid', '{"update":"strict_invalid","updates":[{"q":{"group":"y"},"u":{"$set":{"value":"still invalid"}},"multi":true}]}', NULL, NULL, true),
+ (40, 'strict existing invalid unrelated field', 'strict_invalid', '{"update":"strict_invalid","updates":[{"q":{"group":"y"},"u":{"$set":{"label":"DOG"}},"multi":true}]}', NULL, NULL, true),
+ (41, 'strict existing invalid made valid', 'strict_invalid', '{"update":"strict_invalid","updates":[{"q":{"group":"y"},"u":{"$set":{"value":30}},"multi":true}]}', 1, 1, false),
+ (42, 'strict existing invalid rolls back all rows', 'strict_invalid', '{"update":"strict_invalid","updates":[{"q":{},"u":{"$set":{"seen":true}},"multi":true}]}', NULL, NULL, true),
+ (43, 'moderate existing invalid unrelated field', 'moderate', '{"update":"moderate","updates":[{"q":{"group":"y"},"u":{"$set":{"label":"DOG"}},"multi":true}]}', 1, 1, false),
+ (44, 'moderate mixed valid and invalid', 'moderate', '{"update":"moderate","updates":[{"q":{},"u":{"$set":{"seen":true}},"multi":true}]}', 3, 3, false);
 
 CREATE TEMP TABLE update_all_results (
     pass text, seq int, result text, success bool, error text, documents text[],
@@ -78,7 +102,7 @@ BEGIN
              {"_id":1,"group":"x","label":"Cat","value":10,"tags":["Cat"],"items":[{"label":"Cat","qty":1},{"label":"Dog","qty":5}]},
              {"_id":2,"group":"x","label":"cat","value":20,"tags":["cat"],"items":[{"label":"cat","qty":2},{"label":"Dog","qty":7}]},
              {"_id":3,"group":"y","label":"dog","value":%s,"tags":["dog"],"items":[{"label":"dog","qty":3}]}]}',
-            test_case.target, CASE WHEN test_case.target = 'moderate' THEN '"invalid"' ELSE '30' END)::bson);
+            test_case.target, CASE WHEN test_case.target IN ('moderate', 'strict_invalid') THEN '"invalid"' ELSE '30' END)::bson);
         SELECT array_agg(document::text ORDER BY object_id) INTO before_docs
         FROM documentdb_api.collection('update_all_ast', test_case.target);
         response := NULL;
@@ -95,12 +119,17 @@ BEGIN
         IF test_case.fails IS DISTINCT FROM (failure IS NOT NULL OR succeeded IS NOT TRUE) THEN
             RAISE EXCEPTION 'Unexpected outcome for %: %, %', test_case.label, response, failure;
         END IF;
-        IF NOT test_case.fails AND (response @@ format(
-            '{"n":%s,"nModified":%s}', test_case.matched, test_case.modified)::bson) IS NOT TRUE THEN
+        -- Extract fields directly: @@ on a scalar bson falls back to runtime bson_query_match.
+        IF NOT test_case.fails AND (
+            bson_get_value_text(response, 'n')::int IS DISTINCT FROM test_case.matched OR
+            bson_get_value_text(response, 'nModified')::int IS DISTINCT FROM test_case.modified) THEN
             RAISE EXCEPTION 'Unexpected counts for %: %', test_case.label, response;
         END IF;
-        IF test_case.fails AND (response @@
-            '{"n":0,"nModified":0,"writeErrors":{"$elemMatch":{"errmsg":"Document failed validation"}}}'::bson) IS NOT TRUE THEN
+        IF test_case.fails AND (
+            bson_get_value_text(response, 'n')::int IS DISTINCT FROM 0 OR
+            bson_get_value_text(response, 'nModified')::int IS DISTINCT FROM 0 OR
+            position('Document failed validation' IN
+                     COALESCE(bson_get_value_text(response, 'writeErrors'), '')) = 0) THEN
             RAISE EXCEPTION 'Expected validation failure for %: %, %', test_case.label, response, failure;
         END IF;
         IF (test_case.fails OR test_case.modified = 0) AND before_docs IS DISTINCT FROM after_docs THEN
@@ -162,7 +191,7 @@ FROM update_all_cases c JOIN update_all_results r USING (seq)
 WHERE r.pass = 'legacy' ORDER BY c.seq;
 SELECT c.label, r.documents
 FROM update_all_cases c JOIN update_all_results r USING (seq)
-WHERE r.pass = 'native' AND c.seq IN (10, 11, 12, 13, 14, 16, 20, 21)
+WHERE r.pass = 'native' AND c.seq IN (10, 11, 12, 13, 14, 16, 20, 21, 32, 33, 35, 37, 41, 43, 44)
 ORDER BY c.seq;
 
 -- A collated ID equality cannot be added as a binary equality to either shape.
@@ -183,35 +212,79 @@ SELECT document FROM documentdb_api.collection('update_all_ast', 'plain') WHERE 
 SELECT document FROM documentdb_api.collection('update_all_ast', 'strict') WHERE document @@ '{"_id":"CASE"}';
 ROLLBACK;
 
--- Eager qualification must retain the write-specific geospatial rejection.
+-- Preserve ordinary write rejection and validated-source missing-index errors.
 DO $$
 DECLARE
     native bool;
+    target text;
     near_operator text;
     response bson;
     legacy_response bson;
     succeeded bool;
 BEGIN
+    FOREACH target IN ARRAY ARRAY['plain', 'strict'] LOOP
+        FOREACH near_operator IN ARRAY ARRAY['$near', '$nearSphere'] LOOP
+            FOREACH native IN ARRAY ARRAY[false, true] LOOP
+                PERFORM set_config('documentdb.enable_update_query_ast', native::text, true);
+                SELECT p_result, p_success INTO response, succeeded
+                FROM documentdb_api.update('update_all_ast', format(
+                    '{"update":"%s","updates":[{"q":{"location":{"%s":[0,0]}},"u":{"$set":{"unexpected":true}},"multi":true}]}',
+                    target, near_operator)::bson);
+                IF succeeded IS DISTINCT FROM false OR
+                   (response @@ '{"n":0,"nModified":0,"writeErrors":{"$exists":true}}'::bson) IS NOT TRUE THEN
+                    RAISE EXCEPTION 'Expected write rejection for %: %', near_operator, response;
+                END IF;
+                IF target = 'strict' AND (response @@
+                   '{"writeErrors":{"$elemMatch":{"errmsg":"unable to find index for $geoNear query"}}}'::bson) IS NOT TRUE THEN
+                    RAISE EXCEPTION 'Expected missing geospatial index for %: %', near_operator, response;
+                END IF;
+                IF NOT native THEN
+                    legacy_response := response;
+                ELSIF response::text IS DISTINCT FROM legacy_response::text THEN
+                    RAISE EXCEPTION 'Different write rejection for %: %, %', near_operator, legacy_response, response;
+                END IF;
+            END LOOP;
+        END LOOP;
+    END LOOP;
+END;
+$$;
+
+-- Validated updates match through a SELECT, which supports indexed near queries.
+BEGIN;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('update_all_ast', '{"createIndexes":"strict","indexes":[{"key":{"location":"2dsphere"},"name":"schema_geo"}]}', true);
+DO $$
+DECLARE
+    native bool;
+    near_operator text;
+    response bson;
+    succeeded bool;
+    correct_documents int;
+BEGIN
     FOREACH near_operator IN ARRAY ARRAY['$near', '$nearSphere'] LOOP
         FOREACH native IN ARRAY ARRAY[false, true] LOOP
+            PERFORM documentdb_api.delete('update_all_ast', '{"delete":"strict","deletes":[{"q":{},"limit":0}]}');
+            PERFORM documentdb_api.insert('update_all_ast', '{"insert":"strict","documents":[
+                {"_id":1,"value":10,"location":{"type":"Point","coordinates":[0,0]}},
+                {"_id":2,"value":20,"location":{"type":"Point","coordinates":[1,1]}},
+                {"_id":3,"value":30,"location":{"type":"Point","coordinates":[40,40]}}]}');
             PERFORM set_config('documentdb.enable_update_query_ast', native::text, true);
             SELECT p_result, p_success INTO response, succeeded
             FROM documentdb_api.update('update_all_ast', format(
-                '{"update":"plain","updates":[{"q":{"location":{"%s":[0,0]}},"u":{"$set":{"unexpected":true}},"multi":true}]}',
+                '{"update":"strict","updates":[{"q":{"location":{"%s":{"$geometry":{"type":"Point","coordinates":[0,0]},"$maxDistance":200000}}},"u":{"$inc":{"value":1}},"multi":true}]}',
                 near_operator)::bson);
-            IF succeeded IS DISTINCT FROM false OR
-               (response @@ '{"n":0,"nModified":0,"writeErrors":{"$exists":true}}'::bson) IS NOT TRUE THEN
-                RAISE EXCEPTION 'Expected write rejection for %: %', near_operator, response;
-            END IF;
-            IF NOT native THEN
-                legacy_response := response;
-            ELSIF response::text IS DISTINCT FROM legacy_response::text THEN
-                RAISE EXCEPTION 'Different write rejection for %: %, %', near_operator, legacy_response, response;
+            SELECT count(*) INTO correct_documents
+            FROM documentdb_api.collection('update_all_ast', 'strict')
+            WHERE document @@ '{"$or":[{"_id":1,"value":11},{"_id":2,"value":21},{"_id":3,"value":30}]}';
+            IF succeeded IS DISTINCT FROM true OR
+               (response @@ '{"n":2,"nModified":2,"writeErrors":{"$exists":false}}'::bson) IS NOT TRUE OR
+               correct_documents <> 3 THEN
+                RAISE EXCEPTION 'Unexpected validated % outcome (native %): %', near_operator, native, response;
             END IF;
         END LOOP;
     END LOOP;
 END;
 $$;
+ROLLBACK;
 
 -- Literal worker specs omit variableSpec. Toggle pushdown to cover both the
 -- BSON-result wrapper and the direct executor's matched/modified counters.
@@ -276,10 +349,13 @@ SELECT documentdb_api.drop_collection('update_all_ast', 'plain');
 SELECT documentdb_api.drop_collection('update_all_ast', 'strict');
 SELECT documentdb_api.drop_collection('update_all_ast', 'moderate');
 SELECT documentdb_api.drop_collection('update_all_ast', 'described');
+SELECT documentdb_api.drop_collection('update_all_ast', 'collated_validator');
+SELECT documentdb_api.drop_collection('update_all_ast', 'strict_invalid');
 RESET documentdb.enable_update_query_ast;
 RESET documentdb.enable_update_many_worker_pushdown;
 RESET documentdb.enableSchemaValidation;
 RESET documentdb.enableBypassDocumentValidation;
 RESET documentdb_core.enableCollation;
 RESET documentdb.skipFailOnCollation;
+RESET documentdb.enable_collation_with_schema_validation;
 RESET documentdb.enable_support_function_id_pushdown;

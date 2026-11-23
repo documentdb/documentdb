@@ -385,9 +385,17 @@ ParseFindAndModifyMessage(pgbson *message, Datum *databaseNameDatum)
 			}
 			else if (!SkipFailOnCollation)
 			{
+				if (!IsClusterVersionAtleast(DocDB_V1, 1, 0))
+				{
+					ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
+									errmsg(
+										"findAndModify.collation is not implemented yet")));
+				}
+
 				ereport(ERROR, (errcode(ERRCODE_DOCUMENTDB_COMMANDNOTSUPPORTED),
 								errmsg(
-									"findAndModify.collation is not implemented yet")));
+									"Collation support is disabled. "
+									"Enable it to use 'findAndModify.collation'.")));
 			}
 		}
 		else if (strcmp(key, "maxTimeMS") == 0)

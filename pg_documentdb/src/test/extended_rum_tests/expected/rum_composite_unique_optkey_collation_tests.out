@@ -13,12 +13,11 @@ SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
 -- enable_collated_unique_indexes feature flag.
 -- ===== Section 1: With the flag OFF, unique + collation is rejected =====
 -- CALLOUT: while enable_collated_unique_indexes is off, a unique index that
--- requests a collation spec is rejected with
--- "Collation is not yet supported for unique indexes".
+-- requests a collation spec is rejected with disabled-feature guidance.
 SET documentdb.enable_collated_unique_indexes TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
   '{ "createIndexes": "optkeyCollColl", "indexes": [ { "key": { "a": 1 }, "name": "a_coll_off", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
-ERROR:  Collation is not yet supported for unique indexes
+ERROR:  Collation support for unique indexes is disabled. Enable it to use 'createIndexes.indexes.collation'.
 -- ===== Section 2: With the flag ON, unique + collation is allowed =====
 -- Enabling the flag lets create_indexes build a unique index with a collation
 -- spec. This is the first successful create, so it creates the collection
@@ -340,7 +339,7 @@ SET documentdb.enable_collated_unique_indexes TO off;
 SET documentdb.enable_composite_unique_optional_key TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
   '{ "createIndexes": "flag_matrix", "indexes": [ { "key": { "a": 1 }, "name": "fm_both_off", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
-ERROR:  Collation is not yet supported for unique indexes
+ERROR:  Collation support for unique indexes is disabled. Enable it to use 'createIndexes.indexes.collation'.
 -- 9b: only enable_collated_unique_indexes ON (optional-key OFF) -> fails.
 SET documentdb.enable_collated_unique_indexes TO on;
 SET documentdb.enable_composite_unique_optional_key TO off;
@@ -352,7 +351,7 @@ SET documentdb.enable_collated_unique_indexes TO off;
 SET documentdb.enable_composite_unique_optional_key TO on;
 SELECT documentdb_api_internal.create_indexes_non_concurrently('optkeycolldb',
   '{ "createIndexes": "flag_matrix", "indexes": [ { "key": { "c": 1 }, "name": "fm_optkey_only", "unique": true, "collation": { "locale": "en", "strength": 2 } }]}', TRUE);
-ERROR:  Collation is not yet supported for unique indexes
+ERROR:  Collation support for unique indexes is disabled. Enable it to use 'createIndexes.indexes.collation'.
 -- 9d: both flags ON -> succeeds and produces a collated unique index.
 SET documentdb.enable_collated_unique_indexes TO on;
 SET documentdb.enable_composite_unique_optional_key TO on;

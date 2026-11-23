@@ -133,6 +133,8 @@
 /* Plan ID for the per-op update worker dispatch */
 #define QUERY_CALL_UPDATE_WORKER (63L << 32)
 
+#define QUERY_CALL_DELETE_MANY_WORKER_SHARDKEY (65L << 32)
+
 /*
  * Compile-time plan cache ID collision detection.
  *
@@ -233,6 +235,8 @@ pg_attribute_unused() =
 
 	/* Update worker dispatch (63) */
 	PlanCacheIdEntry(QUERY_CALL_UPDATE_WORKER),
+
+	PlanCacheIdEntry(QUERY_CALL_DELETE_MANY_WORKER_SHARDKEY),
 };
 /* *INDENT-ON* */
 

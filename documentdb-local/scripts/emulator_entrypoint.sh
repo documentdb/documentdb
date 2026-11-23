@@ -158,6 +158,14 @@ validate_settings
 resolve_layout
 setup_log_dir
 check_credentials
+# Refuse before the repair below whenever the answer is already known: without
+# a local PostgreSQL nothing repairs, a user that will be created needs no
+# marker, and a searchable (or absent) data directory shows its markers now.
+if [ "$START_POSTGRESQL" != "true" ] || [ "$CREATE_USER" != "false" ] \
+        || [ ! -e "$DATA_PATH" ] \
+        || { [ -x "$DATA_PATH" ] && { [ ! -d "$INIT_MARKER_DIR" ] || [ -x "$INIT_MARKER_DIR" ]; }; }; then
+    check_username_in_use
+fi
 resolve_toast_request
 
 if [ "$START_POSTGRESQL" = "true" ]; then

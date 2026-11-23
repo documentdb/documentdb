@@ -1,0 +1,56 @@
+# Machine-readable stewardship metadata for the local DocumentDB gateway
+# tokio-postgres fork. Keep this file in sync with FORK.md.
+
+fork_epoch = "documentdb-tokio-postgres-fork-1"
+fork_owner = "DocumentDB gateway maintainers"
+support_boundary = "Local path dependency for DocumentDB gateway workspaces only"
+publication_policy = "Do not publish the retained crate under its upstream package name"
+upstream_repository = "https://github.com/rust-postgres/rust-postgres"
+upstream_fork_point_commit = "1084ca8f5b5302e161892f2fa40abf71b4060c10"
+fork_repository = "https://github.com/tsharp/rust-postgres"
+fork_branch = "fix/memory-retention"
+fork_commit = "9ee7449aa9a52e3ce412ddd3d35279f97a628054"
+source_policy = "Pinned fork snapshot with documented local changes, not a tracking checkout"
+license = "MIT OR Apache-2.0"
+
+[validation]
+scope = "Changes to retained crate source or manifests"
+commands = [
+  "cargo make --cwd pg_documentdb_gw build",
+  "cargo make --cwd pg_documentdb_gw lint",
+  "cargo make --cwd pg_documentdb_gw test",
+  "cargo make --cwd pg_documentdb_gw_host dev",
+]
+
+# The release tag predates the upstream fork point recorded above.
+[[retained_crates]]
+name = "tokio-postgres"
+upstream_version = "0.7.18"
+upstream_tag = "tokio-postgres-v0.7.18"
+upstream_commit = "f1cb6ec0d5766b136cbd68f3010d64142a5daa66"
+local_path = "crates/tokio-postgres"
+compatibility_tier = "tier-0-postgres-client"
+gateway_features = ["runtime", "with-serde_json-1", "array-impls"]
+feature_authority = "crates/tokio-postgres/Cargo.toml"
+
+[[fork_patches]]
+crate = "tokio-postgres"
+commits = [
+  "01a5642bdc66ab414687d57d97bf8bafcdfa3705",
+  "0b36f945a3092bf1e2fe79332313ab2988ce11fe",
+  "7956f0217c9cfb41f1f86c511ab8d190e049bbe0",
+  "9ee7449aa9a52e3ce412ddd3d35279f97a628054",
+]
+description = "Configurable connection buffer sizing and memory-retention fixes, with regression tests"
+classification = "upstream-candidate"
+local_changes = "Additional request-buffer and idle-connection reclamation, package integration, and documentation/test adaptations"
+
+[divergence_policy]
+classification_required = true
+classes = ["upstream-first", "upstream-candidate", "local-only"]
+ledger_location = "FORK.md#divergence-ledger"
+
+[security]
+advisory_identities = ["tokio-postgres"]
+monitor_upstream_releases = true
+coordinate_shared_vulnerabilities_with_upstream = true

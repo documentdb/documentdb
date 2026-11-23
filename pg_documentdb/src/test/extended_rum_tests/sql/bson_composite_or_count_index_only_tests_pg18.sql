@@ -1,0 +1,1 @@
+\i sql/bson_composite_or_count_index_only_tests.sql

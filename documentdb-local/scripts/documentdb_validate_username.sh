@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 #
 # documentdb_validate_username.sh
 #
@@ -18,19 +20,23 @@
 username="$1"
 gateway_setup_config="${2:-$GATEWAY_HOME/pg_documentdb_gw/SetupConfiguration.json}"
 
-# Names PostgreSQL truncates or reserves. The packaged tools' other rules are
-# skipped: this runs on every start, and existing volumes may use such names.
-username_bytes=$(LC_ALL=C; echo "${#username}")
-if [ "$username_bytes" -gt 63 ]; then
-    echo "Error: username '$username' is $username_bytes bytes; PostgreSQL role names are at most 63." >&2
-    exit 1
-fi
-case "$username" in
-    public|none)
-        echo "Error: username '$username' is reserved by PostgreSQL." >&2
+# Names PostgreSQL truncates or reserves, checked only when the caller creates
+# or logs in as the user (USERNAME_IN_USE, default true). The packaged tools'
+# other rules are skipped: this runs on every start, and existing volumes may
+# use such names.
+if [ "${USERNAME_IN_USE:-true}" = "true" ]; then
+    username_bytes=$(LC_ALL=C; echo "${#username}")
+    if [ "$username_bytes" -gt 63 ]; then
+        echo "Error: username '$username' is $username_bytes bytes; PostgreSQL role names are at most 63." >&2
         exit 1
-        ;;
-esac
+    fi
+    case "$username" in
+        public|none)
+            echo "Error: username '$username' is reserved by PostgreSQL." >&2
+            exit 1
+            ;;
+    esac
+fi
 
 if [ ! -f "$gateway_setup_config" ]; then
     echo "Error: gateway configuration '$gateway_setup_config' not found; cannot validate the username against reserved role prefixes." >&2

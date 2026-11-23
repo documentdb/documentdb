@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/configuration/pg_configuration.rs
  *
  *-------------------------------------------------------------------------
@@ -8,12 +9,13 @@
 
 use std::{
     collections::HashMap,
+    fmt::Debug,
     path::Path,
     sync::{Arc, Weak},
     time::SystemTime,
 };
 
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use bson::{rawbson, RawBson};
 use serde::Deserialize;
 use tokio::{
@@ -147,7 +149,19 @@ pub struct PgConfiguration {
     cluster_version: ArcSwap<Option<ClusterVersion>>,
     refresh_task: Option<JoinHandle<()>>,
     watch_task: Option<JoinHandle<()>>,
+    refresh_observer: ArcSwapOption<RefreshObserver>,
 }
+
+/// Receives successful configuration-publication notifications off the request path.
+pub trait ConfigurationRefreshObserver: Debug + Send + Sync {
+    /// Called after values, topology and freshness have been published.
+    ///
+    /// Implementations must not block or trigger another refresh synchronously.
+    fn configuration_refreshed(&self);
+}
+
+#[derive(Debug)]
+struct RefreshObserver(Weak<dyn ConfigurationRefreshObserver>);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct WatchedFileState {
@@ -256,6 +270,7 @@ impl PgConfiguration {
                 cluster_version,
                 refresh_task: Some(refresh_task),
                 watch_task: Some(watch_task),
+                refresh_observer: ArcSwapOption::empty(),
             }
         });
 
@@ -264,6 +279,15 @@ impl PgConfiguration {
 
     pub fn last_update_at(&self) -> Instant {
         *self.last_update_at.load_full()
+    }
+
+    /// Replaces the publication observer without keeping its owner alive.
+    ///
+    /// Registration does not issue an initial notification. Failed refreshes
+    /// retain the last published state and do not notify the observer.
+    pub fn set_refresh_observer(&self, observer: Weak<dyn ConfigurationRefreshObserver>) {
+        self.refresh_observer
+            .store(Some(Arc::new(RefreshObserver(observer))));
     }
 
     /// # Errors
@@ -286,6 +310,13 @@ impl PgConfiguration {
         self.topology_bson.store(Arc::new(new_topology));
         self.cluster_version.store(Arc::new(parsed_version));
         self.last_update_at.store(Arc::new(Instant::now()));
+        if let Some(observer) = self
+            .refresh_observer
+            .load_full()
+            .and_then(|observer| observer.0.upgrade())
+        {
+            observer.configuration_refreshed();
+        }
 
         Ok(())
     }

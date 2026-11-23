@@ -94,6 +94,7 @@ process_files() {
     
     local total_tests=0
     local total_failures=0
+    local total_skipped=0
     local total_time=0
     
     # Process each file
@@ -181,7 +182,7 @@ process_files() {
 
         # Detect if file is prove TAP output (contains "wallclock secs" or "t/*.pl ..")
         local is_prove_output=0
-        if grep -qE 'wallclock secs|^t/.*\.pl[[:space:]]+\.\.' "$file_path" 2>/dev/null; then
+        if grep -qE 'wallclock secs|^([^[:space:]]+/)?t/.*\.pl[[:space:]]+\.\.' "$file_path" 2>/dev/null; then
             is_prove_output=1
             log_verbose "Detected prove TAP format in: $file_path"
         fi
@@ -219,12 +220,12 @@ process_files() {
 
             # Match prove file result: "t/something.pl .. ok" or "t/something.pl .. "
             # May have leading whitespace when prove aligns output
-            /[[:space:]]*t\/.*\.pl[[:space:]]+\.\./ {
+            /^[[:space:]]*([^[:space:]]+\/)?t\/.*\.pl[[:space:]]+\.\./ {
                 # Extract filename: strip leading whitespace, then take up to " .."
                 fname = $0
                 sub(/^[[:space:]]+/, "", fname)
                 sub(/[[:space:]]+\.\..*$/, "", fname)
-                if (fname ~ /^t\/.*\.pl$/) {
+                if (fname ~ /(^|\/)t\/.*\.pl$/) {
                     current_file = fname
                     prove_file_count++
 
@@ -234,7 +235,12 @@ process_files() {
                         pending_diagnostics = ""
                     }
 
-                    if ($0 ~ /\.\.[[:space:]]*\.?[[:space:]]*ok/) {
+                    if ($0 ~ /\.\.[[:space:]]*skipped:/) {
+                        file_status[current_file] = "skipped"
+                        reason = $0
+                        sub(/^.*\.\.[[:space:]]*skipped:[[:space:]]*/, "", reason)
+                        fail_details[current_file] = reason
+                    } else if ($0 ~ /\.\.[[:space:]]*\.?[[:space:]]*ok/) {
                         file_status[current_file] = "ok"
                         if (debug == 1) {
                             printf "DEBUG: prove file PASS: %s\n", current_file > "/dev/stderr"
@@ -271,7 +277,7 @@ process_files() {
             /^---+$/ && in_summary == 1 { next }
 
             # Parse summary entries: "t/file.pl (Wstat: N Tests: N Failed: N)"
-            in_summary && /^t\/.*\.pl[[:space:]]+\(Wstat:/ {
+            in_summary && /^([^[:space:]]+\/)?t\/.*\.pl[[:space:]]+\(Wstat:/ {
                 # Extract filename
                 fname = $0
                 sub(/[[:space:]]+\(Wstat:.*$/, "", fname)
@@ -289,7 +295,7 @@ process_files() {
                     sub(/Failed:[[:space:]]*/, "", failed_val)
                 }
 
-                if (fname ~ /^t\/.*\.pl$/) {
+                if (fname ~ /(^|\/)t\/.*\.pl$/) {
                     # If this file was not seen in the file result lines, count it
                     if (!(fname in file_status)) {
                         prove_file_count++
@@ -364,7 +370,7 @@ process_files() {
 
                         # Encode failure details if present
                         encoded = ""
-                        if (status == "failed") {
+                        if (status == "failed" || status == "skipped") {
                             details = ""
                             if (fail_details[f] != "") details = details fail_details[f]
                             if (f in summary_tests) {
@@ -565,7 +571,8 @@ process_files() {
     # Count totals
     if [[ -s "$temp_file" ]]; then
         total_tests=$(wc -l < "$temp_file" || echo "0")
-        total_failures=$(awk -F'|' '$2 != "ok" {count++} END {print count+0}' "$temp_file" || echo "0")
+        total_failures=$(awk -F'|' '$2 != "ok" && $2 != "skipped" {count++} END {print count+0}' "$temp_file" || echo "0")
+        total_skipped=$(awk -F'|' '$2 == "skipped" {count++} END {print count+0}' "$temp_file" || echo "0")
         total_time=$(awk -F'|' '{sum += $4} END {printf "%.3f", sum/1000}' "$temp_file" || echo "0.000")
     else
         log_error "No test results found"
@@ -677,7 +684,7 @@ generate_xml() {
                 }
                 
                 # Calculate suite statistics by reading the temp file again
-                cmd = "awk -F'\''|'\'' '\''$5 == \"" file_path "\" {tests++; time+=$4; if($2 != \"ok\") failures++} END {printf \"%d %d %.3f\", tests, failures, time/1000}'\'' " "'"$temp_file"'"
+                cmd = "awk -F'\''|'\'' '\''$5 == \"" file_path "\" {tests++; time+=$4; if($2 != \"ok\" && $2 != \"skipped\") failures++} END {printf \"%d %d %.3f\", tests, failures, time/1000}'\'' " "'"$temp_file"'"
                 cmd | getline suite_stats
                 close(cmd)
                 
@@ -696,7 +703,10 @@ generate_xml() {
             printf "    <testcase classname=\"%s\" name=\"%s\" time=\"%.3f\"", \
                 xml_escape(suite_name), xml_escape(test_name), duration_sec
             
-            if (status != "ok") {
+            if (status == "skipped") {
+                printf ">\n      <skipped message=\"%s\" />\n    </testcase>\n", \
+                    xml_escape(decode_base64(diff_output_encoded))
+            } else if (status != "ok") {
                 printf ">\n"
                 # Decode base64 diff if present
                 diff_output = decode_base64(diff_output_encoded)
@@ -740,8 +750,9 @@ generate_xml() {
     echo ""
     echo "Summary:"
     echo "  Total tests: $total_tests"
-    echo "  Passed: $((total_tests - total_failures))"
+    echo "  Passed: $((total_tests - total_failures - total_skipped))"
     echo "  Failed: $total_failures"
+    echo "  Skipped: $total_skipped"
     echo "  Total time: ${total_time} seconds"
 }
 

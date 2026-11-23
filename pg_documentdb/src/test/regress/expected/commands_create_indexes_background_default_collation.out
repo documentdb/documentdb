@@ -293,7 +293,7 @@ SELECT documentdb_api.create_indexes_background(
 );
                                                                                                           create_indexes_background                                                                                                          
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- ("{ ""raw"" : { ""defaultShard"" : { ""ok"" : { ""$numberInt"" : ""0"" }, ""errmsg"" : ""Collation is not yet supported for unique indexes"", ""code"" : { ""$numberInt"" : ""1088"" } } }, ""ok"" : { ""$numberInt"" : ""0"" } }",f,"{ }")
+ ("{ ""raw"" : { ""defaultShard"" : { ""ok"" : { ""$numberInt"" : ""0"" }, ""errmsg"" : ""Collation support for unique indexes is disabled. Enable it to use 'createIndexes.indexes.collation'."", ""code"" : { ""$numberInt"" : ""1088"" } } }, ""ok"" : { ""$numberInt"" : ""0"" } }",f,"{ }")
 (1 row)
 
 SET documentdb.defaultUseCompositeOpClass TO off;

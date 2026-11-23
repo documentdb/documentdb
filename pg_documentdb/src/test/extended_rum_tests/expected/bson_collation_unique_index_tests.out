@@ -24,7 +24,7 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently(
     'unique_collation_db',
     '{ "createIndexes": "gates", "indexes": [ { "key": { "v": 1 }, "name": "unique_v", "unique": true, "enableOrderedIndex": true, "collation": { "locale": "en", "strength": 2 } } ] }',
     true);
-ERROR:  Collation is not yet supported for unique indexes
+ERROR:  Collation support for unique indexes is disabled. Enable it to use 'createIndexes.indexes.collation'.
 SET documentdb.enable_collated_unique_indexes TO on;
 SET documentdb.enable_composite_unique_optional_key TO off;
 SELECT documentdb_api_internal.create_indexes_non_concurrently(

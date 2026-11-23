@@ -2,12 +2,6 @@ SET citus.next_shard_id TO 696000;
 SET documentdb.next_collection_id TO 6960;
 SET documentdb.next_collection_index_id TO 6960;
 SET search_path TO documentdb_api,documentdb_api_catalog,documentdb_api_internal,documentdb_core;
--- enableGroupByDistinctScan and enableDistinctScanForGroupFirst are enabled by
--- default starting in v116. Pin them off here so this suite keeps exercising the
--- non-distinct-scan (index-only-scan gated) plan shapes. Remove these pins when
--- the flags are retired.
-SET documentdb.enableGroupByDistinctScan TO off;
-SET documentdb.enableDistinctScanForGroupFirst TO off;
 SET documentdb.enableExtendedExplainPlans TO on;
 SET documentdb.enableIndexOnlyScanForFindProject TO on;
 -- if documentdb_extended_rum exists, set alternate index handler
@@ -161,17 +155,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
    Output: bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" } }'::bson, '{ "country" : { "$gte" : "Brazil" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   indexName: country_1
-   indexKey: {"country": 1}
+   indexName: country_id_1
+   indexKey: {"country": 1,"_id": 1}
    isMultiKey: false
-   indexBounds: ["country": ["Brazil", { })]
-   innerScanLoops: 4 loops
+   indexBounds: ["country": ["Brazil", { }), "_id": (MinKey, MaxKey)]
+   innerScanLoops: 10 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
-   ->  Index Scan using country_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
+   ->  Index Only Scan using country_id_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
          Output: document
          Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-(12 rows)
+         Heap Fetches: xxx
+(13 rows)
 
 -- A3: find with inclusion of an UN-covered field (provider) + _id excluded
 -- Expected: no IOS because provider is not in country_1
@@ -180,17 +175,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
    Output: bson_dollar_project_find(document, '{ "provider" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "country" : { "$gte" : "Brazil" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   indexName: country_1
-   indexKey: {"country": 1}
+   indexName: country_provider_1
+   indexKey: {"country": 1,"provider": 1}
    isMultiKey: false
-   indexBounds: ["country": ["Brazil", { })]
-   innerScanLoops: 4 loops
+   indexBounds: ["country": ["Brazil", { }), "provider": (MinKey, MaxKey)]
+   innerScanLoops: 8 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
-   ->  Index Scan using country_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
+   ->  Index Only Scan using country_provider_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
          Output: document
          Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-(12 rows)
+         Heap Fetches: xxx
+(13 rows)
 
 -- A4: find with inclusion of one covered + one UN-covered field
 -- Expected: no IOS because provider is not covered by country_1
@@ -199,17 +195,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
    Output: bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" }, "provider" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "country" : { "$gte" : "Brazil" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   indexName: country_1
-   indexKey: {"country": 1}
+   indexName: country_provider_1
+   indexKey: {"country": 1,"provider": 1}
    isMultiKey: false
-   indexBounds: ["country": ["Brazil", { })]
-   innerScanLoops: 4 loops
+   indexBounds: ["country": ["Brazil", { }), "provider": (MinKey, MaxKey)]
+   innerScanLoops: 8 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
-   ->  Index Scan using country_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
+   ->  Index Only Scan using country_provider_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
          Output: document
          Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-(12 rows)
+         Heap Fetches: xxx
+(13 rows)
 
 -- A5: find with pure exclusion projection
 -- Expected: no IOS because we don't know what other fields exist (have to read full doc)
@@ -704,17 +701,18 @@ SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALY
 ---------------------------------------------------------------------
  Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=10 loops=1)
    Output: bson_dollar_project(document, '{ "provider" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   indexName: country_1
-   indexKey: {"country": 1}
+   indexName: country_provider_1
+   indexKey: {"country": 1,"provider": 1}
    isMultiKey: false
-   indexBounds: ["country": ["Brazil", { })]
-   innerScanLoops: 4 loops
+   indexBounds: ["country": ["Brazil", { }), "provider": (MinKey, MaxKey)]
+   innerScanLoops: 8 loops
    scanType: ordered
    scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
-   ->  Index Scan using country_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
+   ->  Index Only Scan using country_provider_1 on documentdb_data.documents_6961_696002 collection (actual rows=10 loops=1)
          Output: document
          Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-(12 rows)
+         Heap Fetches: xxx
+(13 rows)
 
 -- D3: $match + $project + $count using covered fields
 -- Expected: IOS using country_1
@@ -2208,57 +2206,6 @@ SELECT feature_name, usage_count FROM documentdb_api_internal.command_feature_co
  index_only_scan_for_find_project_candidate |           3
 (1 row)
 
--- With both the feature and the candidate tracking switch off we neither perform
--- the index-only scan nor record the candidate (the prior fully-guarded behavior).
-SET documentdb.track_index_only_scan_find_candidate TO off;
-SELECT count(*) * 0 AS reset FROM documentdb_api_internal.command_feature_counter_stats(true);
- reset 
----------------------------------------------------------------------
-     0
-(1 row)
-
-SELECT documentdb_distributed_test_helpers.run_explain_and_trim($$EXPLAIN (ANALYZE ON, COSTS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }')$$, p_ignore_heap_fetches => true);
-                                                                                                                run_explain_and_trim                                                                                                                
----------------------------------------------------------------------
- Custom Scan (DocumentDBApiExplainQueryScan) (actual rows=14 loops=1)
-   Output: bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "country" : { "$gte" : "Brazil" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   indexName: country_1
-   indexKey: {"country": 1}
-   isMultiKey: false
-   indexBounds: ["country": ["Brazil", { })]
-   innerScanLoops: 8 loops
-   scanType: ordered
-   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 14)]
-   ->  Index Scan using country_1 on documentdb_data.documents_6961_696002 collection (actual rows=14 loops=1)
-         Output: document
-         Index Cond: (collection.document @>= '{ "country" : "Brazil" }'::bson)
-(12 rows)
-
-SELECT document FROM bson_aggregation_find('iosfp_db', '{ "find": "iosfp_coll", "filter": { "country": { "$gte": "Brazil" } }, "projection": { "country": 1, "_id": 0 } }');
-         document          
----------------------------------------------------------------------
- { "country" : "Brazil" }
- { "country" : "Brazil" }
- { "country" : "Canada" }
- { "country" : "France" }
- { "country" : "Germany" }
- { "country" : "India" }
- { "country" : "India" }
- { "country" : "Mexico" }
- { "country" : "Mexico" }
- { "country" : "Mexico" }
- { "country" : "Spain" }
- { "country" : "USA" }
- { "country" : "USA" }
- { "country" : "USA" }
-(14 rows)
-
-SELECT feature_name, usage_count FROM documentdb_api_internal.command_feature_counter_stats(false) WHERE feature_name = 'index_only_scan_for_find_project_candidate';
- feature_name | usage_count 
----------------------------------------------------------------------
-(0 rows)
-
-RESET documentdb.track_index_only_scan_find_candidate;
 -- With the feature enabled we perform the Index Only Scan and do not record the
 -- candidate (it is only meant to flag accounts while the feature is disabled).
 SET documentdb.enableIndexOnlyScanForFindProject TO on;

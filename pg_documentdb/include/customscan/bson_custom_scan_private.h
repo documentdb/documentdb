@@ -105,4 +105,12 @@ HTAB * CreateExplainIndexNameHash(void);
 void WalkAndExplainScanState(PlanState *scanState, ExplainState *es, HTAB *indexNameHash);
 
 Node * ResolveCoerceViaIOToConst(Node *arg, Oid expectedTypeOid);
+
+bool MultiKeyIndexRequiresBitmapScan(IndexOptInfo *indexInfo);
+Path * PlanWithIndexAndGetPath(PlannerInfo *root, RelOptInfo *rel, List *indexOids);
+void AddOrderByRequiredClausesIfNecessary(IndexPath *indexPath, PlannerInfo *root,
+										  RelOptInfo *rel);
+void AddContinuationQualsToIndexPath(PlannerInfo *root, RelOptInfo *rel,
+									 IndexPath *resumePath,
+									 Datum continuationDatum, const bytea *dedupState);
 #endif

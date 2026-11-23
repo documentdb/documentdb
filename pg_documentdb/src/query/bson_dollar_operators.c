@@ -606,6 +606,7 @@ PG_FUNCTION_INFO_V1(bson_dollar_not_gte);
 PG_FUNCTION_INFO_V1(bson_dollar_not_lt);
 PG_FUNCTION_INFO_V1(bson_dollar_not_lte);
 PG_FUNCTION_INFO_V1(bson_dollar_fullscan);
+PG_FUNCTION_INFO_V1(bson_indexopt_scan);
 PG_FUNCTION_INFO_V1(bson_dollar_distinct_exists);
 PG_FUNCTION_INFO_V1(bson_dollar_index_hint);
 
@@ -1292,6 +1293,16 @@ bson_dollar_not_gte(PG_FUNCTION_ARGS)
 	bool result = CompareBsonAgainstQuery(documentDatum, filter, CompareGreaterEqualMatch,
 										  isNullFilterEquality);
 	PG_RETURN_BOOL(!result);
+}
+
+
+/* This function is a plan-only function to do planning strategies around indexoptinfo during the support
+ * function, i.e, telling posgres the index can support index only scan so that the native planner considers it.
+ */
+Datum
+bson_indexopt_scan(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(true);
 }
 
 

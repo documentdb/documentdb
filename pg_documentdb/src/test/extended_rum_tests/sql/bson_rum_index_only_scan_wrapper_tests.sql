@@ -29,9 +29,9 @@ SELECT COUNT(documentdb_api.insert_one('rumidxonly_db', 'records',
      ', "band": "b' || (i % 3)::text || '" }')::bson))
 FROM generate_series(1, 200) i;
 
--- Scoped VACUUM (ANALYZE) so the visibility map is populated alongside fresh
--- statistics, keeping the index-only-scan plan choice stable across PostgreSQL
--- versions.
+-- Older snapshots prevent VACUUM from marking the new rows all-visible, which
+-- can make these small-fixture queries prefer sequential scans.
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
 VACUUM (ANALYZE) documentdb_data.documents_29501;
 
 -- ============================================================================
@@ -148,3 +148,253 @@ $cmd$, p_ignore_heap_fetches => true);
 SELECT document FROM bson_aggregation_pipeline('rumidxonly_db',
     '{ "aggregate": "records", "pipeline": [ { "$group": { "_id": "$zone" } }, { "$sort": { "_id": 1 } } ], "cursor": {}, "hint": "idx_zone_band" }');
 RESET documentdb.enable_rum_index_only_scan_projection_wrapper;
+
+-- Native path generation supplies a parallel IOS alternative with bitmap scans enabled.
+ALTER TABLE documentdb_data.documents_29501 SET (parallel_workers = 2);
+SET documentdb.enableCompositeParallelIndexScan TO on;
+SET documentdb.enableDynamicCursors TO off;
+SET documentdb.forceUseIndexIfAvailable TO off;
+SET enable_bitmapscan TO on;
+SET max_parallel_workers_per_gather TO 2;
+SET min_parallel_table_scan_size TO 0;
+SET min_parallel_index_scan_size TO 0;
+SET parallel_setup_cost TO 0;
+SET parallel_tuple_cost TO 0;
+-- On PG19 this tiny fixture costs 10.18 for bitmap versus 10.59 for parallel IOS.
+-- Lower random_page_cost for plan stability while keeping bitmap paths enabled.
+SET random_page_cost TO 1;
+
+SET documentdb.enable_native_planner_index_only_scan TO on;
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "zone": { "$gte": "z0" } } }');
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "zone": { "$gte": "z0" } } }');
+
+RESET documentdb.enable_native_planner_index_only_scan;
+RESET documentdb.enableCompositeParallelIndexScan;
+RESET documentdb.enableDynamicCursors;
+RESET documentdb.forceUseIndexIfAvailable;
+RESET enable_bitmapscan;
+RESET max_parallel_workers_per_gather;
+RESET min_parallel_table_scan_size;
+RESET min_parallel_index_scan_size;
+RESET parallel_setup_cost;
+RESET parallel_tuple_cost;
+RESET random_page_cost;
+
+-- Object-ID support functions must not leave an object_id dependency on covered scans.
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SET documentdb.enable_support_function_id_pushdown TO on;
+SET documentdb.enable_native_planner_index_only_scan TO on;
+SET documentdb.forceIndexOnlyScanIfAvailable TO off;
+SET documentdb.forceUseIndexIfAvailable TO off;
+SET documentdb.enableDynamicCursors TO off;
+SET max_parallel_workers_per_gather TO 0;
+SET enable_bitmapscan TO off;
+
+SELECT documentdb_api.insert_one('rumidxonly_db', 'records', '{ "_id": "Alpha", "zone": "z0", "band": "b0" }');
+SELECT documentdb_api.insert_one('rumidxonly_db', 'records', '{ "_id": "alpha", "zone": "z0", "band": "b0" }');
+SELECT documentdb_api.insert_one('rumidxonly_db', 'records', '{ "_id": "Beta", "zone": "z1", "band": "b1" }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumidxonly_db',
+    '{ "createIndexes": "records", "indexes": [
+        { "key": { "_id": 1, "zone": 1 }, "name": "idx_id_zone", "enableOrderedIndex": 1 },
+        { "key": { "_id": 1, "zone": 1 }, "name": "idx_id_zone_ci", "enableOrderedIndex": 1, "collation": { "locale": "en", "strength": 1 } }
+    ] }', TRUE);
+CALL documentdb_test_helpers.wait_for_vacuum_horizon();
+VACUUM (ANALYZE) documentdb_data.documents_29501;
+
+-- Equality, two-sided ranges, membership and regex all use covered object-ID predicates.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": 17 }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": 17 }, "hint": "idx_id_zone" }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$gte": 20, "$lt": 25 } }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$gte": 20, "$lt": 25 } }, "hint": "idx_id_zone" }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$gt": 19, "$lte": 24 } }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$gt": 19, "$lte": 24 } }, "hint": "idx_id_zone" }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$in": [17, 18, 19] } }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$in": [17, 18, 19] } }, "hint": "idx_id_zone" }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$regex": "^alpha$" } }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$regex": "^alpha$" } }, "hint": "idx_id_zone" }');
+
+-- The rewritten equality must retain case-insensitive matching.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": "ALPHA" }, "hint": "idx_id_zone_ci", "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": "ALPHA" }, "hint": "idx_id_zone_ci", "collation": { "locale": "en", "strength": 1 } }');
+
+-- Neither an uncovered _id nor an uncovered additional filter may become index-only.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$gte": 20, "$lt": 25 }, "zone": "z0" }, "hint": "idx_zone_band" }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$gte": 20, "$lt": 25 }, "zone": "z0" }, "hint": "idx_zone_band" }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_count('rumidxonly_db',
+        '{ "count": "records", "query": { "_id": { "$gt": 189, "$lte": 199 }, "band": "b1" }, "hint": "idx_id_zone" }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "records", "query": { "_id": { "$gt": 189, "$lte": 199 }, "band": "b1" }, "hint": "idx_id_zone" }');
+
+-- Unhinted finds must choose covered paths without pruning competing scan alternatives.
+SET enable_seqscan TO on;
+SET enable_bitmapscan TO on;
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 } }, "projection": { "_id": 1, "zone": 1 }, "sort": { "_id": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 } }, "projection": { "_id": 1, "zone": 1 }, "sort": { "_id": 1 } }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "zone": "z1", "band": "b1" }, "projection": { "zone": 1, "band": 1, "_id": 0 }, "limit": 2 }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "zone": "z1", "band": "b1" }, "projection": { "zone": 1, "band": 1, "_id": 0 }, "limit": 2 }');
+
+-- Leaving _id implicit requires coverage of that field too.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "zone": "z1", "band": "b1" }, "projection": { "zone": 1, "band": 1 }, "sort": { "_id": 1 }, "limit": 2 }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "zone": "z1", "band": "b1" }, "projection": { "zone": 1, "band": 1 }, "sort": { "_id": 1 }, "limit": 2 }');
+
+-- An uncovered projected field or filter still requires the heap.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 } }, "projection": { "_id": 1, "band": 1 }, "sort": { "_id": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 } }, "projection": { "_id": 1, "band": 1 }, "sort": { "_id": 1 } }');
+
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 }, "band": "b1" }, "projection": { "_id": 1, "zone": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "_id": { "$gte": 20, "$lt": 25 }, "band": "b1" }, "projection": { "_id": 1, "zone": 1 } }');
+
+-- A collated index cannot reconstruct the original projected strings.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "_id": "ALPHA" }, "projection": { "zone": 1, "_id": 0 }, "collation": { "locale": "en", "strength": 1 } }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "_id": "ALPHA" }, "projection": { "zone": 1, "_id": 0 }, "collation": { "locale": "en", "strength": 1 } }');
+
+-- Returning the full document still requires the heap for the unindexed band field.
+SELECT documentdb_test_helpers.run_explain_and_trim($cmd$
+    EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
+    SELECT document FROM bson_aggregation_find('rumidxonly_db',
+        '{ "find": "records", "filter": { "_id": 17 } }')
+$cmd$, p_ignore_heap_fetches => true);
+SELECT document FROM bson_aggregation_find('rumidxonly_db',
+    '{ "find": "records", "filter": { "_id": 17 } }');
+
+RESET documentdb.enable_support_function_id_pushdown;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET documentdb.enable_native_planner_index_only_scan;
+RESET documentdb.forceIndexOnlyScanIfAvailable;
+RESET documentdb.forceUseIndexIfAvailable;
+RESET documentdb.enableDynamicCursors;
+RESET max_parallel_workers_per_gather;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+
+-- An unbounded native IOS must retain sparse-hint inclusion semantics.
+SET documentdb.enable_native_planner_index_only_scan TO on;
+SET max_parallel_workers_per_gather TO 0;
+SELECT documentdb_api.insert_one('rumidxonly_db', 'sparse_records', '{ "_id": 1, "a": 10 }');
+SELECT documentdb_api.insert_one('rumidxonly_db', 'sparse_records', '{ "_id": 2, "a": null }');
+SELECT documentdb_api.insert_one('rumidxonly_db', 'sparse_records', '{ "_id": 3 }');
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumidxonly_db',
+    '{ "createIndexes": "sparse_records", "indexes": [ { "key": { "b": 1 }, "name": "idx_other" } ] }', TRUE);
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumidxonly_db',
+    '{ "createIndexes": "sparse_records", "indexes": [ { "key": { "a": 1 }, "name": "idx_sparse", "sparse": true } ] }', TRUE);
+
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": "idx_sparse" }');
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": "idx_sparse" }');
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": { "a": 1 } }');
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": { "a": 10 }, "hint": "idx_sparse" }');
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": { "a": 10 }, "hint": "idx_sparse" }');
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": { "a": null }, "hint": { "a": 1 } }');
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {} }');
+
+SET documentdb.enable_native_planner_index_only_scan TO off;
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": "idx_sparse" }');
+
+SET documentdb.enable_native_planner_index_only_scan TO on;
+SET documentdb_core.enableCollation TO on;
+SET documentdb.enableCollationWithNonUniqueOrderedIndexes TO on;
+SELECT documentdb_api_internal.create_indexes_non_concurrently('rumidxonly_db',
+    '{ "createIndexes": "sparse_records", "indexes": [ { "key": { "a": 1 }, "name": "idx_sparse_ci", "sparse": true, "collation": { "locale": "en", "strength": 1 } } ] }', TRUE);
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": "idx_sparse_ci", "collation": { "locale": "en", "strength": 1 } }');
+EXPLAIN (COSTS OFF)
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": { "a": 10 }, "hint": "idx_sparse_ci", "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": { "a": 10 }, "hint": "idx_sparse_ci", "collation": { "locale": "en", "strength": 1 } }');
+SELECT document FROM bson_aggregation_count('rumidxonly_db',
+    '{ "count": "sparse_records", "query": {}, "hint": "idx_sparse_ci", "collation": { "locale": "en", "strength": 1 } }');
+RESET documentdb.enable_native_planner_index_only_scan;
+RESET documentdb_core.enableCollation;
+RESET documentdb.enableCollationWithNonUniqueOrderedIndexes;
+RESET max_parallel_workers_per_gather;

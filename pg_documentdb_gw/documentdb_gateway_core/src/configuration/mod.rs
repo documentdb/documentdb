@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /*-------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation.  All rights reserved.
- *
  * documentdb_gateway_core/src/configuration/mod.rs
  *
  *-------------------------------------------------------------------------
@@ -20,7 +21,7 @@ pub use dynamic::{
     ClusterVersion, DynamicConfiguration, MAX_REQUEST_TIMEOUT_DEFAULT_SEC,
     MAX_REQUEST_TIMEOUT_SEC_KEY, TRANSACTION_TIMEOUT_DEFAULT_SEC, TRANSACTION_TIMEOUT_SEC_KEY,
 };
-pub use pg_configuration::PgConfiguration;
+pub use pg_configuration::{ConfigurationRefreshObserver, PgConfiguration};
 pub use setup::{env_keys, DocumentDBSetupConfiguration};
 pub use version::Version;
 
