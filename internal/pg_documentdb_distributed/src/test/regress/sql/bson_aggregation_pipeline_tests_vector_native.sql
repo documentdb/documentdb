@@ -15,6 +15,10 @@ ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan to off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 5.0, 1.1 ], "limit": 1, "path": "v" }  } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.9, 1.0 ], "limit": 1, "path": "v" }  } ], "cursor": {} }');
 ROLLBACK;
 
@@ -27,6 +31,10 @@ ANALYZE;
 BEGIN;
 SET LOCAL enable_seqscan to off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.0, 1.0 ], "limit": 2, "path": "v", "numCandidates": 100 }  }  ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.0, 1.0 ], "limit": 2, "path": "v", "numCandidates": 100 }  }  ], "cursor": {} }');
 ROLLBACK;
 ----------------------------------------------------------------------------------------------------
@@ -90,6 +98,10 @@ SELECT documentdb_api_internal.create_indexes_non_concurrently('db', '{ "createI
 BEGIN;
 SET LOCAL enable_seqscan to off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_knnbeta", "pipeline": [ { "$search": { "knnBeta": { "vector": [ 3.0, 5.0, 1.1 ], "k": 1, "path": "v" }  } } ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_knnbeta", "pipeline": [ { "$search": { "knnBeta": { "vector": [ 3.0, 4.9, 1.0 ], "k": 1, "path": "v" }  } } ], "cursor": {} }');
 ROLLBACK;
 

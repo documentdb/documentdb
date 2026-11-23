@@ -245,15 +245,8 @@ IsMatchingVectorIndex(Relation indexRelation, const char *queryVectorPath,
 		return false;
 	}
 
-	List *indexprs;
-	if (indexRelation->rd_indexprs)
-	{
-		indexprs = indexRelation->rd_indexprs;
-	}
-	else
-	{
-		indexprs = RelationGetIndexExpressions(indexRelation);
-	}
+	/* We always use copied index exprs no matter the relation cache hits or not */
+	List *indexprs = RelationGetIndexExpressions(indexRelation);
 
 	/*  rd_index is contains the index information for an Index relation. indkey allows one to access the
 	 * indexed colums as an array of column ids. In case of a vector index this is set to 0.*/

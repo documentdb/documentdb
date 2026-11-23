@@ -49,6 +49,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : { "$numberInt" : "6" }, "a" : "some sentence", "v" : [ { "$numberDouble" : "3.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "1.1000000000000000888" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "1.0" } } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.9, 1.0 ], "limit": 1, "path": "v" }  } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
 ---------------------------------------------------------------------
@@ -97,6 +100,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : { "$numberInt" : "7" }, "a" : "some other sentence", "v" : [ { "$numberDouble" : "8.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "0.10000000000000000555" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "0.91671110989441617622" } } }
 (2 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_native_vector", "pipeline": [ { "$vectorSearch": { "queryVector": [ 3.0, 4.0, 1.0 ], "limit": 2, "path": "v", "numCandidates": 100 }  }  ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                           
 ---------------------------------------------------------------------
@@ -379,6 +385,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
  { "_id" : { "$numberInt" : "6" }, "a" : "some sentence", "v" : [ { "$numberDouble" : "3.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "1.1000000000000000888" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "1.0" } } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline_knnbeta", "pipeline": [ { "$search": { "knnBeta": { "vector": [ 3.0, 4.9, 1.0 ], "k": 1, "path": "v" }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
 ---------------------------------------------------------------------

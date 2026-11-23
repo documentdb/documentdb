@@ -362,6 +362,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "6" }, "a" : "some sentence", "v" : [ { "$numberDouble" : "3.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "1.1000000000000000888" } ], "__cosmos_meta__" : { "$numberDouble" : "142.0" } }
 (1 row)
 
+COMMIT;
+BEGIN;
+SET LOCAL enable_seqscan = off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 5, "path": "v", "efSearch": 1 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN
 ---------------------------------------------------------------------
@@ -396,6 +399,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "a" : "some other sentence", "v" : [ { "$numberDouble" : "8.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "0.10000000000000000555" } ], "__cosmos_meta__" : { "$numberDouble" : "5082.0" } }
 (2 rows)
 
+COMMIT;
+BEGIN;
+SET LOCAL enable_seqscan = off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 5, "path": "v", "efSearch": 3 }  } }, { "$addFields": { "__cosmos_meta__": { "$ceil": { "$multiply": [ "$__cosmos_meta__.score", 1000 ] } } } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN
 ---------------------------------------------------------------------
@@ -464,6 +470,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "5" }, "a" : "some sentence", "v" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" }, { "$numberDouble" : "6.0999999999999996447" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "19.950439081164354604" } } }
 (5 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN
 ---------------------------------------------------------------------
@@ -501,6 +511,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "5" }, "rank" : { "$numberDouble" : "1995044.0" } }
 (5 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }}}, { "$project": { "rank": {"$round":[{"$multiply": [{"$meta": "searchScore" }, 100000]}]} } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN
 ---------------------------------------------------------------------
@@ -547,6 +561,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "5" }, "a" : "some sentence", "v" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" }, { "$numberDouble" : "6.0999999999999996447" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "19.950439081164354604" } } }
 (5 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN
 ---------------------------------------------------------------------
@@ -584,6 +602,11 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "5" }, "a" : "some sentence", "v" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" }, { "$numberDouble" : "6.0999999999999996447" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "19.950439081164354604" } } }
 (5 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
+SET LOCAL documentdb.enableVectorCalculateDefaultSearchParam = off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN
 ---------------------------------------------------------------------
@@ -631,6 +654,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "5" }, "a" : "some sentence", "v" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" }, { "$numberDouble" : "6.0999999999999996447" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "19.950439081164354604" } } }
 (5 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN
 ---------------------------------------------------------------------
@@ -668,6 +695,11 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "5" }, "a" : "some sentence", "v" : [ { "$numberInt" : "15" }, { "$numberInt" : "20" }, { "$numberDouble" : "6.0999999999999996447" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "19.950439081164354604" } } }
 (5 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
+SET LOCAL documentdb.enableVectorCalculateDefaultSearchParam = off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_efsearch", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN
 ---------------------------------------------------------------------
@@ -989,6 +1021,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "9" }, "searchScore" : { "$numberDouble" : "1203412.0" } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a": [ { "b" : 3 } ]}, "efSearch": 100 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN
 ---------------------------------------------------------------------
@@ -1034,6 +1070,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "9" }, "searchScore" : { "$numberDouble" : "1203412.0" } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta": { "a" : [ { "b" : 3 } ] } }, "efSearch": 100 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN
 ---------------------------------------------------------------------
@@ -1079,6 +1119,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "9" }, "searchScore" : { "$numberDouble" : "1203412.0" } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a.b": 3 }, "efSearch": 100 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN
 ---------------------------------------------------------------------
@@ -1125,6 +1169,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "6" }, "searchScore" : { "$numberDouble" : "14142.0" } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a": "some sentence"} }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN
 ---------------------------------------------------------------------
@@ -1170,6 +1218,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "searchScore" : { "$numberDouble" : "508134.0" } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$and": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 3 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN
 ---------------------------------------------------------------------
@@ -1215,6 +1267,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "searchScore" : { "$numberDouble" : "508134.0" } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$and": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 1 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN
 ---------------------------------------------------------------------
@@ -1262,6 +1318,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "8" }, "searchScore" : { "$numberDouble" : "1004092.0" } }
 (3 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 3 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN
 ---------------------------------------------------------------------
@@ -1314,6 +1374,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "8" }, "searchScore" : { "$numberDouble" : "1004092.0" } }
 (3 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.a": { "$gt": "other sentence" } }, { "meta.a": { "$lt": "some sentence" } } ] }, "efSearch": 1 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN
 ---------------------------------------------------------------------
@@ -1365,6 +1429,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "9" }, "searchScore" : { "$numberDouble" : "1203412.0" } }
 (2 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 10, "path": "v", "filter": {"$or":[{"$and":[{"meta.a":{"$gt":"other sentence"}},{"meta.a":{"$lt":"some sentence"}}]},{"meta.a":{"$in":[{"b":3},{"b":5}]}}]}, "efSearch": 10 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN
 ---------------------------------------------------------------------
@@ -1482,6 +1550,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "searchScore" : { "$numberDouble" : "508134.0" } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.b": 2 } }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN
 ---------------------------------------------------------------------
@@ -1529,6 +1601,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "8" }, "searchScore" : { "$numberDouble" : "1004092.0" } }
 (3 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.b": { "$gt": 1 } }, { "meta.b": { "$lt": 5 } } ] }, "efSearch": 1 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN
 ---------------------------------------------------------------------
@@ -1579,6 +1655,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "searchScore" : { "$numberDouble" : "508134.0" } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$and": [ { "$or": [{ "meta.b": { "$eq": 2 } }, { "meta.b": { "$eq": 5 } } ] }, { "meta.b": { "$lt": 5 } } ] } }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               QUERY PLAN
 ---------------------------------------------------------------------
@@ -1626,6 +1706,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "8" }, "searchScore" : { "$numberDouble" : "1004092.0" } }
 (3 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.b": { "$gt": 1 } }, { "meta.b": { "$lt": 5 } } ] }, "efSearch": 1 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN
 ---------------------------------------------------------------------
@@ -1678,6 +1762,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "8" }, "searchScore" : { "$numberDouble" : "1004092.0" } }
 (3 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"$or": [ { "meta.b": { "$eq": 1 } }, { "meta.b": { "$eq": 2 } } , { "meta.b": { "$eq": 5 } } ] } }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                QUERY PLAN
 ---------------------------------------------------------------------
@@ -1798,6 +1886,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "searchScore" : { "$numberDouble" : "508134.0" } }
 (2 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": true } }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN
 ---------------------------------------------------------------------
@@ -1844,6 +1936,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "searchScore" : { "$numberDouble" : "508134.0" } }
 (2 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": true }, "efSearch": 1 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                QUERY PLAN
 ---------------------------------------------------------------------
@@ -1890,6 +1986,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "9" }, "searchScore" : { "$numberDouble" : "1203412.0" } }
 (2 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": false }, "efSearch": 1 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN
 ---------------------------------------------------------------------
@@ -1936,6 +2036,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "9" }, "searchScore" : { "$numberDouble" : "1203412.0" } }
 (2 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": { "c": false }, "efSearch": 3 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN
 ---------------------------------------------------------------------
@@ -2043,6 +2147,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "searchScore" : { "$numberDouble" : "88331.0" } }
 (2 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$regex": "^some", "$options" : "i"}}, "efSearch": 100 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN
 ---------------------------------------------------------------------
@@ -2100,6 +2207,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "6" }, "searchScore" : { "$numberDouble" : "3460000.0" } }
 (2 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_filter", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$regex": "^some", "$options" : "i"}}, "efSearch": 100 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN
 ---------------------------------------------------------------------
@@ -2699,6 +2809,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "2" }, "rank" : { "$numberDouble" : "62863.0" } }
 (3 rows)
 
+COMMIT;
+BEGIN;
+SET LOCAL enable_seqscan = off;
 EXPLAIN (COSTS OFF)SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_empty_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "efSearch": 5 }  } }, { "$project": { "rank": {"$round":[{"$multiply": [{"$meta": "searchScore" }, 100000]}]} } } ], "cursor": {} }');
                                                                           QUERY PLAN
 ---------------------------------------------------------------------
@@ -2728,6 +2841,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "2" }, "rank" : { "$numberDouble" : "62863.0" } }
 (3 rows)
 
+COMMIT;
+BEGIN;
+SET LOCAL enable_seqscan = off;
 EXPLAIN (COSTS OFF)SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_empty_vector", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "efSearch": 5 }  } }, { "$project": { "rank": {"$round":[{"$multiply": [{"$meta": "searchScore" }, 100000]}]} } } ], "cursor": {} }');
                                                                           QUERY PLAN
 ---------------------------------------------------------------------
@@ -2848,6 +2964,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "meta" : { "a" : "some other sentence", "b" : { "$numberInt" : "2" } }, "c" : true, "v" : [ { "$numberDouble" : "8.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "0.10000000000000000555" } ], "__cosmos_meta__" : { "$numberDouble" : "884.0" } }
 (2 rows)
 
+COMMIT;
+BEGIN;
+SET LOCAL enable_seqscan = off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (VERBOSE on, COSTS off) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } } ], "cursor": {} }')
 $cmd$);
@@ -2896,6 +3015,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "8" }, "meta" : { "a" : "other sentence", "b" : { "$numberInt" : "5" } }, "c" : false, "v" : [ { "$numberDouble" : "13.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "0.10000000000000000555" } ], "__cosmos_meta__" : { "$numberDouble" : "63600.0" } }
 (2 rows)
 
+COMMIT;
+BEGIN;
+SET LOCAL enable_seqscan = off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (VERBOSE on, COSTS off) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } } ], "cursor": {} }')
 $cmd$);
@@ -2944,6 +3066,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "meta" : { "a" : "some other sentence", "b" : { "$numberInt" : "2" } }, "c" : true, "v" : [ { "$numberDouble" : "8.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "0.10000000000000000555" } ], "__cosmos_meta__" : { "$numberDouble" : "5082.0" } }
 (2 rows)
 
+COMMIT;
+BEGIN;
+SET LOCAL enable_seqscan = off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (VERBOSE on, COSTS off) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } } ], "cursor": {} }')
 $cmd$);
@@ -3164,6 +3289,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "7" }, "meta" : { "a" : "some other sentence", "b" : { "$numberInt" : "2" } }, "c" : true, "v" : [ { "$numberDouble" : "8.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "0.10000000000000000555" } ], "__cosmos_meta__" : { "$numberDouble" : "5082.0" } }
 (2 rows)
 
+COMMIT;
+BEGIN;
+SET LOCAL enable_seqscan = off;
 SELECT documentdb_distributed_test_helpers.run_explain_and_trim($cmd$
   EXPLAIN (VERBOSE on, COSTS off) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_vector_hnsw_exact", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "v", "efSearch": 1, "exact": true }  } } ], "cursor": {} }')
 $cmd$, false, false, false, true);
@@ -3476,6 +3604,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "8" }, "meta" : { "a" : "other sentence", "b" : { "$numberInt" : "5" } }, "c" : false, "v" : [ { "$numberDouble" : "13.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "0.10000000000000000555" } ], "__cosmos_meta__" : { "$numberDouble" : "10041.0" } }
 (3 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ] }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN
 ---------------------------------------------------------------------
@@ -3514,6 +3645,9 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "9" }, "meta" : { "a" : [ { "b" : { "$numberInt" : "3" } } ] }, "c" : false, "v" : [ { "$numberDouble" : "15.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "0.10000000000000000555" } ], "__cosmos_meta__" : { "$numberDouble" : "12035.0" } }
 (4 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "k": 5, "path": "v", "vector": [ 3.0, 4.9, 1.0 ], "oversampling": 1.5 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN
 ---------------------------------------------------------------------
@@ -3554,6 +3688,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "8" }, "searchScore" : { "$numberDouble" : "1004092.0" } }
 (3 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$lte": "some sentence"}}, "efSearch": 100 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN
 ---------------------------------------------------------------------
@@ -3614,6 +3752,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "8" }, "searchScore" : { "$numberDouble" : "78296.0" } }
 (3 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$lte": "some sentence"}}, "efSearch": 100 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN
 ---------------------------------------------------------------------
@@ -3659,6 +3801,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "6" }, "meta" : { "a" : "some sentence", "b" : { "$numberInt" : "1" } }, "c" : true, "v" : [ { "$numberDouble" : "3.0" }, { "$numberDouble" : "5.0" }, { "$numberDouble" : "1.1000000000000000888" } ], "__cosmos_meta__" : { "score" : { "$numberDouble" : "0.99986126308999445644" } } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$eq": "some sentence"}}, "efSearch": 100, "oversampling": 1.5 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     QUERY PLAN
 ---------------------------------------------------------------------
@@ -3718,6 +3864,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "6" }, "searchScore" : { "$numberDouble" : "3460000.0" } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$eq": "some sentence"}}, "efSearch": 100, "exact": true }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         QUERY PLAN
 ---------------------------------------------------------------------
@@ -3758,6 +3908,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "6" }, "searchScore" : { "$numberDouble" : "3460000.0" } }
 (1 row)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$eq": "some sentence"}}, "efSearch": 100, "exact": true, "oversampling": 1 }  } }, { "$project": {"searchScore": {"$round": [ {"$multiply": ["$__cosmos_meta__.score", 100000]}]} } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  QUERY PLAN
 ---------------------------------------------------------------------
@@ -3794,6 +3948,10 @@ SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate":
  { "_id" : { "$numberInt" : "6" }, "searchScore" : { "$numberDouble" : "3460000.0" } }
 (3 rows)
 
+ROLLBACK;
+BEGIN;
+SET LOCAL enable_seqscan to off;
+SET LOCAL documentdb.enableVectorPreFilter = on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('vector_hnsw_db', '{ "aggregate": "aggregation_pipeline_hnsw_halfvec", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 4, "path": "v", "filter": {"meta.a":  { "$lte": "some sentence"}}, "efSearch": 100 }  } } ], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN
 ---------------------------------------------------------------------
