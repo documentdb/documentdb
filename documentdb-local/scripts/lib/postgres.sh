@@ -237,6 +237,8 @@ SQL
 configure_running_postgresql() {
     update_documentdb_extensions
 
+    configure_local_index_schedule || echo "Warning: could not configure the local index-build schedule." >&2
+
     # Advisory only, so no cleanup on failure; see the script for the wording.
     bash "$entrypoint_dir/documentdb_report_extended_rum.sh" "$POSTGRESQL_PORT" "$OWNER" "$toast_pg_accepting"
 
@@ -245,4 +247,63 @@ configure_running_postgresql() {
     # Install the emulator-only getParameter rejection stub for the bundled
     # PostgreSQL; see that script for the rationale.
     bash "$entrypoint_dir/documentdb_install_getparameter_stub.sh" "$POSTGRESQL_PORT" || exit 1
+}
+
+configure_local_index_schedule() {
+    # This is a default, not an instruction to replace settings from an
+    # operator's include, ALTER SYSTEM, role, database, or command line.
+    # CREATE EXTENSION already materialized the stock schedules, including
+    # in the image-baked cluster. A configuration reload alone cannot change them.
+    # Treat the two workers as a set. A missing, disabled, added or edited
+    # worker is an operator schedule, not a partially stock installation.
+    local result
+    result=$(psql -XAtq -v ON_ERROR_STOP=1 -p "$POSTGRESQL_PORT" -U "$OWNER" -d postgres <<'SQL'
+BEGIN;
+SHOW config_file \gset
+\setenv DOCDB_INDEX_CONF :config_file
+-- An inert first-line marker means a previous boot prepared the file but
+-- stopped before publishing the setting. Only then accept already-tuned jobs.
+\set pending `head -n 1 "$DOCDB_INDEX_CONF" | grep -qxF '# documentdb-local pending index schedule' && echo true || echo false`
+WITH workers AS (
+    SELECT * FROM cron.job
+    WHERE jobname ~ '^documentdb_index_build_task_[0-9]+$'
+), stock AS (
+    SELECT count(*) = 2 AND bool_and(active AND (schedule = '2 seconds' OR (:'pending'::bool AND schedule = '1 second'))
+        AND database = current_database() AND username = current_user
+        AND nodename = current_setting('cron.host') AND nodeport = current_setting('port')::int
+        AND jobname IN ('documentdb_index_build_task_1', 'documentdb_index_build_task_2')
+        AND command = format('CALL documentdb_api_internal.build_index_concurrently(%s);',
+                             right(jobname, 1))) AS intact FROM workers
+)
+SELECT count(cron.alter_job(jobid, schedule := '1 second')) = 2 AS changed
+FROM workers, stock WHERE intact AND EXISTS (
+    SELECT FROM pg_settings WHERE name = 'documentdb.indexBuildScheduleInSec' AND source = 'default'
+) \gset
+\if :changed
+    \set written :pending
+    \if :written
+        -- The previous boot already prepared the file.
+    \else
+        \set written `sed --follow-symlinks -i '1i # documentdb-local pending index schedule' "$DOCDB_INDEX_CONF" && echo true || echo false`
+    \endif
+    \if :written
+        COMMIT;
+        -- Publish after commit. A crash or failed rename leaves the marker
+        -- and the default GUC intact, so the next boot can finish the update.
+        \set published `sed --follow-symlinks -i '1s/^# documentdb-local pending index schedule$/documentdb.indexBuildScheduleInSec = 1/' "$DOCDB_INDEX_CONF" && echo true || echo false`
+        \if :published
+            SELECT pg_reload_conf();
+        \else
+            \echo f
+        \endif
+    \else
+        ROLLBACK;
+        \echo f
+    \endif
+\else
+    ROLLBACK;
+\endif
+SQL
+    ) || return 1
+    [ -z "$result" ] || [ "$result" = t ]
 }

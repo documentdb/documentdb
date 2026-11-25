@@ -383,6 +383,19 @@ def _existing_documentdb_functions(container: str) -> set[str]:
     return functions
 
 
+def _index_schedule_sql(container: str, sql: str) -> list[str]:
+    return _docker("exec", container, "psql", "-XAtq", "-p",
+                   _container_pg_socket_port(container), "-d", "postgres",
+                   "-v", "ON_ERROR_STOP=1", "-c", sql, timeout=30).stdout.splitlines()
+
+
+def _index_schedules(container: str) -> list[str]:
+    return _index_schedule_sql(container, "SHOW documentdb.indexBuildScheduleInSec; "
+                               "SELECT jobname || ':' || schedule FROM cron.job "
+                               "WHERE jobname ~ '^documentdb_index_build_task_[0-9]+$' "
+                               "ORDER BY jobname")
+
+
 # ---------------------------------------------------------------------------
 # Base classes
 # ---------------------------------------------------------------------------
@@ -508,6 +521,10 @@ class DefaultContainerTests(_ContainerTestBase):
     """Defaults-only container: --skip-init-data, allowTLS, internal port."""
 
     ENTRYPOINT_FLAGS = ["--skip-init-data"]
+
+    def test_local_index_build_schedule(self):
+        self.assertEqual(_index_schedules(self.container), [
+            "1", "documentdb_index_build_task_1:1 second", "documentdb_index_build_task_2:1 second"])
 
     def test_container_is_running(self):
         result = _docker("inspect", "-f", "{{.State.Running}}", self.container)
@@ -1494,6 +1511,60 @@ class PersistenceTests(_VolumeTestBase):
     PostgreSQL data directory, or where data is wiped on second boot."""
 
     NAME_TAG = "persist"
+
+    def test_index_schedule_on_existing_volume(self):
+        # Explicitly set even the stock value: bootstrap must not tune it.
+        first = self._start("explicit", run_args=["-e", "PGOPTIONS=-c documentdb.indexBuildScheduleInSec=2"])
+        _wait_for_ready(first)
+        stock = ["2", "documentdb_index_build_task_1:2 seconds", "documentdb_index_build_task_2:2 seconds"]
+        self.assertEqual(_index_schedules(first), stock)
+        # A failed config edit must leave both workers eligible for retry.
+        # Only this invocation sees the failing editor, not the server process.
+        failure = _docker("exec", first, "env", "-u", "PGOPTIONS", "bash", "-c", '''
+            source /home/documentdb/gateway/scripts/lib/postgres.sh || exit 2
+            bin=$(mktemp -d) || exit 2
+            trap 'rm -rf "$bin"' EXIT
+            ln -s /bin/false "$bin/sed" || exit 2
+            PATH="$bin:$PATH" OWNER=$(id -un) POSTGRESQL_PORT=$1 configure_local_index_schedule
+        ''', "bash", _container_pg_socket_port(first), check=False, timeout=30)
+        self.assertEqual(failure.returncode, 1, failure.stderr)
+        self.assertEqual(_index_schedules(first), stock)
+        self._stop(first)
+
+        second = self._start("stock")
+        _wait_for_ready(second)
+        tuned = ["1", "documentdb_index_build_task_1:1 second", "documentdb_index_build_task_2:1 second"]
+        self.assertEqual(_index_schedules(second), tuned)
+        # Recreate the durable state after cron committed but before the
+        # prepared configuration was published, then boot the same volume.
+        conf, = _index_schedule_sql(second, "SHOW config_file")
+        _docker("exec", second, "sed", "--follow-symlinks", "-i",
+            "1s/^documentdb.indexBuildScheduleInSec = 1$/# documentdb-local pending index schedule/", conf)
+        self._stop(second)
+        third = self._start("resume")
+        _wait_for_ready(third)
+        self.assertEqual(_index_schedules(third), tuned)
+
+    def test_custom_index_schedule_survives_recreate(self):
+        first = self._start("custom", run_args=["-e", "PGOPTIONS=-c documentdb.indexBuildScheduleInSec=2"])
+        _wait_for_ready(first)
+        _index_schedule_sql(first, "SELECT cron.schedule('documentdb_index_build_task_3', '2 seconds', "
+                            "'CALL documentdb_api_internal.build_index_concurrently(3);')")
+        before = _index_schedules(first)
+        self.assertEqual(before, ["2", "documentdb_index_build_task_1:2 seconds",
+                                  "documentdb_index_build_task_2:2 seconds", "documentdb_index_build_task_3:2 seconds"])
+        self._stop(first)
+        second = self._start("custom-reboot")
+        _wait_for_ready(second)
+        self.assertEqual(_index_schedules(second), before)
+        _index_schedule_sql(second, "SELECT cron.unschedule('documentdb_index_build_task_3'); "
+                    "SELECT cron.alter_job(jobid, schedule := '7 seconds') FROM cron.job "
+                    "WHERE jobname = 'documentdb_index_build_task_2'")
+        self._stop(second)
+        third = self._start("edited-reboot")
+        _wait_for_ready(third)
+        self.assertEqual(_index_schedules(third), ["2", "documentdb_index_build_task_1:2 seconds",
+                              "documentdb_index_build_task_2:7 seconds"])
 
     def test_doc_survives_container_recreate(self):
         first_container = self._start("a")
