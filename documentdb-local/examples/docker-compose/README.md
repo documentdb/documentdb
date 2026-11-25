@@ -218,6 +218,24 @@ them; a failed **sample-data** seed is retried on every boot until it
 succeeds. Either way, recreate the volume (`down -v`) to re-seed from
 scratch.
 
+## Custom TLS certificates
+
+To use a custom TLS identity, mount the certificate files read-only and set
+`CERT_PATH` to the path **inside** the container. For PEM, also set `KEY_FILE`
+to the matching private key. For a `.pfx` or `.p12` bundle, include one server
+certificate and its matching key in the bundle and leave `KEY_FILE` unset.
+Include any intermediate certificates in chain order.
+
+For a protected bundle, mount a Compose secret and set `CERT_PASSWORD_FILE`
+to its container path (for example, `/run/secrets/tls_password`). Put the
+password on the first line of the secret, not in the Compose environment or
+command. Both mounts must be readable by the container user. Omit the
+password file for an empty password. Conversion failures stop startup.
+Restart the container after replacing a bundle or its password: the entrypoint
+extracts the identity at startup, not when the mounted bundle changes.
+Set `TLS_MODE=requireTLS` to reject plaintext connections and configure clients
+to trust the issuing CA and verify the server hostname.
+
 ## Changing the port
 
 To publish a different host port, change only the host side of the mapping

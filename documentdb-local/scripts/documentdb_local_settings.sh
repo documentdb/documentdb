@@ -43,6 +43,7 @@ DOCUMENTDB_LOCAL_SETTINGS=(
     "--log-level|LOG_LEVEL|info|enum:quiet,error,warn,info,debug,trace|log level"
     "--tlsMode|TLS_MODE|allowTLS|enum:disabled,allowTLS,requireTLS|tlsMode"
     "--cert-path|CERT_PATH||string|cert-path"
+    "--cert-password-file|CERT_PASSWORD_FILE||string|cert-password-file"
     "--key-file|KEY_FILE||string|key-file"
     "--toast-compression|DOCUMENTDB_TOAST_COMPRESSION|lz4|enum:lz4,pglz,default|TOAST compression"
 )

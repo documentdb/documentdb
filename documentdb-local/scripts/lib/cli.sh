@@ -22,11 +22,13 @@ Launches DocumentDB
 
 Optional arguments:
   -h, --help            Display information on available configuration
-  --cert-path [PATH]    Specify a path to a PEM certificate for securing traffic. You need to mount this file into
-                        the container (e.g. if CERT_PATH=/mycert.pem, you'd add an option like the following to your
-                        docker run: --mount type=bind,source=./mycert.pem,target=/mycert.pem)
+    --cert-path [PATH]    Specify a path to a PEM certificate or PKCS#12 bundle mounted in the container.
                         PEM certificates must be provided together with --key-file.
+                                                A .pfx or .p12 bundle must contain its own key; do not set --key-file.
                         Overrides CERT_PATH environment variable.
+    --cert-password-file [PATH]
+                                                Read the bundle password from the first line of a mounted secret file.
+                                                Omit for an empty password. Overrides CERT_PASSWORD_FILE.
   --key-file [PATH]     Specify the PEM private key that matches --cert-path. You need to mount this file into the
                         container (e.g. if KEY_FILE=/mykey.key, you'd add an option like the following to your
                         docker run: --mount type=bind,source=./mykey.key,target=/mykey.key)
@@ -326,7 +328,15 @@ validate_settings() {
     unset _setting_row _f _setting_var _setting_default _setting_type _setting_label _setting_value _setting_normalized
 
     # Cross-setting rules the table cannot express.
-    if { [ -n "${CERT_PATH:-}" ] && [ -z "${KEY_FILE:-}" ]; } || \
+    if is_pkcs12_bundle; then
+        if [ -n "${KEY_FILE:-}" ]; then
+            echo "Error: a PKCS#12 bundle supplies its own key; omit KEY_FILE." >&2
+            exit 1
+        fi
+    elif [ -n "${CERT_PASSWORD_FILE:-}" ]; then
+        echo "Error: CERT_PASSWORD_FILE requires a .pfx or .p12 certificate bundle." >&2
+        exit 1
+    elif { [ -n "${CERT_PATH:-}" ] && [ -z "${KEY_FILE:-}" ]; } || \
        { [ -z "${CERT_PATH:-}" ] && [ -n "${KEY_FILE:-}" ]; }; then
         echo "Error: Both CERT_PATH and KEY_FILE must be set together, or neither should be set." >&2
         exit 1
