@@ -23,6 +23,7 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod bootstrap;
 mod check;
 mod cli;
+mod probe;
 
 use std::sync::Arc;
 

@@ -23,9 +23,11 @@ mimalloc = ["dep:mimalloc"]
 request-tracing = ["documentdb_gateway_core/request-tracing"]
 
 [dependencies]
+bson.workspace = true
 documentdb_gateway_core.workspace = true
 documentdb_gateway_otel.workspace = true
 mimalloc = { workspace = true, optional = true }
+openssl.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -6,6 +6,7 @@
 * Reclaim dead postings during index insertion to avoid posting-list promotion and entry-page splits, controlled by the default-off `documentdb_rum.enable_insert_time_posting_list_reclaim` and `documentdb_rum.enable_insert_time_deletion` settings. *[Perf]*
 * Report a node that cannot accept a connection during `collStats`, `count` without a query, `dbStats`, `$indexStats`, and `currentOp` as a connection failure (SQLSTATE `08006`) instead of an internal error. *[Bugfix]*
 * Fix `getMore` failing with an internal error when an aggregation pipeline has `$match` after `$project` and dynamic cursors are enabled, but the query falls back to a streaming cursor (for example, on a sharded collection). *[Bugfix]*
+* Add a `documentdb-gateway probe` subcommand for container liveness probes. It sends `ping` to the running gateway, over `UnixSocketPath` when set and otherwise over TLS to `127.0.0.1:GatewayListenPort`, and exits non-zero if no `ok: 1` reply arrives within `--timeout` seconds (default 2). Unlike `check`, it detects a gateway that accepts connections but no longer answers requests, and does not depend on `PostgreSQL`. *[Feature]*
 
 ### documentdb v1.3-0 (Unreleased) ###
 * Enable single-pass posting-tree vacuum by default. Set `documentdb_rum.enable_single_pass_posting_tree_vacuum = off` to retain the two-pass pruning path. *[Perf]*
