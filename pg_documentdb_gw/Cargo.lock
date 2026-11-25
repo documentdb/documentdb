@@ -590,9 +590,11 @@ dependencies = [
 name = "documentdb_gateway"
 version = "0.1.0"
 dependencies = [
+ "bson",
  "documentdb_gateway_core",
  "documentdb_gateway_otel",
  "mimalloc",
+ "openssl",
  "serde",
  "serde_json",
  "tokio",

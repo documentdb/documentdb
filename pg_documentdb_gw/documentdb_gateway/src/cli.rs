@@ -6,21 +6,30 @@
  *-------------------------------------------------------------------------
  */
 
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, time::Duration};
 
 use documentdb_gateway_core::configuration::env_keys;
 
-use crate::{bootstrap, check};
+use crate::{bootstrap, check, probe};
 
 /// Parsed top-level command for the gateway binary.
 ///
 /// Per `packaging-design.md` §4.3 the gateway exposes:
 ///   `documentdb-gateway run [--config <path>]`
 ///   `documentdb-gateway check [--config <path>]` (alias: `--check`)
+///   `documentdb-gateway probe [--config <path>] [--timeout <seconds>]`
 ///   `documentdb-gateway --version`
 pub enum Cli {
-    Run { config: Option<PathBuf> },
-    Check { config: Option<PathBuf> },
+    Run {
+        config: Option<PathBuf>,
+    },
+    Check {
+        config: Option<PathBuf>,
+    },
+    Probe {
+        config: Option<PathBuf>,
+        timeout: Duration,
+    },
     Version,
     Help,
 }
@@ -33,6 +42,11 @@ impl std::fmt::Debug for Cli {
         match self {
             Self::Run { config } => f.debug_struct("Run").field("config", config).finish(),
             Self::Check { config } => f.debug_struct("Check").field("config", config).finish(),
+            Self::Probe { config, timeout } => f
+                .debug_struct("Probe")
+                .field("config", config)
+                .field("timeout", timeout)
+                .finish(),
             Self::Version => f.write_str("Version"),
             Self::Help => f.write_str("Help"),
         }
@@ -85,6 +99,13 @@ pub fn dispatch_or_passthrough() -> Option<PathBuf> {
             let code = check::run_check(&setup_configuration);
             std::process::exit(code);
         }
+        Cli::Probe { config, timeout } => {
+            // No tracing subscriber: a liveness probe runs every few seconds
+            // and should print only its one-line result.
+            let setup_configuration = bootstrap::load_configuration(config);
+            let target = probe::Target::from_configuration(&setup_configuration);
+            std::process::exit(probe::run_probe(&target, timeout));
+        }
         Cli::Run { config } => {
             // Reject explicit user-supplied paths that don't exist (operator
             // typo, mis-merged drop-in, missing legacy positional arg, etc.)
@@ -123,7 +144,7 @@ fn parse_cli_from_args(mut args: Vec<String>) -> Result<Cli, String> {
     // pre-Phase-3 systemd units (`ExecStart=… /etc/.../SetupConfiguration.json`)
     // continue to work without modification.
     let first = &args[0];
-    if !first.starts_with('-') && first != "run" && first != "check" {
+    if !first.starts_with('-') && first != "run" && first != "check" && first != "probe" {
         let config = PathBuf::from(args.remove(0));
         if !args.is_empty() {
             return Err(format!("Unexpected trailing arguments: {args:?}"));
@@ -148,9 +169,40 @@ fn parse_cli_from_args(mut args: Vec<String>) -> Result<Cli, String> {
             }
             Ok(Cli::Check { config })
         }
+        "probe" => {
+            let config = parse_config_flag("probe", &mut args)?;
+            let timeout = parse_timeout_flag(&mut args)?;
+            if !args.is_empty() {
+                return Err(format!("Unknown 'probe' argument(s): {args:?}"));
+            }
+            Ok(Cli::Probe { config, timeout })
+        }
         "--version" | "-V" => Ok(Cli::Version),
         "-h" | "--help" => Ok(Cli::Help),
         other => Err(format!("Unknown command or flag: {other}")),
+    }
+}
+
+/// Pulls `--timeout <seconds>` out of `args` for `probe`, defaulting to
+/// [`probe::DEFAULT_TIMEOUT`]. The value must be a whole number of seconds
+/// greater than zero, matching Kubernetes' `timeoutSeconds`.
+fn parse_timeout_flag(args: &mut Vec<String>) -> Result<Duration, String> {
+    let Some(i) = args.iter().position(|a| a == "--timeout") else {
+        return Ok(probe::DEFAULT_TIMEOUT);
+    };
+    args.remove(i);
+    if i >= args.len() {
+        return Err("'probe --timeout' requires a number of seconds".to_owned());
+    }
+    let value = args.remove(i);
+    if args.iter().any(|a| a == "--timeout") {
+        return Err("'probe' was given --timeout more than once".to_owned());
+    }
+    match value.parse::<u64>() {
+        Ok(seconds) if seconds > 0 => Ok(Duration::from_secs(seconds)),
+        _ => Err(format!(
+            "'probe --timeout' must be a whole number of seconds greater than 0, got '{value}'"
+        )),
     }
 }
 
@@ -191,6 +243,12 @@ Commands:
   run [--config <path>]     Start the gateway daemon (default).
   check [--config <path>]   Probe the configured PostgreSQL backend and verify
                             the DocumentDB extension is loaded. Exits 0/1.
+  probe [--config <path>] [--timeout <seconds>]
+                            Send ping to the running gateway over its Unix
+                            socket (if configured) or its TCP listener on
+                            127.0.0.1 with TLS. Exits 0 on a reply within the
+                            timeout (default 2), 1 otherwise. For use as a
+                            liveness probe.
   --version                 Print version information.
   -h, --help                Show this help message.
 
@@ -364,5 +422,54 @@ mod tests {
     fn legacy_path_with_trailing_args_errors() {
         let err = parse_cli_from_args(args(&["/etc/foo.json", "extra"])).unwrap_err();
         assert!(err.contains("Unexpected trailing arguments"), "got: {err}");
+    }
+
+    #[test]
+    fn probe_subcommand_defaults() {
+        let cli = parse_cli_from_args(args(&["probe"])).unwrap();
+        let Cli::Probe { config, timeout } = cli else {
+            panic!("expected Cli::Probe");
+        };
+        assert_eq!(config, None);
+        assert_eq!(timeout, probe::DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn probe_subcommand_with_config_and_timeout() {
+        let cli = parse_cli_from_args(args(&[
+            "probe",
+            "--timeout",
+            "5",
+            "--config",
+            "/tmp/x.json",
+        ]))
+        .unwrap();
+        let Cli::Probe { config, timeout } = cli else {
+            panic!("expected Cli::Probe");
+        };
+        assert_eq!(config, Some(PathBuf::from("/tmp/x.json")));
+        assert_eq!(timeout, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn probe_rejects_invalid_timeouts() {
+        for bad in [
+            &["probe", "--timeout"][..],
+            &["probe", "--timeout", "0"],
+            &["probe", "--timeout", "1.5"],
+            &["probe", "--timeout", "x"],
+        ] {
+            let err = parse_cli_from_args(args(bad)).unwrap_err();
+            assert!(err.contains("--timeout"), "{bad:?} got: {err}");
+        }
+        let err =
+            parse_cli_from_args(args(&["probe", "--timeout", "1", "--timeout", "2"])).unwrap_err();
+        assert!(err.contains("more than once"), "got: {err}");
+    }
+
+    #[test]
+    fn probe_rejects_unknown_arguments() {
+        let err = parse_cli_from_args(args(&["probe", "--socket", "/tmp/s"])).unwrap_err();
+        assert!(err.contains("Unknown 'probe' argument"), "got: {err}");
     }
 }
