@@ -5,6 +5,18 @@ A ready-to-use `docker compose` setup for the
 container health check, persistent storage, and readiness gating for dependent
 services.
 
+### Index creation latency
+
+On a fresh or existing volume, the image shortens both bundled index-build cron
+jobs from two seconds to one and sets `documentdb.indexBuildScheduleInSec` to `1`.
+It does this only if the setting is still at its default and the pair of jobs is
+unchanged. If a numbered `documentdb_index_build_task_` job was added, removed,
+disabled or edited, the image leaves the schedule and setting alone. Jobs
+outside that naming scheme are not changed.
+Gateway-only startup does not tune the external database. The interval is not
+a deadline: building the index takes time, and the standalone gateway checks
+completion immediately and then at one-second intervals by default.
+
 ## Quick start
 
 You need `docker` and [`mongosh`](https://www.mongodb.com/docs/mongodb-shell/)
