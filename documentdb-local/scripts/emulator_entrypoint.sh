@@ -38,6 +38,7 @@ SYSTEM_PG_LOG_TAIL_PID=""
 OSS_LOG_TAIL_PID=""
 GATEWAY_LOG_TAIL_PID=""
 USAGE_TELEMETRY_PID=""
+collector_pid=""
 # Set just before this boot starts PostgreSQL, so a postmaster.pid this boot
 # did not create is never stopped.
 POSTGRES_STARTED=false
@@ -89,6 +90,16 @@ cleanup() {
     if [ -n "${gateway_pid:-}" ]; then
         echo "Stopping gateway process (PID: $gateway_pid)"
         kill $gateway_pid 2>/dev/null
+    fi
+
+    # Do not signal a recycled PID if the optional collector died long ago.
+    if [ -n "$collector_pid" ] && jobs -p | grep -Fx "$collector_pid" >/dev/null; then
+        kill -TERM "$collector_pid" 2>/dev/null
+        # A stopped process cannot handle its pending TERM until resumed.
+        kill -CONT "$collector_pid" 2>/dev/null
+        # Allow up to five seconds to flush without delaying database shutdown indefinitely.
+        timeout 5 tail --pid="$collector_pid" -s 0.1 -f /dev/null || kill -KILL "$collector_pid" 2>/dev/null
+        wait "$collector_pid" 2>/dev/null
     fi
 
     stop_owned_postgresql
@@ -172,6 +183,7 @@ else
 fi
 
 write_gateway_config
+start_local_metrics_collector
 
 # Sourced at script scope, not called as functions: see lib/serve.sh.
 # shellcheck source=lib/serve.sh
