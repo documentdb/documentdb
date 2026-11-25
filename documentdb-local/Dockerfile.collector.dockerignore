@@ -1,0 +1,7 @@
+**
+!pg_documentdb_gw/SetupConfiguration.json
+!documentdb-local/conf/otelcol.yaml
+!documentdb-local/COLLECTOR.md
+!documentdb-local/scripts/emulator_entrypoint.sh
+!documentdb-local/scripts/lib/**
+!documentdb-local/scripts/documentdb_local_settings.sh

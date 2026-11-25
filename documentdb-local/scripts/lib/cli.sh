@@ -68,9 +68,10 @@ Optional arguments:
                         Overrides DOCUMENTDB_PORT environment variable.
   --enable-telemetry <true|false>
                         Export the gateway's operational metrics over OpenTelemetry OTLP to the
-                        collector at OTEL_EXPORTER_OTLP_ENDPOINT (default http://localhost:4317,
-                        which resolves inside this container). true sets OTEL_METRICS_ENABLED=true
-                        unless it is already set; other OTEL_* variables reach the gateway unchanged.
+                        configured collector. Without an explicit metrics or shared endpoint, the
+                        collector image serves metrics at http://127.0.0.1:9464/metrics inside the
+                        container. Images without it use the gateway default (localhost:4317).
+                        true sets OTEL_METRICS_ENABLED=true unless it is already set.
                         This is a separate setting from the anonymous usage telemetry below:
                         ENABLE_TELEMETRY=false does not turn that off. Use --usage-telemetry false for it.
                         Defaults to $(documentdb_local_setting_default ENABLE_TELEMETRY).

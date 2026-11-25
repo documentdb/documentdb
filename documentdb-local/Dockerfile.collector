@@ -1,0 +1,13 @@
+# Build from the repository root. Override the base to test a local build.
+ARG DOCUMENTDB_IMAGE=ghcr.io/documentdb/documentdb/documentdb-local@sha256:1d40546ccf53a0229f98a0848b7c3d6d74dc35a9fa535a1d1c8f70e3bed10d23
+FROM otel/opentelemetry-collector-contrib:0.156.0@sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108 AS collector
+FROM ${DOCUMENTDB_IMAGE}
+COPY --from=collector /otelcol-contrib /usr/local/bin/otelcol-contrib
+COPY documentdb-local/conf/otelcol.yaml /etc/documentdb/otelcol.yaml
+RUN /usr/local/bin/otelcol-contrib validate --config=/etc/documentdb/otelcol.yaml
+COPY pg_documentdb_gw/SetupConfiguration.json /home/documentdb/gateway/pg_documentdb_gw/SetupConfiguration.json
+COPY --chmod=755 documentdb-local/scripts/emulator_entrypoint.sh /home/documentdb/gateway/scripts/emulator_entrypoint.sh
+COPY documentdb-local/scripts/lib/ /home/documentdb/gateway/scripts/lib/
+COPY documentdb-local/scripts/documentdb_local_settings.sh /home/documentdb/gateway/scripts/documentdb_local_settings.sh
+COPY documentdb-local/COLLECTOR.md /home/documentdb/COLLECTOR.md
+ENTRYPOINT ["/home/documentdb/gateway/scripts/emulator_entrypoint.sh"]

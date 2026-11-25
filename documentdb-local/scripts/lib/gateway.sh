@@ -74,3 +74,21 @@ write_host_config() {
         && chmod 644 "$hostConfigFile.tmp" \
         && mv -f "$hostConfigFile.tmp" "$hostConfigFile"
 }
+
+start_local_metrics_collector() {
+    # Other distributions of these scripts need not ship the collector.
+    [ "${ENABLE_TELEMETRY:-}" = true ] && [ -x /usr/local/bin/otelcol-contrib ] &&
+        [ -r /etc/documentdb/otelcol.yaml ] || return 0
+    [ -z "${OTEL_EXPORTER_OTLP_METRICS_ENDPOINT+x}${OTEL_EXPORTER_OTLP_ENDPOINT+x}" ] || return 0
+    # Mirror gateway precedence: explicit JSON enablement wins over the environment.
+    jq -e --arg enabled "${OTEL_METRICS_ENABLED:-false}" '
+        .TelemetryOptions.Metrics as $m |
+        $m.OtlpEndpoint == null and
+        (if $m.Enabled == null then $enabled == "true" else $m.Enabled == true end)
+    ' "$configFile" >/dev/null || return 0
+
+    # Set only the metrics destination; never redirect traces or supervise the DB on collector exit.
+    export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:14317
+    /usr/local/bin/otelcol-contrib --config=/etc/documentdb/otelcol.yaml 200>&- &
+    collector_pid=$!
+}
