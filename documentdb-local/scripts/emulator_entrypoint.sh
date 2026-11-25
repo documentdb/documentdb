@@ -19,6 +19,7 @@ entrypoint_dir="$(dirname "${BASH_SOURCE[0]}")"
 
 configFile=""
 hostConfigFile=""
+bundleDir=""
 
 # Every operator setting (flag, env var, default, type) is declared once in
 # the sibling settings table; this script parses, defaults and validates from it.
@@ -92,6 +93,10 @@ cleanup() {
     fi
 
     stop_owned_postgresql
+
+    if [ -n "$bundleDir" ]; then
+        rm -rf -- "$bundleDir"
+    fi
 
     # Only remove files we created via mktemp; a caller-provided
     # DOCUMENTDB_CONFIG_FILE belongs to the caller.

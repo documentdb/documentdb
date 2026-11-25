@@ -23,8 +23,7 @@ Out of scope (by design):
     here use `mongosh` only as a vehicle to assert image-contract
     properties (port binding, auth enforcement, data persistence),
     never to assert engine semantics.
-  - Performance, clustering / replication, custom certificate fixture
-    generation, telemetry endpoint behavior.
+    - Performance, clustering / replication, telemetry endpoint behavior.
 
 The image reference is supplied via DOCUMENTDB_LOCAL_IMAGE so the same
 script works locally and in CI:
@@ -105,6 +104,13 @@ _SKIP_UNLESS_IMAGE = unittest.skipUnless(
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+
+@_SKIP_UNLESS_IMAGE
+class Pkcs12ImageTests(unittest.TestCase):
+    def test_verified_intermediate_chain(self):
+        script = pathlib.Path(__file__).with_name("test_pkcs12_image.sh")
+        subprocess.run(["bash", str(script), os.environ["DOCUMENTDB_LOCAL_IMAGE"]], check=True)
 
 def _docker(*args: str, check: bool = True, capture: bool = True,
             timeout: int | None = None) -> subprocess.CompletedProcess:

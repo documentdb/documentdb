@@ -135,6 +135,9 @@ if [ "$gateway_bin" = "/usr/bin/documentdb-gateway" ] \
         && id -u documentdb-gateway >/dev/null 2>&1; then
     echo "Handing gateway configuration to the documentdb-gateway user (wrapper will drop privileges)."
     chown documentdb-gateway "$configFile"
+    if [ -n "$bundleDir" ]; then
+        chown documentdb-gateway "$bundleDir"/*.pem "$bundleDir" || exit 1
+    fi
 fi
 # Redirect through a process substitution rather than a pipeline. With
 # `... | tee -a "$GATEWAY_LOG" &`, $! is the LAST element of the pipeline —

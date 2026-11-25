@@ -304,6 +304,10 @@ json.dump(data, sys.stdout)
         # not leak into the entrypoint under test.
         env.pop("DOCUMENTDB_PGDATA_TEMPLATE", None)
         env.pop("TLS_MODE", None)
+        # Development images may export their own TLS identity. Only use the
+        # files explicitly supplied by the test via extra_env or CLI flags.
+        for name in ("CERT_PATH", "KEY_FILE", "CERT_PASSWORD_FILE"):
+            env.pop(name, None)
         env.pop("DOCUMENTDB_ALLOW_DEFAULT_PASSWORD", None)
         env.update(
             {
@@ -3470,18 +3474,53 @@ exec "{real}" "$@"
             },
         )
 
-    def test_pfx_certificate_without_key_file_is_rejected(self):
+    def test_pem_certificate_without_key_file_is_rejected(self):
         result = self._run_entrypoint(
             "--password",
             _TEST_PW,
             "--cert-path",
-            "/tmp/documentdb-local.pfx",
+            "/tmp/documentdb-local.pem",
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
             "Error: Both CERT_PATH and KEY_FILE must be set together, or neither should be set.",
             result.stdout + result.stderr,
         )
+
+    def test_bundle_password_and_empty_password(self):
+        cert, key = self.root / 'leaf.pem', self.root / 'leaf.key'
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+                        '-subj', '/CN=localhost', '-out', cert, '-keyout', key], check=True, capture_output=True)
+        password_file = self.root / 'mounted secret'
+        password_file.write_text(_TEST_PW + '\n', encoding='utf-8')
+        for extension, protected in [('PFX', True), ('p12', False)]:
+            with self.subTest(extension=extension):
+                bundle = self.root / f'identity.{extension}'
+                subprocess.run(['openssl', 'pkcs12', '-export', '-in', cert, '-inkey', key, '-out', bundle,
+                                '-passout', f'file:{password_file}' if protected else 'pass:'], check=True)
+                args = ['--cert-password-file', str(password_file)] if protected else []
+                result = self._run_entrypoint('--cert-path', str(bundle), *args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                options = self._read_config()['CertificateOptions']
+                self.assertEqual(options['CertType'], 'PemFile')
+                self.assertFalse(Path(options['KeyFilePath']).parent.exists(), 'temporary identity not cleaned up')
+                if protected:
+                    password_file.write_text('wrong\n', encoding='utf-8')
+                    rejected = self._run_entrypoint('--cert-path', str(bundle), *args)
+                    self.assertNotEqual(rejected.returncode, 0)
+                    self.assertIn('could not load the PKCS#12', rejected.stderr)
+
+    def test_invalid_bundle_settings_fail_before_gateway_launch(self):
+        bundle = self.root / 'invalid.p12'
+        bundle.write_bytes(b'not a bundle')
+        for settings in ({'CERT_PATH': str(bundle)},
+                         {'CERT_PATH': str(bundle), 'KEY_FILE': 'separate.key'},
+                         {'CERT_PATH': str(bundle), 'CERT_PASSWORD_FILE': str(self.root / 'absent')},
+                         {'CERT_PASSWORD_FILE': str(self.root / 'unused')}):
+            with self.subTest(settings=settings):
+                result = self._run_entrypoint(extra_env=settings)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('Starting gateway in the background', result.stdout)
 
     def test_key_file_without_certificate_is_rejected(self):
         result = self._run_entrypoint(
