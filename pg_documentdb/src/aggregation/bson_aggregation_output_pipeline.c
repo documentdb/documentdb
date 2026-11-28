@@ -1618,7 +1618,7 @@ WriteJoinConditionToQueryDollarMerge(Query *query,
 									 const int sourceCollectionVarNo,
 									 MergeArgs mergeArgs)
 {
-	Expr *opexpr = make_opclause(PostgresInt4EqualOperatorOid(),
+	Expr *opexpr = make_opclause(BigintEqualOperatorId(),
 								 BOOLOID, false,
 								 (Expr *) targetShardKeyValueVar,
 								 (Expr *) sourceShardKeyValueVar,
@@ -2267,14 +2267,14 @@ HandleOut(const bson_value_t *existingValue, Query *query,
 	query->jointree = makeFromExpr(list_make1(rtr), NULL);
 
 #if PG_VERSION_NUM >= 170000
-	query->mergeJoinCondition = (Node *) make_opclause(PostgresInt4EqualOperatorOid(),
+	query->mergeJoinCondition = (Node *) make_opclause(BigintEqualOperatorId(),
 													   BOOLOID, false,
 													   (Expr *) targetShardKeyValueVar,
 													   (Expr *) sourceShardKeyValueVar,
 													   InvalidOid,
 													   InvalidOid);
 #else
-	query->jointree->quals = (Node *) make_opclause(PostgresInt4EqualOperatorOid(),
+	query->jointree->quals = (Node *) make_opclause(BigintEqualOperatorId(),
 													BOOLOID, false,
 													(Expr *) targetShardKeyValueVar,
 													(Expr *) sourceShardKeyValueVar,
