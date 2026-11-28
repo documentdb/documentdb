@@ -1,0 +1,69 @@
+SET search_path TO documentdb_core,documentdb_api,documentdb_api_catalog,documentdb_api_internal;
+SET documentdb.next_collection_id TO 9700;
+SET documentdb.next_collection_index_id TO 9700;
+-- $merge and $out join the target and the source on shard_key_value, a bigint column.
+-- With constraint_exclusion = on the planner compares that join clause with the
+-- target's shard_key_value_check constraint, so the clause must use a bigint operator.
+SELECT documentdb_api.insert_one('mergeCeDb', 'src', '{ "_id": 1, "a": 1 }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT documentdb_api.insert_one('mergeCeDb', 'src', '{ "_id": 2, "a": 2 }', NULL);
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET constraint_exclusion TO on;
+-- $merge creates the target, then merges into the existing target
+SELECT * FROM aggregate_cursor_first_page('mergeCeDb', '{ "aggregate": "src", "pipeline": [ { "$merge": { "into": "mergeTarget" } } ], "cursor": { "batchSize": 1 } }', 4294967294);
+NOTICE:  creating collection
+                                                             cursorpage                                                             | continuation | persistconnection | cursorid 
+------------------------------------------------------------------------------------------------------------------------------------+--------------+-------------------+----------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "mergeCeDb.src", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
+(1 row)
+
+SELECT document FROM documentdb_api.collection('mergeCeDb', 'mergeTarget') ORDER BY object_id;
+                             document                             
+------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" } }
+(2 rows)
+
+SELECT * FROM aggregate_cursor_first_page('mergeCeDb', '{ "aggregate": "src", "pipeline": [ { "$addFields": { "b": 1 } }, { "$merge": { "into": "mergeTarget", "whenMatched": "replace" } } ], "cursor": { "batchSize": 1 } }', 4294967294);
+                                                             cursorpage                                                             | continuation | persistconnection | cursorid 
+------------------------------------------------------------------------------------------------------------------------------------+--------------+-------------------+----------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "mergeCeDb.src", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
+(1 row)
+
+SELECT document FROM documentdb_api.collection('mergeCeDb', 'mergeTarget') ORDER BY object_id;
+                                            document                                            
+------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "1" } }
+(2 rows)
+
+-- $out into a new and into an existing target
+SELECT * FROM aggregate_cursor_first_page('mergeCeDb', '{ "aggregate": "src", "pipeline": [ { "$out": "outTarget" } ], "cursor": { "batchSize": 1 } }', 4294967294);
+NOTICE:  creating collection
+                                                             cursorpage                                                             | continuation | persistconnection | cursorid 
+------------------------------------------------------------------------------------------------------------------------------------+--------------+-------------------+----------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "mergeCeDb.src", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
+(1 row)
+
+SELECT * FROM aggregate_cursor_first_page('mergeCeDb', '{ "aggregate": "src", "pipeline": [ { "$match": { "a": 2 } }, { "$out": "outTarget" } ], "cursor": { "batchSize": 1 } }', 4294967294);
+                                                             cursorpage                                                             | continuation | persistconnection | cursorid 
+------------------------------------------------------------------------------------------------------------------------------------+--------------+-------------------+----------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "mergeCeDb.src", "firstBatch" : [  ] }, "ok" : { "$numberDouble" : "1.0" } } |              | f                 |        0
+(1 row)
+
+SELECT document FROM documentdb_api.collection('mergeCeDb', 'outTarget') ORDER BY object_id;
+                             document                             
+------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" } }
+(1 row)
+
+RESET constraint_exclusion;
